@@ -215,8 +215,17 @@ module.exports = function mountAdminUsers(app, guards) {
       return res.status(400).json({ error: 'You cannot suspend your own account' });
     }
 
+    /* Suspending also bumps token_version. attachUser() already refuses a
+       suspended account on its next request, so this is belt and braces — but it
+       means the tokens are dead even if the status is later flipped back, so
+       reactivating does not silently revive somebody's old session. */
+    /* $1 is cast because Postgres otherwise has to deduce one type for it from
+       both the varchar assignment and the text comparison, and refuses:
+       "inconsistent types deduced for parameter $1". */
     const r = await db.query(
-      `UPDATE users SET status = $1, updated_at = NOW()
+      `UPDATE users SET status = $1::text, updated_at = NOW(),
+                        token_version = token_version
+                          + CASE WHEN $1::text = 'suspended' THEN 1 ELSE 0 END
         WHERE id = $2 AND role = ANY($3::text[]) RETURNING full_name`,
       [status, id, STAFF_ROLES]);
     if (!r.rows.length) return res.status(404).json({ error: 'Administrator not found' });
@@ -241,12 +250,16 @@ module.exports = function mountAdminUsers(app, guards) {
     if (!target.rows.length) return res.status(404).json({ error: 'Administrator not found' });
 
     const password = generatePassword();
+    /* Ends every session the holder had. Resetting a password because an
+       account may be compromised is pointless if the attacker's existing token
+       keeps working for the rest of the day. */
     await db.query(`
       UPDATE users
          SET password_hash = $1, must_change_password = TRUE,
              last_password_changed_at = NOW(), updated_at = NOW(),
              failed_login_count = 0, locked_until = NULL,
-             reset_token_hash = NULL, reset_expires_at = NULL
+             reset_token_hash = NULL, reset_expires_at = NULL,
+             token_version = token_version + 1
        WHERE id = $2`, [hashPassword(password), id]);
 
     // The action is audited; the password is not part of the audit entry.

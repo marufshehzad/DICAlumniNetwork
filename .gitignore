@@ -14,3 +14,8 @@ _tmp_*
 # Store them in a password manager and delete the file — never commit it.
 admin-credentials.local.txt
 *credentials*.local.txt
+
+# Password reset links issued by reset_link.js. Single-use and short-lived,
+# but still a credential while they are valid.
+reset-link.local.txt
+*reset-link*.local.txt

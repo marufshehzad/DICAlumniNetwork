@@ -462,6 +462,10 @@ async function initAppOnce() {
   if (__appInitialized) return;
   __appInitialized = true;
 
+  // A ?reset=<token> link opens the set-a-new-password screen instead of the
+  // ordinary sign-in form.
+  if (typeof initAuthScreen === 'function') initAuthScreen();
+
   const user = await API.me();
   if (user) {
     enterAuthenticatedApp(user);

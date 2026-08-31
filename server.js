@@ -40,7 +40,35 @@ app.use(cors(ALLOWED_ORIGINS.length ? {
   credentials: false
 } : undefined));
 app.use(bodyParser.json());
-app.use(express.static(__dirname));
+/* Security headers, set here rather than only in vercel.json. Those are edge
+   headers: they exist on Vercel and nowhere else, so running this behind nginx,
+   a VPS or `node server.js` left the staff portal indexable and framable. Both
+   layers now set them, and the values agree.
+
+   wantsAdminPortal() is declared further down; it is only called at request
+   time, by which point the module has finished evaluating. */
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (wantsAdminPortal(req)) {
+    // The staff portal must never be indexed, and must never be framed — the
+    // one place on the platform where a clickjacked click provisions accounts.
+    res.set('X-Robots-Tag', 'noindex, nofollow');
+    res.set('X-Frame-Options', 'DENY');
+    res.set('Content-Security-Policy', "frame-ancestors 'none'");
+  } else {
+    res.set('X-Frame-Options', 'SAMEORIGIN');
+  }
+  next();
+});
+
+/* index:false so that a bare "/" falls through to the SPA handler at the bottom
+   of this file rather than being answered here with index.html. Without it the
+   static middleware served the alumni site for "/" on every host, so
+   admin.<domain>/ landed on the alumni portal while admin.<domain>/anything-else
+   correctly landed on the staff portal. Named files, /admin.html included, are
+   still served directly. */
+app.use(express.static(__dirname, { index: false }));
 
 /* ============================================================
    AUTHENTICATION — password hashing, signed sessions, RBAC
@@ -123,9 +151,23 @@ async function attachUser(req, res, next) {
   if (!payload) { req.user = null; return next(); }
 
   try {
-    const r = await db.query('SELECT id, role, status FROM users WHERE id = $1', [payload.uid]);
+    const r = await db.query(
+      'SELECT id, role, status, token_version FROM users WHERE id = $1', [payload.uid]);
     // Account deleted since the token was issued — the token is now inert.
     if (r.rows.length === 0) { req.user = null; return next(); }
+
+    /* Session revocation. The token carries the version it was minted at; the
+       row carries the current one. Bumping the column — on sign-out, password
+       change, password reset or suspension — makes every token issued before
+       the bump fail here, with no session table and no change to the token
+       format. A token minted before this column existed carries no version and
+       is treated as version 1, so no existing session breaks. */
+    if ((payload.tv ?? 1) !== r.rows[0].token_version) {
+      req.user = null;
+      req.staleSession = true;
+      return next();
+    }
+
     /* Suspension takes effect on the next request, not when the token expires.
        Sessions are stateless bearer tokens with a 12-hour life, so without this
        check suspending an administrator would leave them working for the rest
@@ -150,8 +192,13 @@ app.use(attachUser);
 // administrator rather than retrying their password.
 const SUSPENDED = { error: 'This account is suspended. Contact an administrator.' };
 
+// A revoked session is not a permissions problem — the client should sign in
+// again, which is exactly what api.js does with a 401.
+const STALE = { error: 'This session has ended. Please sign in again.' };
+
 function requireAuth(req, res, next) {
   if (req.suspended) return res.status(403).json(SUSPENDED);
+  if (req.staleSession) return res.status(401).json(STALE);
   if (!req.user) return res.status(401).json({ error: 'Authentication required' });
   next();
 }
@@ -159,6 +206,7 @@ function requireAuth(req, res, next) {
 function requireRole(...roles) {
   return (req, res, next) => {
     if (req.suspended) return res.status(403).json(SUSPENDED);
+    if (req.staleSession) return res.status(401).json(STALE);
     if (!req.user) return res.status(401).json({ error: 'Authentication required' });
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({ error: 'Insufficient permissions for this action' });
@@ -437,7 +485,11 @@ app.post('/api/auth/login', async (req, res) => {
       [row.id]);
 
     const user = publicUser(row);
-    const token = signToken({ uid: user.id, role: user.role, exp: Date.now() + SESSION_TTL_MS });
+    const token = signToken({
+      uid: user.id, role: user.role,
+      tv: row.token_version ?? 1,
+      exp: Date.now() + SESSION_TTL_MS
+    });
 
     // Bulk-imported accounts share an initial password; the client prompts for
     // a change when this is set.
@@ -507,7 +559,11 @@ app.post('/api/auth/register', async (req, res) => {
     await writeAuditSafe('Alumni Self-Registered', `${clean} <${email.trim()}> awaiting verification`, '🎓');
 
     const user = publicUser(userRes.rows[0]);
-    const token = signToken({ uid, role: user.role, exp: Date.now() + SESSION_TTL_MS });
+    const token = signToken({
+      uid, role: user.role,
+      tv: 1,                       // a freshly registered account starts at 1
+      exp: Date.now() + SESSION_TTL_MS
+    });
     res.json({ token, user, mustChangePassword: false });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -529,13 +585,169 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
     if (!verifyPassword(currentPassword, row.rows[0].password_hash)) {
       return res.status(401).json({ error: 'Current password is incorrect' });
     }
-    await db.query(
+    /* The version bump ends every session that was opened with the old
+       password, including this one — so the response carries a freshly minted
+       token and the caller stays signed in without a round trip through the
+       login screen. Anyone else holding a token for this account is signed out. */
+    const updated = await db.query(
       `UPDATE users SET password_hash = $1, must_change_password = FALSE,
-                        last_password_changed_at = NOW(), updated_at = NOW()
-        WHERE id = $2`,
+                        last_password_changed_at = NOW(), updated_at = NOW(),
+                        token_version = token_version + 1
+        WHERE id = $2 RETURNING token_version, role`,
       [hashPassword(newPassword), req.user.uid]
     );
-    await writeAuditSafe('Password Changed', `user ${req.user.uid}`, '🔑');
+    await writeAuditSafe('Password Changed', `user ${req.user.uid}`, '🔑',
+      auditCtx(req, 'user', req.user.uid));
+    res.json({
+      success: true,
+      token: signToken({
+        uid: req.user.uid, role: updated.rows[0].role,
+        tv: updated.rows[0].token_version,
+        exp: Date.now() + SESSION_TTL_MS
+      })
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ─── PASSWORD RECOVERY ─────────────────────────────────────
+   A super admin can reset any other administrator, but nobody could reset the
+   super admin. This closes that: a self-service flow over the reset_token_hash
+   and reset_expires_at columns added in v7.
+
+   The token is 32 random bytes. Only its SHA-256 hash is stored, so a database
+   reader — a backup, a log shipper, a leaked dump — cannot mint a reset from
+   it. It lives for RESET_TTL_MS, is consumed on first use, and is cleared by any
+   other password change on the account.
+
+   Delivery is the honest gap. No mail transport is configured, so the request
+   endpoint does not hand the token back over HTTP: doing that would let anyone
+   who knows an address take over the account. Until SMTP exists, an operator
+   with server access mints the link with `node reset_link.js --email <address>`,
+   which writes it to a gitignored file. That is the same trust boundary the
+   platform already relies on for rotate_credentials.js. */
+
+const RESET_TTL_MS = 30 * 60 * 1000;   // 30 minutes
+
+const hashResetToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
+
+/* Issues a reset token for an account and returns the plaintext. Shared by the
+   forgot-password endpoint and the operator CLI so there is one implementation
+   of what a valid token is. */
+async function issueResetToken(userId) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  await db.query(
+    'UPDATE users SET reset_token_hash = $1, reset_expires_at = NOW() + $2::interval WHERE id = $3',
+    [hashResetToken(token), `${Math.round(RESET_TTL_MS / 1000)} seconds`, userId]);
+  return token;
+}
+
+/* Always answers the same way, whether or not the address exists and whether or
+   not a token was issued. Anything else turns this into an account-enumeration
+   oracle, which matters more here than anywhere else on the platform: these are
+   the addresses of the institution's administrators. */
+const RESET_ACK = {
+  message: 'If that address belongs to an account, a reset link has been issued. ' +
+           'It expires in 30 minutes.'
+};
+
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+
+  // Rate-limited on the same counters as sign-in, so this cannot be used to
+  // hammer the database or to time-probe which addresses exist.
+  const gate = loginRateCheck(req, email);
+  if (gate.limited) {
+    res.set('Retry-After', String(gate.retryAfter));
+    return res.status(429).json({ error: 'Too many attempts. Please try again later.' });
+  }
+
+  try {
+    if (email) {
+      const r = await db.query(
+        `SELECT id, status FROM users WHERE LOWER(email) = $1`, [email]);
+      const row = r.rows[0];
+      // A suspended account gets no reset: recovering it is an administrator's
+      // decision, not the holder's.
+      if (row && row.status === 'active') {
+        await issueResetToken(row.id);
+        // The action is audited; the token is not part of the entry.
+        await writeAuditSafe('Password Reset Requested', `user ${row.id}`, '🔑',
+          { actorId: row.id, targetType: 'user', targetId: row.id, ip: clientIp(req) });
+      }
+    }
+  } catch {
+    /* Swallowed deliberately. A database error must not make this endpoint
+       answer differently for an address that exists. */
+  }
+
+  res.json(RESET_ACK);
+});
+
+/* Completes the reset. The token is matched by hash, must be unexpired, and is
+   cleared in the same statement that sets the password, so it cannot be
+   replayed. token_version is bumped, which ends every session that was open
+   under the old password. */
+app.post('/api/auth/reset-password', async (req, res) => {
+  const { token, newPassword } = req.body || {};
+
+  if (!token || typeof token !== 'string') {
+    return res.status(400).json({ error: 'A reset token is required' });
+  }
+  if (!newPassword || String(newPassword).length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters' });
+  }
+
+  try {
+    const r = await db.query(`
+      UPDATE users
+         SET password_hash = $1,
+             must_change_password = FALSE,
+             last_password_changed_at = NOW(),
+             updated_at = NOW(),
+             failed_login_count = 0,
+             locked_until = NULL,
+             reset_token_hash = NULL,
+             reset_expires_at = NULL,
+             token_version = token_version + 1
+       WHERE reset_token_hash = $2
+         AND reset_expires_at > NOW()
+         AND status = 'active'
+       RETURNING id, full_name`,
+      [hashPassword(newPassword), hashResetToken(String(token))]);
+
+    // One message for an unknown token, an expired one and an already-used one:
+    // none of them should tell the caller which it was.
+    if (!r.rows.length) {
+      return res.status(400).json({ error: 'That reset link is invalid or has expired.' });
+    }
+
+    await writeAuditSafe('Password Reset Completed',
+      `${r.rows[0].full_name} (user ${r.rows[0].id})`, '🔑',
+      { actorId: r.rows[0].id, targetType: 'user', targetId: r.rows[0].id, ip: clientIp(req) });
+
+    res.json({ success: true, message: 'Password updated. Please sign in.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* Ends the caller's sessions. Signing out used to be entirely client-side —
+   localStorage.removeItem — which left the token itself valid for the rest of
+   its twelve hours. Anyone who had copied it, or who picked up the machine
+   before the browser was closed, still had a working session.
+
+   Bumping token_version ends every session for that account, not just the one
+   in this browser. That is the right default for a staff portal: "sign me out"
+   from an administrator usually means "end this", and per-session revocation
+   would need a session table this design deliberately avoids. */
+app.post('/api/auth/logout', requireAuth, async (req, res) => {
+  try {
+    await db.query('UPDATE users SET token_version = token_version + 1 WHERE id = $1',
+      [req.user.uid]);
+    await writeAuditSafe('Signed Out', `user ${req.user.uid}`, '🚪',
+      auditCtx(req, 'user', req.user.uid));
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1829,3 +2041,6 @@ if (require.main === module) {
 }
 
 module.exports = app;
+// The reset CLI mints tokens through the same helper the endpoint uses, so
+// there is one definition of what a valid reset token is.
+module.exports.issueResetToken = issueResetToken;

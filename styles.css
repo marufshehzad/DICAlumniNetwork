@@ -1360,6 +1360,37 @@ body.password-change-required .topbar-actions {
   pointer-events: none;
 }
 
+/* A plain textual action inside a form — "Forgot your password?" — that must
+   read as a link rather than compete with the primary button next to it. */
+.link-btn {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 6px 0;
+  background: none;
+  border: none;
+  color: var(--primary-light);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  font-family: inherit;
+}
+.link-btn:hover { color: var(--daffodil-primary); }
+
+/* Neutral status line: used where the same message is shown whether or not an
+   action found anything, so it must not look like success or failure. */
+.login-note {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-glass);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
 .criterion-source {
   font-size: 10px;
   color: var(--text-muted);

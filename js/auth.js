@@ -122,6 +122,90 @@ function releasePasswordLock() {
   if (state.currentUser) state.currentUser.mustChangePassword = false;
 }
 
+/* ─── PASSWORD RECOVERY ─────────────────────────────────────
+   Two screens on the sign-in page: asking for a link, and setting a new password
+   once you have one. A super admin has nobody above them to click "Reset
+   password", so without this a forgotten password meant server access. */
+
+function showForgotPassword() {
+  showLoginError('');
+  const panel = document.getElementById('auth-panel-signin');
+  const forgot = document.getElementById('auth-panel-forgot');
+  if (panel) panel.classList.add('hidden');
+  if (forgot) forgot.classList.remove('hidden');
+  const msg = document.getElementById('forgot-message');
+  if (msg) msg.classList.add('hidden');
+  const email = document.getElementById('forgot-email');
+  if (email) email.value = document.getElementById('login-email')?.value || '';
+}
+
+function hideForgotPassword() {
+  document.getElementById('auth-panel-forgot')?.classList.add('hidden');
+  document.getElementById('auth-panel-reset')?.classList.add('hidden');
+  document.getElementById('auth-panel-signin')?.classList.remove('hidden');
+}
+
+async function handleForgotSubmit(e) {
+  if (e) e.preventDefault();
+  const btn = document.getElementById('forgot-submit-btn');
+  const msg = document.getElementById('forgot-message');
+  const email = document.getElementById('forgot-email').value.trim();
+
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  const res = await API.forgotPassword(email);
+  if (btn) { btn.disabled = false; btn.textContent = 'Send reset link'; }
+
+  /* The same message either way. The server answers identically whether or not
+     the address exists, and the interface must not undo that by rendering a
+     different string — these are the institution's administrator addresses. */
+  if (msg) {
+    msg.textContent = res?.message ||
+      'If that address belongs to an account, a reset link has been issued. It expires in 30 minutes.';
+    msg.classList.remove('hidden');
+  }
+}
+
+/* Opens the set-a-new-password screen when the page is loaded with ?reset=<token>.
+   The token is removed from the address bar immediately so it does not sit in
+   history, get bookmarked, or leak through a Referer header. */
+function checkForResetToken() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('reset');
+  if (!token) return;
+
+  history.replaceState(null, '', window.location.pathname);
+
+  document.getElementById('auth-panel-signin')?.classList.add('hidden');
+  document.getElementById('auth-panel-forgot')?.classList.add('hidden');
+  const panel = document.getElementById('auth-panel-reset');
+  if (panel) {
+    panel.classList.remove('hidden');
+    panel.dataset.token = token;
+  }
+}
+
+async function handleResetSubmit(e) {
+  if (e) e.preventDefault();
+  const panel = document.getElementById('auth-panel-reset');
+  const err = document.getElementById('reset-error');
+  const pw = document.getElementById('reset-password').value;
+  const pw2 = document.getElementById('reset-password2').value;
+
+  const fail = (m) => { if (err) { err.textContent = m; err.classList.remove('hidden'); } };
+  if (pw !== pw2) return fail('The two passwords do not match.');
+  if (pw.length < 8) return fail('Password must be at least 8 characters.');
+
+  const res = await API.resetPassword(panel.dataset.token, pw);
+  if (apiFailed(res)) return fail(res?.error || 'Could not reset the password.');
+
+  // The token is spent and every old session is dead; the only way on is a
+  // fresh sign-in.
+  delete panel.dataset.token;
+  hideForgotPassword();
+  showLoginError('');
+  showToast('✅ Password updated. Please sign in.');
+}
+
 function showLoginScreen() {
   const mainApp = document.getElementById('main-app');
   const loginScreen = document.getElementById('login-screen');
@@ -130,6 +214,11 @@ function showLoginScreen() {
 }
 
 // Called by api.js when the server rejects a stored token.
+// Called from core.js at boot, before anything else touches the login screen.
+function initAuthScreen() {
+  checkForResetToken();
+}
+
 function onSessionExpired() {
   API.logout();
   state.currentUser = null;
@@ -293,6 +382,11 @@ async function handleChangePassword(e) {
 
   const res = await API.changePassword(cur, nw);
   if (apiFailed(res)) return fail(res?.error || 'Could not update the password.');
+
+  /* The server bumped token_version, which revoked every session opened under
+     the old password — including this browser's. It returns a replacement, so
+     adopt it rather than signing the user out of the change they just made. */
+  if (res.token) setSessionToken(res.token);
 
   closeModal();
   releasePasswordLock();

@@ -86,7 +86,17 @@ const API = {
     }
   },
 
-  logout() {
+  /* Signing out now ends the session server-side as well. It used to only
+     remove the browser's copy, which left the token itself valid for the rest
+     of its twelve hours. The local copy is cleared whatever the request does,
+     so a network failure cannot leave someone stuck signed in. */
+  async logout() {
+    const token = getSessionToken();
+    if (token) {
+      try {
+        await fetchWithTimeout(`${API_BASE_URL}/api/auth/logout`, { method: 'POST' }, 4000);
+      } catch { /* offline or already expired — the local drop below still applies */ }
+    }
     setSessionToken(null);
   },
 
@@ -488,6 +498,11 @@ Object.assign(API, {
 Object.assign(API, {
   changePassword: (currentPassword, newPassword) =>
     apiRequest('POST', '/api/auth/change-password', { currentPassword, newPassword }),
+  // Changing a password ends every session opened under the old one, so the
+  // response carries a replacement token for this browser.
+  forgotPassword:   (email)         => apiRequest('POST',   '/api/auth/forgot-password', { email }),
+  resetPassword:    (token, newPassword) =>
+    apiRequest('POST', '/api/auth/reset-password', { token, newPassword }),
   getMyProfile: () => apiRequest('GET', '/api/profile/me'),
   updateMyProfile: (data) => apiRequest('PUT', '/api/profile/me', data)
 });
