@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="AlumniConnect — The AI-Powered Alumni Networking & Management Platform for Bangladeshi Institutions" />
-  <title>AlumniConnect — AI-Powered Alumni Network</title>
+  <meta name="description" content="Daffodil International College — staff administration portal" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>DIC Staff Portal — Daffodil International College</title>
   <!-- OpenGraph & WhatsApp In-App Browser Meta Tags -->
   <meta property="og:title" content="DIC Alumni Network — Daffodil International College" />
   <meta property="og:description" content="Official Alumni System for Daffodil International College (DIC)" />
@@ -34,6 +35,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="stylesheet" href="styles.css" />
+  <!-- Read by navigation.js. It selects the admin navigation and makes
+       enterAuthenticatedApp() refuse a non-staff account here. -->
+  <script>window.DIC_PORTAL = 'admin';</script>
 </head>
 <body>
   <!-- LOGIN SCREEN -->
@@ -49,19 +53,15 @@
       </div>
       <div class="login-card glass-card">
         <div class="login-step" id="step-1">
-          <div class="auth-tabs">
-            <button type="button" class="auth-tab active" id="auth-tab-signin" onclick="switchAuthMode('signin')">Sign In</button>
-            <button type="button" class="auth-tab" id="auth-tab-signup" onclick="switchAuthMode('signup')">Create Account</button>
-          </div>
 
           <!-- SIGN IN -->
           <div id="auth-panel-signin">
-          <h1 class="login-title">Sign In to DIC Portal</h1>
-          <p class="login-subtitle">Daffodil International College Alumni &amp; Staff Login</p>
+          <h1 class="login-title">DIC Staff Portal</h1>
+          <p class="login-subtitle">Administrator sign-in. Alumni use the main site.</p>
           <form onsubmit="handleLoginSubmit(event)">
             <div class="input-group">
               <label class="input-label">DIC Email Address</label>
-              <input type="email" id="login-email" class="form-input" inputmode="email" autocomplete="email" placeholder="alumni@dic.edu.bd" required />
+              <input type="email" id="login-email" class="form-input" inputmode="email" autocomplete="email" placeholder="you@dic.edu.bd" required />
             </div>
             <div class="input-group">
               <label class="input-label">Password</label>
@@ -71,7 +71,7 @@
             <button type="submit" class="btn btn-primary btn-full" id="login-submit-btn">Sign In to DIC →</button>
               <button type="button" class="link-btn" onclick="showForgotPassword()">Forgot your password?</button>
           </form>
-          <p class="login-footer" style="margin-top:16px">DIC Official Alumni System | PDPA 2026 Compliant</p>
+          <p class="login-footer" style="margin-top:16px">Staff accounts are provisioned by a super admin. There is no self-registration here.</p>
           </div><!-- /auth-panel-signin -->
 
             <!-- A super admin has nobody above them to click "Reset password",
@@ -118,69 +118,6 @@
                       onclick="hideForgotPassword()">Back to sign in</button>
             </div>
 
-
-          <!-- SIGN UP -->
-          <div id="auth-panel-signup" class="hidden">
-            <h1 class="login-title">Create Your Alumni Account</h1>
-            <p class="login-subtitle">For DIC alumni who have not been registered yet</p>
-            <form onsubmit="handleSignupSubmit(event)">
-              <div class="input-group">
-                <label class="input-label">Full Name</label>
-                <input type="text" id="signup-name" class="form-input" autocomplete="name" placeholder="e.g. Md Ismail Choudhury" required />
-              </div>
-              <div class="input-group">
-                <label class="input-label">Email Address</label>
-                <input type="email" id="signup-email" class="form-input" inputmode="email" autocomplete="email" placeholder="you@example.com" required />
-              </div>
-              <div class="field-grid-2">
-                <div class="input-group">
-                  <label class="input-label">HSC Passing Year</label>
-                  <input type="number" id="signup-hsc-year" class="form-input" inputmode="numeric" min="1960" max="2100" placeholder="e.g. 2015" />
-                </div>
-                <div class="input-group">
-                  <label class="input-label">HSC Group</label>
-                  <select id="signup-hsc-group" class="form-select">
-                    <option value="">Select…</option>
-                    <option>Science</option>
-                    <option>Business Studies</option>
-                    <option>Humanities</option>
-                  </select>
-                </div>
-              </div>
-              <div class="field-grid-2">
-                <div class="input-group">
-                  <label class="input-label">Mobile Number</label>
-                  <input type="tel" id="signup-mobile" class="form-input" inputmode="tel" autocomplete="tel" placeholder="01XXXXXXXXX" />
-                </div>
-                <div class="input-group">
-                  <label class="input-label">Blood Group</label>
-                  <select id="signup-blood-group" class="form-select">
-                    <option value="">Select…</option>
-                    <option>A+</option><option>A-</option>
-                    <option>B+</option><option>B-</option>
-                    <option>AB+</option><option>AB-</option>
-                    <option>O+</option><option>O-</option>
-                    <option>Unknown</option>
-                  </select>
-                </div>
-              </div>
-              <div class="input-group">
-                <label class="input-label">Password</label>
-                <input type="password" id="signup-password" class="form-input" autocomplete="new-password" minlength="8" placeholder="At least 8 characters" required />
-              </div>
-              <div class="input-group">
-                <label class="input-label">Confirm Password</label>
-                <input type="password" id="signup-password2" class="form-input" autocomplete="new-password" minlength="8" placeholder="Re-enter your password" required />
-              </div>
-              <label style="display:flex;align-items:flex-start;gap:10px;font-size:13px;color:var(--text-secondary);margin-bottom:14px;cursor:pointer">
-                <input type="checkbox" id="signup-consent" required />
-                <span>I consent to DIC storing and processing my alumni data in line with the PDPA 2026 privacy policy.</span>
-              </label>
-              <div class="login-error hidden" id="signup-error" role="alert"></div>
-              <button type="submit" class="btn btn-primary btn-full" id="signup-submit-btn">Create Account →</button>
-            </form>
-            <p class="auth-hint">New accounts start unverified. A DIC administrator reviews and verifies your alumni status before full access is granted.</p>
-          </div><!-- /auth-panel-signup -->
         </div>
       </div>
       <!-- Three stat pills used to sit here reading 38,420 alumni, ৳45.2L
@@ -282,6 +219,8 @@
       </div>
 
       <!-- ============ DIRECTORY PAGE ============ -->
+
+      <!-- ============ DIRECTORY PAGE ============ -->
       <div class="page hidden" id="page-directory">
         <div class="page-header">
           <div>
@@ -330,7 +269,116 @@
         <div class="load-more-container">
           <button class="btn btn-outline" onclick="loadMoreAlumni()">Load More Profiles</button>
         </div>
+      
+        <div class="glass-card mt-16">
+          <div class="card-header"><h3 class="card-title">Verification Queue</h3></div>
+          <div id="verification-queue"></div>
+        </div>
+        <div class="glass-card mt-16">
+          <div class="card-header"><h3 class="card-title">Bulk Import</h3></div>
+          <div id="bulk-import-panel"></div>
+        </div>
+        <div class="glass-card mt-16">
+          <div class="card-header"><h3 class="card-title">Custom Profile Fields</h3></div>
+          <div id="custom-field-manager"></div>
+        </div>
       </div>
+
+      <!-- ============ EVENTS PAGE ============ -->
+      <div class="page hidden" id="page-events">
+
+        <!-- ─── EVENT LIST ─── -->
+        <div id="ev-list-view">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Events</h1>
+              <p class="page-subtitle" id="ev-list-subtitle">Browse and register for college events</p>
+            </div>
+            <div class="page-header-actions" id="ev-list-actions"></div>
+          </div>
+
+          <!-- One toolbar row on desktop: compact search on the left, status
+               filters on the right. Stacks on narrow screens. -->
+          <div class="ev-toolbar">
+            <div class="ev-search">
+              <i data-lucide="search" class="ui-icon ev-search-icon" aria-hidden="true"></i>
+              <label class="sr-only" for="ev-search-input">Search events</label>
+              <input type="search" id="ev-search-input" class="ev-search-input"
+                     placeholder="Search events by name or venue"
+                     oninput="onEventSearch(this.value)" autocomplete="off" />
+            </div>
+            <div class="ev-filters" id="ev-filters" role="tablist" aria-label="Filter events by status"></div>
+          </div>
+
+          <div class="ev-grid" id="ev-list"></div>
+        </div>
+
+        <!-- ─── SINGLE EVENT WORKSPACE ─── -->
+        <div id="ev-workspace-view" class="hidden">
+          <button class="ev-back" onclick="closeEventWorkspace()">
+            <i data-lucide="arrow-left" class="ui-icon" aria-hidden="true"></i> All events
+          </button>
+
+          <!-- Event context header — present on every tab -->
+          <div id="ev-context-header"></div>
+
+          <nav class="ev-tabs" id="ev-tabs" role="tablist" aria-label="Event sections"></nav>
+          <div id="ev-tab-content" role="tabpanel"></div>
+        </div>
+      </div>
+
+      <!-- ============ JOBS PAGE ============ -->
+
+      <!-- ============ JOBS PAGE ============ -->
+      <div class="page hidden" id="page-jobs">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Alumni Job Board</h1>
+            <p class="page-subtitle">Closed-loop network · Alumni-only postings</p>
+          </div>
+          <button class="btn btn-primary" onclick="showPostJobModal()">+ Post a Job</button>
+        </div>
+        <div class="alumni-only-banner">
+          <i data-lucide="lock" class="ui-icon"></i> Closed-Loop Network — Only verified alumni can post and apply. Non-alumni access is restricted.
+        </div>
+        <div class="jobs-layout">
+          <div class="jobs-main">
+            <div class="jobs-filters">
+              <input type="text" class="form-input" placeholder="Search jobs, companies…" id="job-search" oninput="filterJobs(this.value)" />
+              <select class="form-select" onchange="filterJobType(this.value)">
+                <option value="">All Types</option>
+                <option value="fulltime">Full-time</option>
+                <option value="internship">Internship</option>
+                <option value="contract">Contract</option>
+              </select>
+              <select class="form-select" onchange="filterJobLocation(this.value)">
+                <option value="">All Locations</option>
+                <option value="dhaka">Dhaka</option>
+                <option value="remote">Remote</option>
+                <option value="uk">UK</option>
+                <option value="usa">USA</option>
+              </select>
+            </div>
+            <div id="jobs-list"></div>
+          </div>
+            <!-- Two cards used to sit here. "Your Resume" offered a PDF upload
+                 promising that "AI will extract skills and match jobs"; its click
+                 handler, triggerResumeUpload(), was never defined, nothing was
+                 stored, and no such matching exists. "Internship Drives" listed
+                 three openings at bKash, Pathao and Samsung R&amp;D that were a
+                 literal array shown beside the real postings. In their place is
+                 the referral queue, which lists rows job_referrals actually
+                 holds - requests that previously had no read path at all. -->
+            <div class="jobs-sidebar">
+              <div class="glass-card">
+                <div class="card-header"><h3 class="card-title">Referral Requests</h3></div>
+                <div id="job-referrals-list"></div>
+              </div>
+            </div>
+        </div>
+      </div>
+
+      <!-- ============ ANALYTICS PAGE ============ -->
 
       <!-- ============ MENTORSHIP PAGE ============ -->
       <div class="page hidden" id="page-mentorship">
@@ -403,6 +451,8 @@
       </div>
 
       <!-- ============ DONATIONS PAGE ============ -->
+
+      <!-- ============ DONATIONS PAGE ============ -->
       <div class="page hidden" id="page-donations">
         <div class="page-header">
           <div>
@@ -440,96 +490,31 @@
       </div>
 
       <!-- ============ EVENTS PAGE ============ -->
-      <div class="page hidden" id="page-events">
 
-        <!-- ─── EVENT LIST ─── -->
-        <div id="ev-list-view">
-          <div class="page-header">
-            <div>
-              <h1 class="page-title">Events</h1>
-              <p class="page-subtitle" id="ev-list-subtitle">Browse and register for college events</p>
-            </div>
-            <div class="page-header-actions" id="ev-list-actions"></div>
-          </div>
-
-          <!-- One toolbar row on desktop: compact search on the left, status
-               filters on the right. Stacks on narrow screens. -->
-          <div class="ev-toolbar">
-            <div class="ev-search">
-              <i data-lucide="search" class="ui-icon ev-search-icon" aria-hidden="true"></i>
-              <label class="sr-only" for="ev-search-input">Search events</label>
-              <input type="search" id="ev-search-input" class="ev-search-input"
-                     placeholder="Search events by name or venue"
-                     oninput="onEventSearch(this.value)" autocomplete="off" />
-            </div>
-            <div class="ev-filters" id="ev-filters" role="tablist" aria-label="Filter events by status"></div>
-          </div>
-
-          <div class="ev-grid" id="ev-list"></div>
-        </div>
-
-        <!-- ─── SINGLE EVENT WORKSPACE ─── -->
-        <div id="ev-workspace-view" class="hidden">
-          <button class="ev-back" onclick="closeEventWorkspace()">
-            <i data-lucide="arrow-left" class="ui-icon" aria-hidden="true"></i> All events
-          </button>
-
-          <!-- Event context header — present on every tab -->
-          <div id="ev-context-header"></div>
-
-          <nav class="ev-tabs" id="ev-tabs" role="tablist" aria-label="Event sections"></nav>
-          <div id="ev-tab-content" role="tabpanel"></div>
-        </div>
-      </div>
-
-      <!-- ============ JOBS PAGE ============ -->
-      <div class="page hidden" id="page-jobs">
+      <!-- ============ CHAPTERS PAGE ============ -->
+      <div class="page hidden" id="page-chapters">
         <div class="page-header">
           <div>
-            <h1 class="page-title">Alumni Job Board</h1>
-            <p class="page-subtitle">Closed-loop network · Alumni-only postings</p>
+            <h1 class="page-title">Chapter Management</h1>
+            <p class="page-subtitle">Regional · Batch · Interest-based groups</p>
           </div>
-          <button class="btn btn-primary" onclick="showPostJobModal()">+ Post a Job</button>
+          <button class="btn btn-primary" onclick="showCreateChapterModal()">+ New Chapter</button>
         </div>
-        <div class="alumni-only-banner">
-          <i data-lucide="lock" class="ui-icon"></i> Closed-Loop Network — Only verified alumni can post and apply. Non-alumni access is restricted.
-        </div>
-        <div class="jobs-layout">
-          <div class="jobs-main">
-            <div class="jobs-filters">
-              <input type="text" class="form-input" placeholder="Search jobs, companies…" id="job-search" oninput="filterJobs(this.value)" />
-              <select class="form-select" onchange="filterJobType(this.value)">
-                <option value="">All Types</option>
-                <option value="fulltime">Full-time</option>
-                <option value="internship">Internship</option>
-                <option value="contract">Contract</option>
-              </select>
-              <select class="form-select" onchange="filterJobLocation(this.value)">
-                <option value="">All Locations</option>
-                <option value="dhaka">Dhaka</option>
-                <option value="remote">Remote</option>
-                <option value="uk">UK</option>
-                <option value="usa">USA</option>
-              </select>
-            </div>
-            <div id="jobs-list"></div>
+        <div class="chapters-layout">
+          <div class="chapters-tree glass-card">
+            <div class="card-header"><h3 class="card-title">Chapter Hierarchy</h3></div>
+            <div id="chapter-tree"></div>
           </div>
-            <!-- Two cards used to sit here. "Your Resume" offered a PDF upload
-                 promising that "AI will extract skills and match jobs"; its click
-                 handler, triggerResumeUpload(), was never defined, nothing was
-                 stored, and no such matching exists. "Internship Drives" listed
-                 three openings at bKash, Pathao and Samsung R&amp;D that were a
-                 literal array shown beside the real postings. In their place is
-                 the referral queue, which lists rows job_referrals actually
-                 holds - requests that previously had no read path at all. -->
-            <div class="jobs-sidebar">
-              <div class="glass-card">
-                <div class="card-header"><h3 class="card-title">Referral Requests</h3></div>
-                <div id="job-referrals-list"></div>
-              </div>
+          <div class="chapter-detail glass-card" id="chapter-detail">
+            <div class="empty-state">
+              <div class="empty-icon"><i data-lucide="hexagon" class="ui-icon"></i></div>
+              <div class="empty-text">Select a chapter to view details</div>
             </div>
+          </div>
         </div>
       </div>
+
+      <!-- ============ NEWS PAGE ============ -->
 
       <!-- ============ ANALYTICS PAGE ============ -->
       <div class="page hidden" id="page-analytics">
@@ -591,242 +576,83 @@
       </div>
 
       <!-- ============ CHAPTERS PAGE ============ -->
-      <div class="page hidden" id="page-chapters">
+
+      <!-- ============ MODERATION ============ -->
+      <div class="page hidden" id="page-moderation">
         <div class="page-header">
           <div>
-            <h1 class="page-title">Chapter Management</h1>
-            <p class="page-subtitle">Regional · Batch · Interest-based groups</p>
+            <h1 class="page-title">Moderation</h1>
+            <p class="page-subtitle">Chapters and stories awaiting review</p>
           </div>
-          <button class="btn btn-primary" onclick="showCreateChapterModal()">+ New Chapter</button>
         </div>
-        <div class="chapters-layout">
-          <div class="chapters-tree glass-card">
-            <div class="card-header"><h3 class="card-title">Chapter Hierarchy</h3></div>
-            <div id="chapter-tree"></div>
+        <div id="moderation-panel"></div>
+      </div>
+
+      <!-- ============ BROADCASTS ============ -->
+      <div class="page hidden" id="page-broadcasts">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Broadcasts</h1>
+            <p class="page-subtitle">Announcements sent to alumni, with real delivery counts</p>
           </div>
-          <div class="chapter-detail glass-card" id="chapter-detail">
-            <div class="empty-state">
-              <div class="empty-icon"><i data-lucide="hexagon" class="ui-icon"></i></div>
-              <div class="empty-text">Select a chapter to view details</div>
-            </div>
+          <button class="btn btn-primary" onclick="showBroadcastModal()"><i data-lucide="megaphone" class="ui-icon"></i> New Broadcast</button>
+        </div>
+        <div class="glass-card"><div id="broadcast-history"></div></div>
+      </div>
+
+      <!-- ============ SEGMENTATION ============ -->
+      <div class="page hidden" id="page-segmentation">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Audience Segmentation</h1>
+            <p class="page-subtitle">Count the alumni a filter combination selects</p>
           </div>
+        </div>
+        <div id="segmentation-panel"></div>
+      </div>
+
+      <!-- ============ COMPLIANCE ============ -->
+      <div class="page hidden" id="page-compliance">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Compliance</h1>
+            <p class="page-subtitle">PDPA 2026 · CA 2023 &middot; encrypted identity vault and DSAR</p>
+          </div>
+        </div>
+        <div class="compliance-grid" id="compliance-grid"></div>
+        <div class="glass-card mt-16">
+          <div class="card-header"><h3 class="card-title">Identity Vault</h3></div>
+          <div id="nid-vault-panel"></div>
         </div>
       </div>
 
-      <!-- ============ NEWS PAGE ============ -->
-      <div class="page hidden" id="page-news">
+      <!-- ============ ADMINISTRATION ============ -->
+      <!-- Administrator accounts. Super admin only, here and on the server. -->
+      <div class="page hidden" id="page-administration">
         <div class="page-header">
           <div>
-            <h1 class="page-title">News &amp; Stories</h1>
-            <p class="page-subtitle">Institutional announcements · Alumni spotlights · Polls</p>
-          </div>
-          <button class="btn btn-primary" onclick="showCreateNewsModal()">+ Write Story</button>
-        </div>
-        <div class="news-layout">
-          <div class="news-main">
-            <!-- Live Poll widget -->
-            <div class="poll-widget glass-card" id="active-poll"></div>
-            <div id="news-feed"></div>
-          </div>
-          <div class="news-sidebar">
-            <div class="glass-card">
-              <div class="card-header"><h3 class="card-title">Spotlight Alumni</h3></div>
-              <div id="spotlight-alumni"></div>
-            </div>
-            <div class="glass-card mt-16">
-              <div class="card-header"><h3 class="card-title">Trending Tags</h3></div>
-              <div id="trending-tags"></div>
-            </div>
-            <div class="glass-card mt-16">
-              <div class="card-header"><h3 class="card-title">Past Polls</h3></div>
-              <div id="past-polls"></div>
-            </div>
+            <h1 class="page-title">Administration</h1>
+            <p class="page-subtitle">Institutional administrator accounts</p>
           </div>
         </div>
+        <div id="administration-body"></div>
       </div>
 
-      <!-- ============ MAP PAGE ============ -->
-      <div class="page hidden" id="page-map">
+      <!-- ============ AUDIT LOG ============ -->
+      <div class="page hidden" id="page-audit">
         <div class="page-header">
           <div>
-            <h1 class="page-title">Alumni Global Map</h1>
-            <p class="page-subtitle">Privacy-preserving regional clustering · Opt-in location</p>
-          </div>
-          <div class="location-toggle">
-            <label class="toggle-label">Share My Location</label>
-            <div class="toggle-switch" onclick="this.classList.toggle('active')">
-              <div class="toggle-thumb"></div>
-            </div>
+            <h1 class="page-title">Audit Logs</h1>
+            <p class="page-subtitle">Hash-chained, append-only record of privileged actions</p>
           </div>
         </div>
-        <div class="map-container glass-card">
-          <div class="map-canvas" id="alumni-map">
-            <div class="map-bg"></div>
-            <!-- SVG World Map simplified -->
-            <svg class="world-svg" viewBox="0 0 900 450" xmlns="http://www.w3.org/2000/svg" id="world-map-svg"></svg>
-            <!-- Cluster pins -->
-            <div class="map-clusters" id="map-clusters"></div>
-          </div>
-          <div class="map-note" id="map-note"></div>
-          <div class="map-legend">
-            <div class="legend-item"><span class="legend-dot large"></span> 1000+</div>
-            <div class="legend-item"><span class="legend-dot medium"></span> 100–999</div>
-            <div class="legend-item"><span class="legend-dot small"></span> &lt;100</div>
-          </div>
-        </div>
-        <!-- 47 countries, 12,847 mapped alumni, 8,241 in Bangladesh, 4,606
-             international, 23 active chapters — all five were literals, and the
-             pins on the map above were a fixed cluster list. Both are now drawn
-             from alumni_profiles.country / .city. -->
-        <div class="map-stats glass-card mt-16">
-          <div class="map-stat-item">
-            <div class="map-stat-val" id="map-stat-countries">—</div>
-            <div class="map-stat-lab">Countries</div>
-          </div>
-          <div class="map-stat-item">
-            <div class="map-stat-val" id="map-stat-mapped">—</div>
-            <div class="map-stat-lab">Alumni With a Location</div>
-          </div>
-          <div class="map-stat-item">
-            <div class="map-stat-val" id="map-stat-bd">—</div>
-            <div class="map-stat-lab">In Bangladesh</div>
-          </div>
-          <div class="map-stat-item">
-            <div class="map-stat-val" id="map-stat-intl">—</div>
-            <div class="map-stat-lab">International</div>
-          </div>
-          <div class="map-stat-item">
-            <div class="map-stat-val" id="map-stat-chapters">—</div>
-            <div class="map-stat-lab">Approved Chapters</div>
-          </div>
+        <div class="glass-card">
+          <div class="card-header"><h3 class="card-title">Immutable Audit Trail</h3><span class="card-badge teal">Write-Once</span></div>
+          <!-- Distinct from the dashboard's own #audit-log panel: two elements
+               sharing that id left this page permanently empty. -->
+          <div id="audit-log-page"></div>
         </div>
       </div>
-
-      <!-- ============ PROFILE PAGE ============ -->
-      <div class="page hidden" id="page-profile">
-        <div class="page-header">
-          <div>
-            <h1 class="page-title">My DIC Profile</h1>
-            <p class="page-subtitle">Complete 10-Section Digital Identity · Field Privacy Controls · Verification Badges</p>
-          </div>
-          <button class="btn btn-primary" onclick="showEditProfileV2()"><i data-lucide="pen-line" class="ui-icon"></i> Edit Profile</button>
-        </div>
-        <!-- Profile Completeness Score Banner -->
-          <!-- Every value in this banner was fixed markup: an 85% bar, "85%
-               complete - Gold Tier Alumni Identity", and a six-item checklist
-               reporting four sections done and two missing regardless of what
-               the profile actually contained. paintProfileCompleteness() now
-               measures the profile against PROFILE_COMPLETENESS_FIELDS. -->
-          <div class="profile-completeness-banner glass-card" id="profile-completeness">
-            <div class="pc-left">
-              <div class="pc-title">Profile Completeness Score</div>
-              <div class="pc-track"><div class="pc-fill" id="profile-completeness-bar" style="width:0%"></div></div>
-              <div class="pc-sub" id="profile-completeness-text">Checking your profile&hellip;</div>
-            </div>
-            <div class="pc-score-ring">
-              <div class="pc-ring-val" id="profile-completeness-ring" style="color:var(--daffodil-primary)">&mdash;</div>
-            </div>
-            <div class="pc-items" id="profile-completeness-items"></div>
-        </div>
-
-        <!-- 10-SECTION NAVIGATION TABS -->
-        <div class="profile-hub-tabs">
-          <button class="profile-hub-tab active" onclick="switchProfileHubSection('all', this)"><i data-lucide="pin" class="ui-icon"></i> Overview</button>
-          <button class="profile-hub-tab" onclick="switchProfileHubSection('basic', this)"><i data-lucide="user" class="ui-icon"></i> Basic Info</button>
-          <button class="profile-hub-tab" onclick="switchProfileHubSection('contact', this)"><i data-lucide="smartphone" class="ui-icon"></i> Contact &amp; Emergency</button>
-          <button class="profile-hub-tab" onclick="switchProfileHubSection('location', this)"><i data-lucide="map-pin" class="ui-icon"></i> Address &amp; Location</button>
-          <button class="profile-hub-tab" onclick="switchProfileHubSection('academic', this)"><i data-lucide="graduation-cap" class="ui-icon"></i> Academic Record</button>
-          <button class="profile-hub-tab" onclick="switchProfileHubSection('professional', this)"><i data-lucide="briefcase" class="ui-icon"></i> Professional &amp; CV</button>
-          <button class="profile-hub-tab" onclick="switchProfileHubSection('networking', this)"><i data-lucide="handshake" class="ui-icon"></i> Networking &amp; Hiring</button>
-          <button class="profile-hub-tab" onclick="switchProfileHubSection('social', this)"><i data-lucide="globe" class="ui-icon"></i> Social Profiles</button>
-          <button class="profile-hub-tab" onclick="switchProfileHubSection('interests', this)"><i data-lucide="star" class="ui-icon"></i> Skills &amp; Interests</button>
-          <button class="profile-hub-tab" onclick="switchProfileHubSection('privacy', this)"><i data-lucide="lock" class="ui-icon"></i> Privacy Controls</button>
-          <button class="profile-hub-tab" onclick="switchProfileHubSection('custom', this)"><i data-lucide="settings" class="ui-icon"></i> Custom Fields</button>
-        </div>
-
-        <div id="profile-hub-content">
-          <!-- Dynamically rendered 10 sections by render10SectionProfile() -->
-        </div>
-
-        <div class="profile-layout mt-16">
-          <!-- Digital ID Card -->
-          <div class="id-card-wrapper">
-            <div class="digital-id-card" id="digital-id-card">
-              <div class="id-card-header">
-                <div class="id-institution">Daffodil International College</div>
-                <div class="id-logo">DIC</div>
-              </div>
-                <!-- The card showed one invented person to everybody: Mohiuddin
-                     Rahman, BSc Computer Science, Batch of 2020, ID
-                     DIC-2020-0847, valid through Dec 2027, and an
-                     "Anti-Spoofing QR" encoding a verification URL on a domain
-                     that does not exist plus a random token. It now shows the
-                     signed-in account, and the QR is gone: no verification
-                     endpoint exists for an alumni identity, so any code here
-                     would scan to nothing. Event tickets are unaffected - those
-                     carry a real HMAC-signed payload. -->
-                <div class="id-card-body">
-                  <div class="id-avatar" id="id-card-avatar">&mdash;</div>
-                  <div class="id-info">
-                    <div class="id-name" id="id-card-name">&mdash;</div>
-                    <div class="id-degree" id="id-card-degree"></div>
-                    <div class="id-batch" id="id-card-batch"></div>
-                    <div class="id-role-badge" id="id-card-role">&mdash;</div>
-                  </div>
-                </div>
-                <div class="id-card-footer">
-                  <div class="id-meta">
-                    <div class="id-number" id="id-card-number"></div>
-                    <div class="id-valid" id="id-card-verified"></div>
-                  </div>
-                </div>
-              <div class="id-hologram"></div>
-            </div>
-            <div class="id-wallet-btns">
-              <button class="wallet-btn apple" onclick="showToast('🍎 Added to Apple Wallet')"><i data-lucide="wallet" class="ui-icon"></i> Add to Apple Wallet</button>
-              <button class="wallet-btn google" onclick="showToast('G Added to Google Wallet')">G Add to Google Wallet</button>
-            </div>
-            <!-- Verification Badges Card -->
-            <div class="glass-card mt-16">
-              <div class="card-header"><h3 class="card-title"><i data-lucide="shield" class="ui-icon"></i> Verification Badges</h3></div>
-              <div class="verification-badges-grid">
-                <span class="verify-pill"><i data-lucide="check" class="ui-icon"></i> Email Verified</span>
-                <span class="verify-pill"><i data-lucide="check" class="ui-icon"></i> Phone Verified</span>
-                <span class="verify-pill"><i data-lucide="check" class="ui-icon"></i> Student ID Verified</span>
-                <span class="verify-pill"><i data-lucide="check" class="ui-icon"></i> Alumni Board Verified</span>
-              </div>
-            </div>
-          </div>
-          <!-- Profile Details -->
-          <div class="profile-details">
-            <div class="glass-card">
-              <div class="card-header"><h3 class="card-title">Career Timeline</h3></div>
-              <div class="career-timeline" id="career-timeline"></div>
-            </div>
-            <div class="glass-card mt-16">
-              <div class="card-header"><h3 class="card-title">Alumni Badges &amp; Achievements</h3></div>
-              <div id="alumni-badges"></div>
-            </div>
-            <div class="glass-card mt-16">
-              <div class="card-header"><h3 class="card-title">Data Rights &amp; Compliance</h3></div>
-              <div class="dsar-section">
-                <p class="dsar-desc">PDPA 2026 — You have the right to access, export, and delete your personal data.</p>
-                <div class="dsar-actions">
-                  <button class="btn btn-outline" onclick="exportUserData('json')"><i data-lucide="package" class="ui-icon"></i> Export JSON</button>
-                  <button class="btn btn-outline" onclick="exportUserData('csv')"><i data-lucide="clipboard-list" class="ui-icon"></i> Export CSV</button>
-                  <button class="btn btn-danger" onclick="showDeleteAccount()"><i data-lucide="trash-2" class="ui-icon"></i> Request Deletion</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <!-- The DIC Admin Control Center used to sit here: a tab strip over bulk
-           import, custom fields, moderation, the RBAC matrix, the audit log, the
-           compliance vault, the identity vault, the sync ledger, broadcast
-           history and segmentation. It shipped to every visitor, and
-           showPage('admin') opened its shell for an alumnus. Administration now
-           lives at /admin, a separate entry point with its own script list. -->
 
     </main>
 
@@ -875,32 +701,23 @@
   <script src="https://cdn.jsdelivr.net/npm/lucide@0.474.0/dist/umd/lucide.js"></script>
   <script src="api.js"></script>
 
-  <!-- app.js was a single 8,481-line file. It is now fifteen plain scripts, one
-       per area of the application. They are classic scripts, not modules, so
-       they still share one global scope: a function declared in any of them is
-       callable from any other and from the inline handlers in the markup above,
-       exactly as before.
-
-       Order is deliberate and must not be changed to async or module type.
-       Nothing runs while these load except a few listener registrations, so the
-       order below is for readability rather than correctness: shared
-       infrastructure, then sign-in and navigation, then one file per screen,
-       with the largest module last. -->
+  <!-- The staff portal loads only what it uses. directory.js, profile.js and
+       news.js are absent because it has no alumni directory card grid, no
+       personal profile hub and no news feed; administration.js is present and
+       is not loaded by the alumni site at all. Same files, different list. -->
   <script src="js/core.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/navigation.js"></script>
   <script src="js/notifications.js"></script>
   <script src="js/dashboard.js"></script>
   <script src="js/directory.js"></script>
-  <script src="js/profile.js"></script>
   <script src="js/mentorship.js"></script>
   <script src="js/donations.js"></script>
   <script src="js/jobs.js"></script>
   <script src="js/chapters.js"></script>
-  <script src="js/news.js"></script>
-  <!-- admin.js and compliance.js are not loaded here. The alumni site has no
-       administration screens, so 82 KB of code an alumnus could never use is no
-       longer sent to every visitor. Both live on the staff portal at /admin. -->
+  <script src="js/admin.js"></script>
+  <script src="js/compliance.js"></script>
+  <script src="js/administration.js"></script>
   <script src="js/events.js"></script>
 </body>
 </html>

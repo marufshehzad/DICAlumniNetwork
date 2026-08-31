@@ -1,10 +1,31 @@
 {
+  "$comment": [
+    "The Access-Control-Allow-Origin: * header that used to sit here applied to",
+    "every path including /api/*, which made the whole API readable cross-origin",
+    "by anything holding a token. It is removed: server.js sets CORS itself, from",
+    "PUBLIC_ORIGIN and ADMIN_ORIGIN, so there is one place that decides and it is",
+    "the one that knows the deployment's origins.",
+    "",
+    "The rewrite sends /api/* to the Express app; everything else is served as a",
+    "static file, and server.js's own fallback picks index.html or admin.html by",
+    "path and Host. Both portals therefore run on this one deployment: point",
+    "admin.<domain> at it and set ADMIN_ORIGIN, and no other change is needed."
+  ],
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "Access-Control-Allow-Origin", "value": "*" },
-        { "key": "X-Content-Type-Options", "value": "nosniff" }
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "SAMEORIGIN" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+      ]
+    },
+    {
+      "$comment": "The staff portal must never be indexed or framed.",
+      "source": "/admin(.*)",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow" },
+        { "key": "X-Frame-Options", "value": "DENY" }
       ]
     }
   ],

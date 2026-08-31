@@ -39,7 +39,13 @@ function decryptField({ ciphertext, iv, auth_tag }) {
 // ─── IMMUTABLE AUDIT TRAIL ───
 // Each entry is chained to the previous one's hash, so a deleted or edited row
 // breaks verification. audit_logs had a table but nothing ever wrote to it.
-async function writeAudit(action, meta, icon = '🛡') {
+/* The actor used to be recorded only inside the free-text meta string ("by user
+   5"), which cannot be queried, joined or filtered. An optional fifth argument
+   now carries { actorId, targetType, targetId, ip } into first-class columns.
+   Existing call sites pass three arguments and keep working; their entries
+   simply leave the new columns NULL. The hash chain is unchanged — it still
+   covers action + meta + timestamp, so no historical entry is invalidated. */
+async function writeAudit(action, meta, icon = '🛡', ctx = {}) {
   try {
     const prev = await db.query('SELECT hash FROM audit_logs ORDER BY id DESC LIMIT 1');
     const prevHash = prev.rows[0]?.hash || 'GENESIS';
@@ -47,8 +53,10 @@ async function writeAudit(action, meta, icon = '🛡') {
       .update(prevHash + action + meta + new Date().toISOString())
       .digest('hex').slice(0, 16);
     await db.query(
-      'INSERT INTO audit_logs (icon, action, meta, hash) VALUES ($1, $2, $3, $4)',
-      [icon, action, meta, `0x${hash.toUpperCase()}`]
+      `INSERT INTO audit_logs (icon, action, meta, hash, actor_id, target_type, target_id, ip)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [icon, action, meta, `0x${hash.toUpperCase()}`,
+       ctx.actorId ?? null, ctx.targetType ?? null, ctx.targetId ?? null, ctx.ip ?? null]
     );
   } catch (e) {
     console.warn('audit write failed:', e.message);
@@ -61,218 +69,9 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
 
   const ok = (res, fn) => fn().catch(err => res.status(500).json({ error: err.message }));
 
-  /* ══════════════════════════════════════════════════════════
-     EVENTS — full CRUD (table existed, zero endpoints)
-     ══════════════════════════════════════════════════════════ */
+  /* Events, ticketing and check-in moved to routes_events.js in v5.
+     They are one lifecycle and were previously split across three files. */
 
-  app.get('/api/events', requireAuth, (req, res) => ok(res, async () => {
-    const { status } = req.query;
-    const rows = await db.query(`
-      SELECT e.*,
-             (SELECT COUNT(*)::int FROM event_registrations r
-               WHERE r.event_id = e.id AND r.status = 'confirmed') AS registered_live,
-             EXISTS (SELECT 1 FROM event_registrations r
-                      WHERE r.event_id = e.id AND r.user_id = $1 AND r.status <> 'cancelled') AS is_registered
-      FROM events e
-      ${status ? 'WHERE e.status = $2' : ''}
-      ORDER BY e.id ASC
-    `, status ? [req.user.uid, status] : [req.user.uid]);
-    res.json(rows.rows);
-  }));
-
-  app.post('/api/events', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
-    const { title, eventDate, eventTime, venue, capacity, price, type, emoji } = req.body;
-    if (!title || !title.trim()) return res.status(400).json({ error: 'Event title is required' });
-    if (!venue || !venue.trim()) return res.status(400).json({ error: 'Venue is required' });
-
-    const row = await db.query(`
-      INSERT INTO events (emoji, title, event_date, event_time, venue, capacity, price, type, status)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'upcoming') RETURNING *
-    `, [emoji || '🎓', title.trim(), eventDate || 'TBA', eventTime || '', venue.trim(),
-        parseInt(capacity) || 100, price || 'Free', type || 'Gala']);
-
-    await writeAudit('Event Created', `"${title.trim()}" by user ${req.user.uid}`, '🎪');
-    res.json(row.rows[0]);
-  }));
-
-  app.put('/api/events/:id', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
-    const { title, eventDate, eventTime, venue, capacity, price, type, status, emoji } = req.body;
-    const row = await db.query(`
-      UPDATE events SET
-        title = COALESCE($2,title), event_date = COALESCE($3,event_date),
-        event_time = COALESCE($4,event_time), venue = COALESCE($5,venue),
-        capacity = COALESCE($6,capacity), price = COALESCE($7,price),
-        type = COALESCE($8,type), status = COALESCE($9,status), emoji = COALESCE($10,emoji)
-      WHERE id = $1 RETURNING *
-    `, [parseInt(req.params.id), title, eventDate, eventTime, venue,
-        capacity ? parseInt(capacity) : null, price, type, status, emoji]);
-    if (!row.rows.length) return res.status(404).json({ error: 'Event not found' });
-    await writeAudit('Event Updated', `Event ${req.params.id} by user ${req.user.uid}`, '🎪');
-    res.json(row.rows[0]);
-  }));
-
-  app.delete('/api/events/:id', requireRole(...ADMIN_ROLES), (req, res) => ok(res, async () => {
-    const row = await db.query('DELETE FROM events WHERE id = $1 RETURNING title', [parseInt(req.params.id)]);
-    if (!row.rows.length) return res.status(404).json({ error: 'Event not found' });
-    await writeAudit('Event Deleted', `"${row.rows[0].title}" by user ${req.user.uid}`, '🗑');
-    res.json({ success: true });
-  }));
-
-  /* ─── TICKETING, REGISTRATION & CHECK-IN (REQ-06) ─── */
-
-  app.post('/api/events/:id/register', requireAuth, (req, res) => ok(res, async () => {
-    const eventId = parseInt(req.params.id);
-    const { paymentGateway, clientMutationId } = req.body || {};
-
-    // Offline replays carry a client mutation id; a duplicate is a no-op.
-    if (clientMutationId) {
-      const seen = await db.query('SELECT 1 FROM sync_mutations WHERE client_mutation_id = $1', [clientMutationId]);
-      if (seen.rows.length) {
-        const existing = await db.query(
-          'SELECT * FROM event_registrations WHERE event_id = $1 AND user_id = $2', [eventId, req.user.uid]);
-        return res.json({ duplicate: true, registration: existing.rows[0] || null });
-      }
-    }
-
-    const client = await db.pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      // Lock the event row so two concurrent buyers cannot both take the last seat.
-      const ev = await client.query('SELECT * FROM events WHERE id = $1 FOR UPDATE', [eventId]);
-      if (!ev.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Event not found' }); }
-      const event = ev.rows[0];
-
-      const dup = await client.query(
-        'SELECT * FROM event_registrations WHERE event_id = $1 AND user_id = $2', [eventId, req.user.uid]);
-      if (dup.rows.length && dup.rows[0].status !== 'cancelled') {
-        await client.query('ROLLBACK');
-        return res.status(409).json({ error: 'You already have a ticket for this event', registration: dup.rows[0] });
-      }
-
-      const taken = await client.query(
-        "SELECT COUNT(*)::int n FROM event_registrations WHERE event_id = $1 AND status = 'confirmed'", [eventId]);
-      const status = taken.rows[0].n >= event.capacity ? 'waitlisted' : 'confirmed';
-
-      const ticketCode = ref('DIC-TKT');
-      // Signed payload so a scanned QR can be validated rather than trusted.
-      const qrPayload = JSON.stringify({
-        t: ticketCode, e: eventId, u: req.user.uid,
-        s: crypto.createHmac('sha256', ENCRYPTION_KEY || 'dic-ticket')
-                 .update(`${ticketCode}:${eventId}:${req.user.uid}`).digest('hex').slice(0, 16)
-      });
-
-      const priceValue = parseFloat(String(event.price).replace(/[^\d.]/g, '')) || 0;
-
-      const reg = await client.query(`
-        INSERT INTO event_registrations
-          (event_id, user_id, ticket_code, qr_payload, amount_paid, payment_gateway, status)
-        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *
-      `, [eventId, req.user.uid, ticketCode, qrPayload, priceValue, paymentGateway || null, status]);
-
-      if (status === 'confirmed') {
-        await client.query('UPDATE events SET registered_count = registered_count + 1 WHERE id = $1', [eventId]);
-      }
-
-      if (clientMutationId) {
-        await client.query(
-          `INSERT INTO sync_mutations (client_mutation_id, user_id, entity, action, payload)
-           VALUES ($1,$2,'event_registration','create',$3) ON CONFLICT DO NOTHING`,
-          [clientMutationId, req.user.uid, JSON.stringify({ eventId })]);
-      }
-
-      await client.query(`
-        INSERT INTO notifications (user_id, icon, title, subtitle)
-        VALUES ($1, '🎫', $2, $3)
-      `, [req.user.uid,
-          status === 'confirmed' ? 'Ticket Confirmed ✓' : 'Added to Waitlist',
-          status === 'confirmed'
-            ? `Your ticket for "${event.title}" is ${ticketCode}.`
-            : `"${event.title}" is at capacity — you are on the waitlist.`]);
-
-      await client.query('COMMIT');
-      res.json({ registration: reg.rows[0], status, event: event.title });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
-  }));
-
-  app.delete('/api/events/:id/register', requireAuth, (req, res) => ok(res, async () => {
-    const eventId = parseInt(req.params.id);
-    const row = await db.query(
-      `UPDATE event_registrations SET status = 'cancelled'
-       WHERE event_id = $1 AND user_id = $2 AND status <> 'cancelled' RETURNING *`,
-      [eventId, req.user.uid]);
-    if (!row.rows.length) return res.status(404).json({ error: 'No active ticket found' });
-    await db.query('UPDATE events SET registered_count = GREATEST(0, registered_count - 1) WHERE id = $1', [eventId]);
-
-    // Promote the earliest waitlisted person into the freed seat.
-    const promoted = await db.query(`
-      UPDATE event_registrations SET status = 'confirmed'
-      WHERE id = (SELECT id FROM event_registrations
-                  WHERE event_id = $1 AND status = 'waitlisted' ORDER BY created_at ASC LIMIT 1)
-      RETURNING user_id, ticket_code
-    `, [eventId]);
-    if (promoted.rows.length) {
-      await db.query('UPDATE events SET registered_count = registered_count + 1 WHERE id = $1', [eventId]);
-      await db.query(`INSERT INTO notifications (user_id, icon, title, subtitle) VALUES ($1,'🎟','A seat opened up — you are in!',$2)`,
-        [promoted.rows[0].user_id, `Your waitlisted ticket ${promoted.rows[0].ticket_code} is now confirmed.`]);
-    }
-    res.json({ success: true, promoted: promoted.rows.length > 0 });
-  }));
-
-  app.get('/api/events/:id/attendees', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
-    const rows = await db.query(`
-      SELECT r.id, r.ticket_code, r.status, r.checked_in, r.checked_in_at, r.amount_paid,
-             u.id AS user_id, u.full_name AS name, u.initials,
-             ap.batch, ap.department AS dept, ap.current_company AS company
-      FROM event_registrations r
-      JOIN users u ON u.id = r.user_id
-      LEFT JOIN alumni_profiles ap ON ap.user_id = u.id
-      WHERE r.event_id = $1
-      ORDER BY r.status, r.created_at ASC
-    `, [parseInt(req.params.id)]);
-    res.json(rows.rows);
-  }));
-
-  app.get('/api/events/:id/my-ticket', requireAuth, (req, res) => ok(res, async () => {
-    const rows = await db.query(
-      `SELECT * FROM event_registrations WHERE event_id = $1 AND user_id = $2 AND status <> 'cancelled'`,
-      [parseInt(req.params.id), req.user.uid]);
-    res.json(rows.rows[0] || null);
-  }));
-
-  app.post('/api/events/checkin', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
-    const { ticketCode } = req.body || {};
-    if (!ticketCode) return res.status(400).json({ error: 'ticketCode is required' });
-
-    const found = await db.query(`
-      SELECT r.*, u.full_name, ap.batch
-      FROM event_registrations r
-      JOIN users u ON u.id = r.user_id
-      LEFT JOIN alumni_profiles ap ON ap.user_id = u.id
-      WHERE r.ticket_code = $1
-    `, [ticketCode.trim()]);
-
-    if (!found.rows.length) return res.status(404).json({ error: 'Ticket not recognised' });
-    const t = found.rows[0];
-    if (t.status === 'cancelled') return res.status(409).json({ error: 'This ticket was cancelled' });
-    if (t.checked_in) {
-      return res.status(409).json({ error: 'Already checked in', attendee: t.full_name, at: t.checked_in_at });
-    }
-
-    const upd = await db.query(`
-      UPDATE event_registrations
-      SET checked_in = TRUE, checked_in_at = CURRENT_TIMESTAMP, checked_in_by = $2
-      WHERE id = $1 RETURNING checked_in_at
-    `, [t.id, req.user.uid]);
-
-    await writeAudit('Attendee Checked In', `${t.full_name} · ticket ${ticketCode}`, '✅');
-    res.json({ success: true, attendee: t.full_name, batch: t.batch, at: upd.rows[0].checked_in_at });
-  }));
 
   /* ══════════════════════════════════════════════════════════
      JOBS — CRUD, applications, referrals (REQ-07)
@@ -536,7 +335,10 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
     const rows = await db.query(`
       SELECT COALESCE(NULLIF(d.is_anonymous, TRUE)::text, '') AS ignored,
              CASE WHEN d.is_anonymous THEN 'Anonymous Donor' ELSE u.full_name END AS name,
-             ap.batch, SUM(d.amount)::numeric AS total
+             ap.batch, SUM(d.amount)::numeric AS total,
+             -- Backs the line under each name, which used to be an invented
+             -- status tier assigned purely by position in this list.
+             COUNT(*)::int AS donation_count
       FROM donations d
       LEFT JOIN users u ON u.id = d.donor_user_id
       LEFT JOIN alumni_profiles ap ON ap.user_id = u.id
@@ -621,17 +423,31 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
     `, [req.user.uid]);
     const p = me.rows[0] || {};
 
+    /* match_score is a count of the profile attributes this mentor shares with
+       the caller, out of the four the database can actually compare. It used to
+       be a weighted percentage carrying two terms that measured nothing:
+       "+ 15 -- language preference 15%" was added to every row unconditionally
+       (alumni_profiles has no language column at all), and a 10-point
+       can_mentor term that every row scores, since can_mentor = TRUE is the
+       WHERE clause below. Together they handed a stranger 25% before any real
+       attribute was compared, which is why the weakest possible match still
+       read as a respectable score.
+
+       Each matched_* flag is returned with the count so the interface can name
+       the attributes that matched rather than show a bare percentage. */
     const rows = await db.query(`
       SELECT u.id, u.full_name AS name, u.initials,
              ap.current_company AS company, ap.job_title AS role, ap.batch, ap.color,
              ap.department, ap.industry, ap.city,
+             ($2::text IS NOT NULL AND ap.industry   IS NOT DISTINCT FROM $2) AS matched_industry,
+             ($3::text IS NOT NULL AND ap.skills     ILIKE '%' || $3 || '%')  AS matched_skill,
+             ($4::text IS NOT NULL AND ap.city       IS NOT DISTINCT FROM $4) AS matched_city,
+             ($5::text IS NOT NULL AND ap.department IS NOT DISTINCT FROM $5) AS matched_department,
              (
-                 CASE WHEN ap.industry   IS NOT DISTINCT FROM $2 THEN 25 ELSE 0 END   -- industry domain 25%
-               + CASE WHEN ap.skills     ILIKE '%' || COALESCE($3,'~') || '%' THEN 20 ELSE 0 END -- skill overlap 20%
-               + CASE WHEN ap.city       IS NOT DISTINCT FROM $4 THEN 15 ELSE 0 END   -- geo proximity 15%
-               + CASE WHEN ap.department IS NOT DISTINCT FROM $5 THEN 15 ELSE 0 END   -- shared campus/dept 15%
-               + 15                                                                    -- language preference 15%
-               + CASE WHEN ap.can_mentor THEN 10 ELSE 0 END                            -- availability 10%
+                 CASE WHEN $2::text IS NOT NULL AND ap.industry   IS NOT DISTINCT FROM $2 THEN 1 ELSE 0 END
+               + CASE WHEN $3::text IS NOT NULL AND ap.skills     ILIKE '%' || $3 || '%'  THEN 1 ELSE 0 END
+               + CASE WHEN $4::text IS NOT NULL AND ap.city       IS NOT DISTINCT FROM $4 THEN 1 ELSE 0 END
+               + CASE WHEN $5::text IS NOT NULL AND ap.department IS NOT DISTINCT FROM $5 THEN 1 ELSE 0 END
              ) AS match_score
       FROM users u
       JOIN alumni_profiles ap ON ap.user_id = u.id
@@ -649,7 +465,11 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
   }));
 
   app.post('/api/mentorships', requireAuth, (req, res) => ok(res, async () => {
-    const { mentorId, subject, message, matchScore } = req.body;
+    // matchScore used to be read from the request body and stored as though it
+    // had been computed. Any caller could write any number into the column, and
+    // the browser was sending back whatever the suggestion list had shown it.
+    // It is recomputed here from the two profiles instead.
+    const { mentorId, subject, message } = req.body;
     const mentor = parseInt(mentorId);
     if (!mentor) return res.status(400).json({ error: 'mentorId is required' });
     if (mentor === req.user.uid) return res.status(400).json({ error: 'You cannot mentor yourself' });
@@ -660,10 +480,23 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
       [mentor, req.user.uid]);
     if (dup.rows.length) return res.status(409).json({ error: 'You already have an open request with this mentor' });
 
+    // Same four comparisons as /api/mentorships/suggestions, so the stored score
+    // means the same thing wherever it is read.
+    const scored = await db.query(`
+      SELECT (
+          CASE WHEN me.industry   IS NOT NULL AND them.industry   IS NOT DISTINCT FROM me.industry   THEN 1 ELSE 0 END
+        + CASE WHEN me.skills     IS NOT NULL AND them.skills     ILIKE '%' || split_part(me.skills, ',', 1) || '%' THEN 1 ELSE 0 END
+        + CASE WHEN me.city       IS NOT NULL AND them.city       IS NOT DISTINCT FROM me.city       THEN 1 ELSE 0 END
+        + CASE WHEN me.department IS NOT NULL AND them.department IS NOT DISTINCT FROM me.department THEN 1 ELSE 0 END
+      )::int AS score
+      FROM alumni_profiles me, alumni_profiles them
+      WHERE me.user_id = $1 AND them.user_id = $2
+    `, [req.user.uid, mentor]);
+
     const row = await db.query(`
       INSERT INTO mentorships (mentor_id, mentee_id, subject, message, match_score)
       VALUES ($1,$2,$3,$4,$5) RETURNING *
-    `, [mentor, req.user.uid, subject.trim(), message || null, parseInt(matchScore) || 0]);
+    `, [mentor, req.user.uid, subject.trim(), message || null, scored.rows[0]?.score ?? 0]);
 
     const me = await db.query('SELECT full_name FROM users WHERE id=$1', [req.user.uid]);
     await db.query(`INSERT INTO notifications (user_id, icon, title, subtitle) VALUES ($1,'🤝','New Mentorship Request',$2)`,

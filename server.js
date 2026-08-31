@@ -13,9 +13,62 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 8000;
 
-app.use(cors());
+// Behind Vercel (and any reverse proxy) the socket address is the proxy's.
+// Trusting one hop makes req.ip the real client, which the login throttle needs.
+app.set('trust proxy', 1);
+
+/* CORS.
+
+   Today both portals are served from this origin, so no cross-origin request is
+   made at all and this middleware never fires. It matters the moment
+   admin.<domain> is pointed at this deployment: set PUBLIC_ORIGIN and
+   ADMIN_ORIGIN and only those two are allowed. With neither set the previous
+   wildcard behaviour is kept, so nothing breaks in development.
+
+   Credentials are deliberately not enabled. The session is a bearer token in an
+   Authorization header, never a cookie, so there is nothing for the browser to
+   attach automatically and no CSRF surface to defend. */
+const ALLOWED_ORIGINS = [process.env.PUBLIC_ORIGIN, process.env.ADMIN_ORIGIN]
+  .filter(Boolean).map(o => o.trim().replace(/\/$/, '').toLowerCase());
+
+app.use(cors(ALLOWED_ORIGINS.length ? {
+  origin(origin, cb) {
+    // A same-origin request has no Origin header; so do curl and server-to-server.
+    if (!origin) return cb(null, true);
+    cb(null, ALLOWED_ORIGINS.includes(origin.replace(/\/$/, '').toLowerCase()));
+  },
+  credentials: false
+} : undefined));
 app.use(bodyParser.json());
-app.use(express.static(__dirname));
+/* Security headers, set here rather than only in vercel.json. Those are edge
+   headers: they exist on Vercel and nowhere else, so running this behind nginx,
+   a VPS or `node server.js` left the staff portal indexable and framable. Both
+   layers now set them, and the values agree.
+
+   wantsAdminPortal() is declared further down; it is only called at request
+   time, by which point the module has finished evaluating. */
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (wantsAdminPortal(req)) {
+    // The staff portal must never be indexed, and must never be framed — the
+    // one place on the platform where a clickjacked click provisions accounts.
+    res.set('X-Robots-Tag', 'noindex, nofollow');
+    res.set('X-Frame-Options', 'DENY');
+    res.set('Content-Security-Policy', "frame-ancestors 'none'");
+  } else {
+    res.set('X-Frame-Options', 'SAMEORIGIN');
+  }
+  next();
+});
+
+/* index:false so that a bare "/" falls through to the SPA handler at the bottom
+   of this file rather than being answered here with index.html. Without it the
+   static middleware served the alumni site for "/" on every host, so
+   admin.<domain>/ landed on the alumni portal while admin.<domain>/anything-else
+   correctly landed on the staff portal. Named files, /admin.html included, are
+   still served directly. */
+app.use(express.static(__dirname, { index: false }));
 
 /* ============================================================
    AUTHENTICATION — password hashing, signed sessions, RBAC
@@ -39,6 +92,10 @@ function hashPassword(plain) {
 
 function verifyPassword(plain, stored) {
   if (!stored) return false;
+  // A LOCKED$ sentinel is not a password and can never be matched. Seeded
+  // accounts ship locked so a fresh database has no known default credential;
+  // `node rotate_credentials.js` sets a real one.
+  if (stored.startsWith('LOCKED$')) return false;
   if (!stored.startsWith('scrypt$')) {
     // Legacy plaintext row — constant-time compare, then caller upgrades it.
     const a = Buffer.from(String(plain));
@@ -79,20 +136,77 @@ function readToken(req) {
   return header.startsWith('Bearer ') ? header.slice(7) : null;
 }
 
-// Attaches req.user when a valid token is present; never rejects.
-function attachUser(req, res, next) {
-  req.user = verifyToken(readToken(req));
+/* Attaches req.user when a valid token is present; never rejects.
+
+   The signed token carries the role that was current when it was issued, but
+   that value is only a hint: the role used for every authorisation decision is
+   re-read from the users row on each request. Two consequences that the
+   previous token-only version got wrong — demoting a user took effect
+   immediately rather than up to SESSION_TTL_MS later, and a deleted account's
+   outstanding token stops working at once instead of staying valid until it
+   expires. A user still cannot influence their own role: the token is
+   HMAC-signed, and the column behind it is writable only by an administrator. */
+async function attachUser(req, res, next) {
+  const payload = verifyToken(readToken(req));
+  if (!payload) { req.user = null; return next(); }
+
+  try {
+    const r = await db.query(
+      'SELECT id, role, status, token_version FROM users WHERE id = $1', [payload.uid]);
+    // Account deleted since the token was issued — the token is now inert.
+    if (r.rows.length === 0) { req.user = null; return next(); }
+
+    /* Session revocation. The token carries the version it was minted at; the
+       row carries the current one. Bumping the column — on sign-out, password
+       change, password reset or suspension — makes every token issued before
+       the bump fail here, with no session table and no change to the token
+       format. A token minted before this column existed carries no version and
+       is treated as version 1, so no existing session breaks. */
+    if ((payload.tv ?? 1) !== r.rows[0].token_version) {
+      req.user = null;
+      req.staleSession = true;
+      return next();
+    }
+
+    /* Suspension takes effect on the next request, not when the token expires.
+       Sessions are stateless bearer tokens with a 12-hour life, so without this
+       check suspending an administrator would leave them working for the rest
+       of the day. Reading status here costs nothing: the row is already being
+       fetched for the role. */
+    if (r.rows[0].status === 'suspended') {
+      req.user = null;
+      req.suspended = true;
+      return next();
+    }
+    req.user = { ...payload, role: r.rows[0].role };
+  } catch {
+    // The database is unreachable. Fail closed rather than fall back to the
+    // role asserted by the token.
+    req.user = null;
+  }
   next();
 }
 app.use(attachUser);
 
+// A suspended account gets a distinct message so the holder knows to ask an
+// administrator rather than retrying their password.
+const SUSPENDED = { error: 'This account is suspended. Contact an administrator.' };
+
+// A revoked session is not a permissions problem — the client should sign in
+// again, which is exactly what api.js does with a 401.
+const STALE = { error: 'This session has ended. Please sign in again.' };
+
 function requireAuth(req, res, next) {
+  if (req.suspended) return res.status(403).json(SUSPENDED);
+  if (req.staleSession) return res.status(401).json(STALE);
   if (!req.user) return res.status(401).json({ error: 'Authentication required' });
   next();
 }
 
 function requireRole(...roles) {
   return (req, res, next) => {
+    if (req.suspended) return res.status(403).json(SUSPENDED);
+    if (req.staleSession) return res.status(401).json(STALE);
     if (!req.user) return res.status(401).json({ error: 'Authentication required' });
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({ error: 'Insufficient permissions for this action' });
@@ -101,20 +215,53 @@ function requireRole(...roles) {
   };
 }
 
+/* Three authorisation tiers, widest last. These constants are the only place
+   permissions are defined: every guard spreads one of them, and
+   GET /api/stats/rbac derives the displayed matrix from them, so the screen
+   cannot disagree with the middleware.
+
+   SUPER_ONLY separates platform authority from institutional authority. Before
+   this, super_admin and univ_admin were interchangeable everywhere except
+   /api/seed-db, so a college administrator could provision other
+   administrators. Account provisioning and destructive platform operations are
+   now super_admin only. */
+const SUPER_ONLY = ['super_admin'];
 const ADMIN_ROLES = ['super_admin', 'univ_admin'];
 const MODERATOR_ROLES = ['super_admin', 'univ_admin', 'dept_admin', 'moderator'];
 
-// Shared initial credential for bulk-imported accounts. Stored only as a
-// scrypt hash; every imported user is flagged must_change_password.
-const DEFAULT_IMPORT_PASSWORD = '12345678';
+// Roles that belong to the institutional admin portal rather than the alumni
+// site. Used by the portal gate and by the administrator directory.
+const STAFF_ROLES = MODERATOR_ROLES;
+
+// Initial credential for bulk-imported accounts. This used to be the constant
+// '12345678', which was also the label of the only option in the wizard's
+// dropdown in app.js — so the starting password of every imported alumnus was
+// readable by anyone who opened the page source. It is now generated per import
+// batch, returned once to the administrator who ran the import, and never
+// stored in plaintext or written to a log. Every imported user is still flagged
+// must_change_password.
+function generateImportPassword() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  let out = '';
+  for (const byte of crypto.randomBytes(48)) {
+    if (byte < 232) { out += alphabet[byte % alphabet.length]; if (out.length === 12) break; }
+  }
+  return out;
+}
 
 // routes_v2 owns the hash-chained audit writer but is mounted after these
 // routes are declared, so calls are routed through this late-bound shim.
 let _writeAudit = null;
-async function writeAuditSafe(action, meta, icon) {
+async function writeAuditSafe(action, meta, icon, ctx) {
   if (typeof _writeAudit === 'function') {
-    try { await _writeAudit(action, meta, icon); } catch { /* audit must never break a request */ }
+    try { await _writeAudit(action, meta, icon, ctx); } catch { /* audit must never break a request */ }
   }
+}
+
+// Shorthand for the common case: "this signed-in user did something to that
+// record", with the client address, so an administrator action is attributable.
+function auditCtx(req, targetType, targetId) {
+  return { actorId: req.user?.uid ?? null, targetType, targetId, ip: clientIp(req) };
 }
 
 function publicUser(row) {
@@ -125,9 +272,22 @@ function publicUser(row) {
     initials: row.initials,
     role: row.role,
     roleLabel: row.role_label,
+    // Display title, deliberately separate from role: nothing authorises on it.
+    designation: row.designation || null,
     dept: row.department,
+    phone: row.phone || null,
+    photoUrl: row.photo_url || null,
+    status: row.status || 'active',
     icon: row.icon,
-    verified: row.is_verified
+    verified: row.is_verified,
+    // Carried on the user object rather than only alongside it, so a session
+    // restored through /api/auth/me knows about it too — a page refresh used to
+    // walk straight past the forced change.
+    mustChangePassword: row.must_change_password === true,
+    // Staff sign in at the admin portal; alumni at the main site. The client
+    // uses this to refuse the wrong portal politely rather than showing an
+    // empty shell.
+    isStaff: STAFF_ROLES.includes(row.role)
   };
 }
 
@@ -148,14 +308,112 @@ app.get('/api/health', async (req, res) => {
 });
 
 // Destructive: re-runs schema + seed. Super admin only.
-app.post('/api/seed-db', requireRole('super_admin'), async (req, res) => {
+/* Destructive: re-runs the schema and re-seeds. Super admin only, and refused
+   outright in production. A single mistaken click here would replace live
+   alumni records with seed data, and no role is a good enough guard for that on
+   a running deployment — so the environment decides, not the caller. Set
+   ALLOW_DB_RESEED=true to override it deliberately on a staging box. */
+app.post('/api/seed-db', requireRole(...SUPER_ONLY), async (req, res) => {
+  const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
+  if (isProduction && process.env.ALLOW_DB_RESEED !== 'true') {
+    await writeAuditSafe('Database Re-seed Refused',
+      `blocked in production; requested by user ${req.user.uid}`, '🛑');
+    return res.status(403).json({
+      error: 'Re-seeding is disabled in production. Set ALLOW_DB_RESEED=true to override.'
+    });
+  }
   try {
     const result = await db.initDbSchemaAndSeed();
+    await writeAuditSafe('Database Re-seeded', `by user ${req.user.uid}`, '⚠');
     res.json(result);
   } catch (err) {
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
+
+/* ─── LOGIN THROTTLING ───
+   Small in-process limiter for POST /api/auth/login. Two counters so neither
+   attack shape works: repeated guesses at one account, and one guess sprayed
+   across many accounts from the same address.
+
+   Deployment note: this is per-process. Running `node server.js` that means
+   one shared counter. On Vercel each warm lambda keeps its own, so a spread-out
+   attacker gets `attempts x instances` before being locked — still a large
+   reduction, but not a hard ceiling. A durable limit needs shared storage
+   (a table or Redis); that is deliberately out of scope for this pass. */
+
+const RL_MAX_PER_ACCOUNT = 5;        // failures against one email from one IP
+const RL_MAX_PER_IP = 20;            // failures from one IP across any emails
+const RL_WINDOW_MS = 15 * 60 * 1000; // rolling window
+const RL_LOCK_MS = 15 * 60 * 1000;   // how long a tripped counter stays locked
+const RL_MAX_ENTRIES = 10000;        // hard cap so the map cannot grow forever
+
+const loginAttempts = new Map();     // key -> { count, first, lockedUntil }
+
+function rlSweep(now) {
+  for (const [key, rec] of loginAttempts) {
+    const dead = (rec.lockedUntil && rec.lockedUntil <= now) ||
+                 (!rec.lockedUntil && now - rec.first > RL_WINDOW_MS);
+    if (dead) loginAttempts.delete(key);
+  }
+  // Still oversized (sustained distributed attack): drop the oldest entries.
+  if (loginAttempts.size > RL_MAX_ENTRIES) {
+    const excess = loginAttempts.size - RL_MAX_ENTRIES;
+    let i = 0;
+    for (const key of loginAttempts.keys()) {
+      loginAttempts.delete(key);
+      if (++i >= excess) break;
+    }
+  }
+}
+
+function clientIp(req) {
+  // trust proxy is enabled, so req.ip already honours X-Forwarded-For.
+  return req.ip || req.socket?.remoteAddress || 'unknown';
+}
+
+/* Returns { limited: true, retryAfter } when the caller should be refused. */
+function loginRateCheck(req, email) {
+  const now = Date.now();
+  rlSweep(now);
+
+  const ip = clientIp(req);
+  const keys = [
+    { key: `a:${ip}:${String(email || '').toLowerCase()}`, max: RL_MAX_PER_ACCOUNT },
+    { key: `i:${ip}`, max: RL_MAX_PER_IP }
+  ];
+
+  for (const { key } of keys) {
+    const rec = loginAttempts.get(key);
+    if (rec?.lockedUntil && rec.lockedUntil > now) {
+      return { limited: true, retryAfter: Math.ceil((rec.lockedUntil - now) / 1000) };
+    }
+  }
+  return { limited: false };
+}
+
+function loginRecordFailure(req, email) {
+  const now = Date.now();
+  const ip = clientIp(req);
+  const targets = [
+    { key: `a:${ip}:${String(email || '').toLowerCase()}`, max: RL_MAX_PER_ACCOUNT },
+    { key: `i:${ip}`, max: RL_MAX_PER_IP }
+  ];
+
+  for (const { key, max } of targets) {
+    let rec = loginAttempts.get(key);
+    if (!rec || now - rec.first > RL_WINDOW_MS) rec = { count: 0, first: now, lockedUntil: 0 };
+    rec.count += 1;
+    if (rec.count >= max) rec.lockedUntil = now + RL_LOCK_MS;
+    loginAttempts.set(key, rec);
+  }
+}
+
+function loginRecordSuccess(req, email) {
+  const ip = clientIp(req);
+  loginAttempts.delete(`a:${ip}:${String(email || '').toLowerCase()}`);
+  loginAttempts.delete(`i:${ip}`);
+}
 
 // ─── 2. AUTHENTICATION ───
 app.post('/api/auth/login', async (req, res) => {
@@ -165,6 +423,16 @@ app.post('/api/auth/login', async (req, res) => {
     return res.status(400).json({ error: 'Email and password are required' });
   }
 
+  // Refuse before touching the database so a locked-out attacker costs nothing.
+  const gate = loginRateCheck(req, email);
+  if (gate.limited) {
+    res.set('Retry-After', String(gate.retryAfter));
+    return res.status(429).json({
+      error: 'Too many sign-in attempts. Please try again later.',
+      retryAfter: gate.retryAfter
+    });
+  }
+
   try {
     const result = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
 
@@ -172,18 +440,56 @@ app.post('/api/auth/login', async (req, res) => {
     // endpoint cannot be used to enumerate accounts. The previous version
     // returned a super_admin session for any unrecognised address.
     if (result.rows.length === 0 || !verifyPassword(password, result.rows[0].password_hash)) {
+      loginRecordFailure(req, email);
+      /* The in-process limiter above is lost on restart and, on a serverless
+         deployment, is per-instance. Counting failures on the row as well gives
+         a lock that survives both. Only for an account that exists — counting
+         against a missing address would leak which addresses are real. */
+      if (result.rows.length) {
+        await db.query(`
+          UPDATE users
+             SET failed_login_count = failed_login_count + 1,
+                 locked_until = CASE WHEN failed_login_count + 1 >= $2
+                                     THEN NOW() + INTERVAL '15 minutes' ELSE locked_until END
+           WHERE id = $1`, [result.rows[0].id, RL_MAX_PER_ACCOUNT]);
+      }
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
+    loginRecordSuccess(req, email);
     const row = result.rows[0];
+
+    // A suspended account cannot sign in at all. Checking here as well as in
+    // attachUser() means the holder gets a clear message instead of a session
+    // that fails on its first real request.
+    if (row.status === 'suspended') {
+      return res.status(403).json({ error: 'This account is suspended. Contact an administrator.' });
+    }
+    if (row.locked_until && new Date(row.locked_until) > new Date()) {
+      return res.status(429).json({
+        error: 'This account is temporarily locked. Please try again later.',
+        retryAfter: Math.ceil((new Date(row.locked_until) - Date.now()) / 1000)
+      });
+    }
 
     // Transparently upgrade legacy plaintext rows on first successful login.
     if (!row.password_hash.startsWith('scrypt$')) {
       await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashPassword(password), row.id]);
     }
 
+    // Nothing recorded a sign-in against the account before; the administrator
+    // list needs it, and a stale last_login_at is how a dormant account is
+    // spotted. The durable failure counters reset on the way through.
+    await db.query(
+      'UPDATE users SET last_login_at = NOW(), failed_login_count = 0, locked_until = NULL WHERE id = $1',
+      [row.id]);
+
     const user = publicUser(row);
-    const token = signToken({ uid: user.id, role: user.role, exp: Date.now() + SESSION_TTL_MS });
+    const token = signToken({
+      uid: user.id, role: user.role,
+      tv: row.token_version ?? 1,
+      exp: Date.now() + SESSION_TTL_MS
+    });
 
     // Bulk-imported accounts share an initial password; the client prompts for
     // a change when this is set.
@@ -240,16 +546,24 @@ app.post('/api/auth/register', async (req, res) => {
         email.trim().toLowerCase(), (mobile || '').trim() || null,
         normalizeBloodGroup(bloodGroup), group]);
 
-    await client.query(`
-      INSERT INTO notifications (target_role, icon, title, subtitle)
-      VALUES ('super_admin', '🎓', 'New Alumni Registration', $1)
-    `, [`${clean} signed up and is awaiting verification.`]);
+    // Verifying an account is a moderator's job, not only a super admin's, so
+    // this reaches every role /api/verification-queue actually admits.
+    for (const role of MODERATOR_ROLES) {
+      await client.query(`
+        INSERT INTO notifications (target_role, icon, title, subtitle)
+        VALUES ($1, '🎓', 'New Alumni Registration', $2)
+      `, [role, `${clean} signed up and is awaiting verification.`]);
+    }
 
     await client.query('COMMIT');
     await writeAuditSafe('Alumni Self-Registered', `${clean} <${email.trim()}> awaiting verification`, '🎓');
 
     const user = publicUser(userRes.rows[0]);
-    const token = signToken({ uid, role: user.role, exp: Date.now() + SESSION_TTL_MS });
+    const token = signToken({
+      uid, role: user.role,
+      tv: 1,                       // a freshly registered account starts at 1
+      exp: Date.now() + SESSION_TTL_MS
+    });
     res.json({ token, user, mustChangePassword: false });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -271,11 +585,169 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
     if (!verifyPassword(currentPassword, row.rows[0].password_hash)) {
       return res.status(401).json({ error: 'Current password is incorrect' });
     }
-    await db.query(
-      'UPDATE users SET password_hash = $1, must_change_password = FALSE WHERE id = $2',
+    /* The version bump ends every session that was opened with the old
+       password, including this one — so the response carries a freshly minted
+       token and the caller stays signed in without a round trip through the
+       login screen. Anyone else holding a token for this account is signed out. */
+    const updated = await db.query(
+      `UPDATE users SET password_hash = $1, must_change_password = FALSE,
+                        last_password_changed_at = NOW(), updated_at = NOW(),
+                        token_version = token_version + 1
+        WHERE id = $2 RETURNING token_version, role`,
       [hashPassword(newPassword), req.user.uid]
     );
-    await writeAuditSafe('Password Changed', `user ${req.user.uid}`, '🔑');
+    await writeAuditSafe('Password Changed', `user ${req.user.uid}`, '🔑',
+      auditCtx(req, 'user', req.user.uid));
+    res.json({
+      success: true,
+      token: signToken({
+        uid: req.user.uid, role: updated.rows[0].role,
+        tv: updated.rows[0].token_version,
+        exp: Date.now() + SESSION_TTL_MS
+      })
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ─── PASSWORD RECOVERY ─────────────────────────────────────
+   A super admin can reset any other administrator, but nobody could reset the
+   super admin. This closes that: a self-service flow over the reset_token_hash
+   and reset_expires_at columns added in v7.
+
+   The token is 32 random bytes. Only its SHA-256 hash is stored, so a database
+   reader — a backup, a log shipper, a leaked dump — cannot mint a reset from
+   it. It lives for RESET_TTL_MS, is consumed on first use, and is cleared by any
+   other password change on the account.
+
+   Delivery is the honest gap. No mail transport is configured, so the request
+   endpoint does not hand the token back over HTTP: doing that would let anyone
+   who knows an address take over the account. Until SMTP exists, an operator
+   with server access mints the link with `node reset_link.js --email <address>`,
+   which writes it to a gitignored file. That is the same trust boundary the
+   platform already relies on for rotate_credentials.js. */
+
+const RESET_TTL_MS = 30 * 60 * 1000;   // 30 minutes
+
+const hashResetToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
+
+/* Issues a reset token for an account and returns the plaintext. Shared by the
+   forgot-password endpoint and the operator CLI so there is one implementation
+   of what a valid token is. */
+async function issueResetToken(userId) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  await db.query(
+    'UPDATE users SET reset_token_hash = $1, reset_expires_at = NOW() + $2::interval WHERE id = $3',
+    [hashResetToken(token), `${Math.round(RESET_TTL_MS / 1000)} seconds`, userId]);
+  return token;
+}
+
+/* Always answers the same way, whether or not the address exists and whether or
+   not a token was issued. Anything else turns this into an account-enumeration
+   oracle, which matters more here than anywhere else on the platform: these are
+   the addresses of the institution's administrators. */
+const RESET_ACK = {
+  message: 'If that address belongs to an account, a reset link has been issued. ' +
+           'It expires in 30 minutes.'
+};
+
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+
+  // Rate-limited on the same counters as sign-in, so this cannot be used to
+  // hammer the database or to time-probe which addresses exist.
+  const gate = loginRateCheck(req, email);
+  if (gate.limited) {
+    res.set('Retry-After', String(gate.retryAfter));
+    return res.status(429).json({ error: 'Too many attempts. Please try again later.' });
+  }
+
+  try {
+    if (email) {
+      const r = await db.query(
+        `SELECT id, status FROM users WHERE LOWER(email) = $1`, [email]);
+      const row = r.rows[0];
+      // A suspended account gets no reset: recovering it is an administrator's
+      // decision, not the holder's.
+      if (row && row.status === 'active') {
+        await issueResetToken(row.id);
+        // The action is audited; the token is not part of the entry.
+        await writeAuditSafe('Password Reset Requested', `user ${row.id}`, '🔑',
+          { actorId: row.id, targetType: 'user', targetId: row.id, ip: clientIp(req) });
+      }
+    }
+  } catch {
+    /* Swallowed deliberately. A database error must not make this endpoint
+       answer differently for an address that exists. */
+  }
+
+  res.json(RESET_ACK);
+});
+
+/* Completes the reset. The token is matched by hash, must be unexpired, and is
+   cleared in the same statement that sets the password, so it cannot be
+   replayed. token_version is bumped, which ends every session that was open
+   under the old password. */
+app.post('/api/auth/reset-password', async (req, res) => {
+  const { token, newPassword } = req.body || {};
+
+  if (!token || typeof token !== 'string') {
+    return res.status(400).json({ error: 'A reset token is required' });
+  }
+  if (!newPassword || String(newPassword).length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters' });
+  }
+
+  try {
+    const r = await db.query(`
+      UPDATE users
+         SET password_hash = $1,
+             must_change_password = FALSE,
+             last_password_changed_at = NOW(),
+             updated_at = NOW(),
+             failed_login_count = 0,
+             locked_until = NULL,
+             reset_token_hash = NULL,
+             reset_expires_at = NULL,
+             token_version = token_version + 1
+       WHERE reset_token_hash = $2
+         AND reset_expires_at > NOW()
+         AND status = 'active'
+       RETURNING id, full_name`,
+      [hashPassword(newPassword), hashResetToken(String(token))]);
+
+    // One message for an unknown token, an expired one and an already-used one:
+    // none of them should tell the caller which it was.
+    if (!r.rows.length) {
+      return res.status(400).json({ error: 'That reset link is invalid or has expired.' });
+    }
+
+    await writeAuditSafe('Password Reset Completed',
+      `${r.rows[0].full_name} (user ${r.rows[0].id})`, '🔑',
+      { actorId: r.rows[0].id, targetType: 'user', targetId: r.rows[0].id, ip: clientIp(req) });
+
+    res.json({ success: true, message: 'Password updated. Please sign in.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* Ends the caller's sessions. Signing out used to be entirely client-side —
+   localStorage.removeItem — which left the token itself valid for the rest of
+   its twelve hours. Anyone who had copied it, or who picked up the machine
+   before the browser was closed, still had a working session.
+
+   Bumping token_version ends every session for that account, not just the one
+   in this browser. That is the right default for a staff portal: "sign me out"
+   from an administrator usually means "end this", and per-session revocation
+   would need a session table this design deliberately avoids. */
+app.post('/api/auth/logout', requireAuth, async (req, res) => {
+  try {
+    await db.query('UPDATE users SET token_version = token_version + 1 WHERE id = $1',
+      [req.user.uid]);
+    await writeAuditSafe('Signed Out', `user ${req.user.uid}`, '🚪',
+      auditCtx(req, 'user', req.user.uid));
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -401,6 +873,11 @@ app.get('/api/alumni/:id', requireAuth, async (req, res) => {
       company: row.current_company,
       jobTitle: row.job_title,
       location: [row.city, row.country].filter(Boolean).join(', ') || null,
+      // city and industry are returned alongside the joined location string so
+      // the profile view can say which attributes it shares with the viewer.
+      // location already exposes the city, so neither adds anything new.
+      city: row.city,
+      industry: row.industry,
       bio: row.bio,
       skills: row.skills ? row.skills.split(',').map(s => s.trim()).filter(Boolean) : [],
       mobile: canSee('mobile') ? row.mobile_number : null,
@@ -543,12 +1020,19 @@ app.post('/api/chapters', requireAuth, async (req, res) => {
     `, [name.trim(), (type || 'regional').toLowerCase(), icon || '🏫', description || '',
         parentId || null, status, createdById || null]);
 
-    // Surface the submission to moderators when it needs review.
+    /* Surface the submission to everyone who can actually act on it. This used
+       to insert a single row with target_role = 'super_admin', so a moderator or
+       a department admin — both of whom the guard on /api/moderation/chapter
+       allows to approve it — was never told a chapter was waiting. A
+       notification's target_role has to match the reader's role exactly, so one
+       row is written per role that can approve. */
     if (status === 'pending_review') {
-      await db.query(`
-        INSERT INTO notifications (target_role, icon, title, subtitle)
-        VALUES ('super_admin', '🏫', 'New Chapter Awaiting Approval', $1)
-      `, [`Chapter "${name.trim()}" was submitted for review.`]);
+      for (const role of MODERATOR_ROLES) {
+        await db.query(`
+          INSERT INTO notifications (target_role, icon, title, subtitle, link_entity, link_id)
+          VALUES ($1, '🏫', 'New Chapter Awaiting Approval', $2, 'chapter', $3)
+        `, [role, `Chapter "${name.trim()}" was submitted for review.`, result.rows[0].id]);
+      }
     }
 
     res.json({ chapter: result.rows[0], status });
@@ -584,9 +1068,22 @@ app.post('/api/chapters/:id/join', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/chapters/:id/members', async (req, res) => {
+/* This endpoint was unauthenticated and returned real alumni names, employers,
+   job titles, batches and departments to anyone. Worse, an empty or unknown
+   chapter fell through to `SELECT ... FROM users LIMIT 4`, so a chapter that
+   did not exist still answered with four real people. Both are fixed: sign-in
+   is required, an unknown chapter is a 404, and an empty chapter is an empty
+   list rather than borrowed strangers. */
+app.get('/api/chapters/:id/members', requireAuth, async (req, res) => {
   const chapterId = parseInt(req.params.id);
+  if (!chapterId) return res.status(400).json({ error: 'A valid chapter id is required' });
+
   try {
+    const chapter = await db.query('SELECT id FROM chapters WHERE id = $1', [chapterId]);
+    if (chapter.rows.length === 0) {
+      return res.status(404).json({ error: 'Chapter not found' });
+    }
+
     const result = await db.query(`
       SELECT u.id, u.full_name as name, u.initials, ap.job_title as role, ap.current_company as company,
              ap.batch, ap.department as dept
@@ -594,13 +1091,9 @@ app.get('/api/chapters/:id/members', async (req, res) => {
       JOIN users u ON cm.user_id = u.id
       LEFT JOIN alumni_profiles ap ON u.id = ap.user_id
       WHERE cm.chapter_id = $1
+      ORDER BY u.full_name
     `, [chapterId]);
 
-    if (result.rows.length === 0) {
-      // Return default members
-      const defaults = await db.query('SELECT u.id, u.full_name as name, u.initials, ap.job_title as role, ap.current_company as company, ap.batch, ap.department as dept FROM users u LEFT JOIN alumni_profiles ap ON u.id = ap.user_id LIMIT 4');
-      return res.json(defaults.rows);
-    }
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -638,10 +1131,16 @@ app.post('/api/stories', requireAuth, async (req, res) => {
       RETURNING *
     `, [emoji || '🌟', category || 'Alumni Story', title.trim(), excerpt, content.trim(), authorId, authorName]);
 
-    await db.query(`
-      INSERT INTO notifications (target_role, icon, title, subtitle)
-      VALUES ('super_admin', '✐', 'New Story Submitted for Moderation', $1)
-    `, [`Story "${title.trim()}" submitted by ${authorName}`]);
+    // One row per role that /api/moderation/story allows to act, for the same
+    // reason as the chapter handler above: a notification's target_role must
+    // match the reader's role exactly, so the single 'super_admin' row this
+    // replaces left moderators and department admins unaware of the queue.
+    for (const role of MODERATOR_ROLES) {
+      await db.query(`
+        INSERT INTO notifications (target_role, icon, title, subtitle, link_entity, link_id)
+        VALUES ($1, '✐', 'New Story Submitted for Moderation', $2, 'story', $3)
+      `, [role, `Story "${title.trim()}" submitted by ${authorName}`, result.rows[0].id]);
+    }
 
     res.json({ story: result.rows[0], status: 'pending_review' });
   } catch (err) {
@@ -654,11 +1153,20 @@ app.get('/api/moderation', requireRole(...MODERATOR_ROLES), async (req, res) => 
   try {
     const pendingChapters = await db.query('SELECT * FROM chapters WHERE status = $1 ORDER BY id DESC', ['pending_review']);
     const pendingStories = await db.query('SELECT * FROM stories WHERE status = $1 ORDER BY id DESC', ['pending_review']);
-    const pendingProposals = await db.query('SELECT * FROM event_proposals WHERE status = $1 ORDER BY id DESC', ['pending_approval']);
+    // v5: events carry their own approval status; there is no separate
+    // proposal queue any more.
+    const pendingEvents = await db.query(`
+      SELECT e.id, e.title, e.description, e.starts_on, e.venue, e.capacity,
+             e.event_type, e.organizer_department, e.created_at,
+             u.full_name AS created_by_name, u.role_label AS created_by_role
+        FROM events e
+        LEFT JOIN users u ON u.id = e.created_by
+       WHERE e.approval_status = 'pending_approval'
+       ORDER BY e.created_at DESC`);
     res.json({
       pendingChapters: pendingChapters.rows,
       pendingStories: pendingStories.rows,
-      pendingProposals: pendingProposals.rows
+      pendingEvents: pendingEvents.rows
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -672,15 +1180,26 @@ app.post('/api/moderation/chapter/:id/:action', requireRole(...MODERATOR_ROLES),
 
   try {
     const result = await db.query('UPDATE chapters SET status = $1 WHERE id = $2 RETURNING *', [newStatus, id]);
-    
-    // Notify alumni
-    await db.query(`
-      INSERT INTO notifications (user_id, icon, title, subtitle)
-      VALUES (5, '🏫', $1, $2)
-    `, [
-      `Chapter ${action === 'approve' ? 'Approved ✓' : 'Rejected ❌'}`,
-      `Your chapter submission "${result.rows[0]?.name}" was ${newStatus}.`
-    ]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Chapter not found' });
+
+    /* Tell the person who submitted the chapter. This used to be written as
+       VALUES (5, …) — user 5 was notified about every chapter decision on the
+       platform, whoever had actually submitted it, and the real submitter was
+       never told. The recipient is chapters.created_by_id; when that is null
+       (a seeded row with no author) no notification is written at all, rather
+       than one addressed to an arbitrary account. */
+    const recipient = result.rows[0].created_by_id;
+    if (recipient) {
+      await db.query(`
+        INSERT INTO notifications (user_id, icon, title, subtitle, link_entity, link_id)
+        VALUES ($1, '🏫', $2, $3, 'chapter', $4)
+      `, [
+        recipient,
+        `Chapter ${action === 'approve' ? 'approved' : 'rejected'}`,
+        `Your chapter submission "${result.rows[0].name}" was ${newStatus}.`,
+        id
+      ]);
+    }
 
     res.json({ success: true, chapter: result.rows[0] });
   } catch (err) {
@@ -695,15 +1214,22 @@ app.post('/api/moderation/story/:id/:action', requireRole(...MODERATOR_ROLES), a
 
   try {
     const result = await db.query('UPDATE stories SET status = $1 WHERE id = $2 RETURNING *', [newStatus, id]);
-    
-    // Notify alumni
-    await db.query(`
-      INSERT INTO notifications (user_id, icon, title, subtitle)
-      VALUES (5, '✐', $1, $2)
-    `, [
-      `Story ${action === 'approve' ? 'Published ✓' : 'Rejected ❌'}`,
-      `Your story "${result.rows[0]?.title}" was ${newStatus}.`
-    ]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Story not found' });
+
+    // Same fix as the chapter handler above: the author is stories.author_id,
+    // not the hardcoded user 5 this used to notify.
+    const recipient = result.rows[0].author_id;
+    if (recipient) {
+      await db.query(`
+        INSERT INTO notifications (user_id, icon, title, subtitle, link_entity, link_id)
+        VALUES ($1, '✐', $2, $3, 'story', $4)
+      `, [
+        recipient,
+        `Story ${action === 'approve' ? 'published' : 'rejected'}`,
+        `Your story "${result.rows[0].title}" was ${newStatus}.`,
+        id
+      ]);
+    }
 
     res.json({ success: true, story: result.rows[0] });
   } catch (err) {
@@ -711,31 +1237,8 @@ app.post('/api/moderation/story/:id/:action', requireRole(...MODERATOR_ROLES), a
   }
 });
 
-app.post('/api/moderation/proposal/:id/:action', requireRole(...ADMIN_ROLES), async (req, res) => {
-  const id = parseInt(req.params.id);
-  const approve = req.params.action === 'approve';
-  const newStatus = approve ? 'approved' : 'draft';
-
-  try {
-    const result = await db.query(
-      'UPDATE event_proposals SET status = $1 WHERE id = $2 RETURNING *',
-      [newStatus, id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Proposal not found' });
-
-    await db.query(`
-      INSERT INTO notifications (target_role, icon, title, subtitle)
-      VALUES ('alumni', '🎪', $1, $2)
-    `, [
-      `Event Proposal ${approve ? 'Approved ✓' : 'Sent Back ↩'}`,
-      `"${result.rows[0].name}" was ${approve ? 'approved and moved into planning' : 'returned to draft for revision'}.`
-    ]);
-
-    res.json({ success: true, proposal: result.rows[0] });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// Event approval moved onto the event itself in v5:
+//   PUT /api/events/:id/approve  ·  PUT /api/events/:id/reject
 
 // ─── 7. NOTIFICATIONS ───
 // Scoped to the caller: direct notifications (user_id), role broadcasts
@@ -898,7 +1401,8 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
                              "photoUrl","facebook"];
     const seenEmail = new Set(), seenMobile = new Set();
     const strategy = (req.body.dupResolution || "skip").toLowerCase();
-    const passwordHash = hashPassword(DEFAULT_IMPORT_PASSWORD);
+    const batchPassword = generateImportPassword();
+    const passwordHash = hashPassword(batchPassword);
 
     for (const r of records) {
       const rowNo = r.row || 0;
@@ -1029,7 +1533,10 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
       count: created, created, updated,
       skipped: skippedDuplicate, duplicates: skippedDuplicate,
       rejected, rejectedRows: rejectedRows.slice(0, 100),
-      withMissingOptional, missingFieldCounts
+      withMissingOptional, missingFieldCounts,
+      // Shown once, to the administrator who ran this import, so they can pass
+      // it on. Omitted when the batch created nobody.
+      temporaryPassword: created > 0 ? batchPassword : null
     });
   } catch (err) {
     await client.query("ROLLBACK");
@@ -1049,161 +1556,409 @@ app.get('/api/import-history', requireRole(...ADMIN_ROLES), async (req, res) => 
   }
 });
 
-// ─── 10. EVENT MANAGEMENT PLANNER WORKSPACE ENDPOINTS ───
-app.get('/api/events/planner/:id', async (req, res) => {
-  const eventId = parseInt(req.params.id) || 1;
+/* ─── 10. EVENTS ───
+   Events, ticketing, check-in, tasks, people and the directory lookup all
+   live in routes_events.js as of v5. The endpoints that used to sit here
+   (/api/events/planner/:id, /api/events/proposals, /api/events/budgets,
+   /api/events/sponsors, /api/events/tasks, /api/events/procurement and
+   /api/events/ai-estimate) were a second, older implementation of the same
+   features and have been removed so there is one source of truth. */
+
+/* ============================================================
+   MOUNTED ROUTE MODULES
+   Registered before the SPA catch-all so /api/* resolves first.
+   ============================================================ */
+
+/* ─── 9. REAL PLATFORM STATISTICS ───────────────────────────
+   Every number the dashboards, analytics page and map used to show was written
+   into the markup by hand: 12,847 alumni, ৳45.2L raised, 1,203 mentorships, 47
+   countries. None of it came from the database, and none of it was true. These
+   endpoints are the single source for those figures, and each one is a COUNT or
+   SUM over the rows that actually exist. Where a figure cannot be derived from
+   stored data, it is not returned at all — the interface then shows nothing
+   rather than something invented.
+
+   Two stored counters exist that this deliberately ignores:
+   chapters.members_count and campaigns.raised_amount. Both were seeded with
+   values far larger than the rows behind them (18,420 against 0 memberships;
+   ৳18.45L against ৳5,000 of settled donations) and both can drift, so neither
+   is authoritative here. */
+
+// Aggregates every signed-in user may see, plus the staff-only block.
+app.get('/api/stats/overview', requireAuth, async (req, res) => {
   try {
-    const proposal = await db.query('SELECT * FROM event_proposals WHERE id = $1 LIMIT 1', [eventId]);
-    const budgets = await db.query('SELECT * FROM event_budgets WHERE event_id = $1 ORDER BY id ASC', [eventId]);
-    const sponsors = await db.query('SELECT * FROM event_sponsors WHERE event_id = $1 ORDER BY id ASC', [eventId]);
-    const committees = await db.query('SELECT * FROM event_committees WHERE event_id = $1 ORDER BY id ASC', [eventId]);
-    const tasks = await db.query('SELECT * FROM event_tasks WHERE event_id = $1 ORDER BY id ASC', [eventId]);
-    const procurement = await db.query('SELECT * FROM event_procurement WHERE event_id = $1 ORDER BY id ASC', [eventId]);
-    const volunteers = await db.query('SELECT * FROM event_volunteers WHERE event_id = $1 ORDER BY id ASC', [eventId]);
-    const risks = await db.query('SELECT * FROM event_risks WHERE event_id = $1 ORDER BY id ASC', [eventId]);
+    const isStaff = MODERATOR_ROLES.includes(req.user.role);
+    const uid = req.user.uid;
+
+    const [core, mine] = await Promise.all([
+      db.query(`
+        SELECT
+          (SELECT COUNT(*)::int FROM users)                                        AS users_total,
+          (SELECT COUNT(*)::int FROM users WHERE is_verified)                      AS users_verified,
+          (SELECT COUNT(*)::int FROM users WHERE NOT is_verified)                  AS users_unverified,
+          (SELECT COUNT(*)::int FROM alumni_profiles)                              AS profiles_total,
+          (SELECT COUNT(*)::int FROM events)                                       AS events_total,
+          -- starts_on is the real DATE column; events.event_date is a display
+          -- string ("Aug 15, 2026" in some rows, "15 Mar 2026" in others).
+          (SELECT COUNT(*)::int FROM events
+             WHERE status <> 'cancelled' AND starts_on >= CURRENT_DATE)            AS events_upcoming,
+          (SELECT COUNT(*)::int FROM event_registrations)                          AS registrations_total,
+          (SELECT COUNT(*)::int FROM jobs)                                         AS jobs_total,
+          (SELECT COUNT(*)::int FROM job_applications)                             AS job_applications_total,
+          (SELECT COUNT(*)::int FROM mentorships WHERE status = 'accepted')          AS mentorships_active,
+          (SELECT COUNT(*)::int FROM mentorships)                                  AS mentorships_total,
+          (SELECT COUNT(*)::int FROM chapters WHERE status = 'approved')           AS chapters_total,
+          (SELECT COUNT(*)::int FROM chapter_memberships)                          AS chapter_memberships_total,
+          (SELECT COUNT(*)::int FROM connections WHERE status = 'accepted')        AS connections_total,
+          (SELECT COUNT(*)::int FROM stories WHERE status = 'published')            AS stories_total,
+          (SELECT COUNT(*)::int FROM polls WHERE is_active)                        AS polls_active,
+          -- Money: settled donations only. donations.status is one of
+          -- PENDING / SUCCESS / FAILED / REFUNDED, so SUCCESS is "settled".
+          (SELECT COALESCE(SUM(amount), 0) FROM donations WHERE status = 'SUCCESS')       AS donations_total,
+          (SELECT COUNT(*)::int FROM donations WHERE status = 'SUCCESS')                  AS donations_count,
+          (SELECT COUNT(DISTINCT donor_user_id)::int FROM donations WHERE status = 'SUCCESS') AS donors_count
+      `),
+      db.query(`
+        SELECT
+          (SELECT COUNT(*)::int FROM notifications WHERE user_id = $1 AND is_unread)   AS my_unread_notifications,
+          (SELECT COUNT(*)::int FROM event_registrations WHERE user_id = $1)             AS my_registrations,
+          (SELECT COUNT(*)::int FROM chapter_memberships WHERE user_id = $1)             AS my_chapters,
+          (SELECT COUNT(*)::int FROM job_applications WHERE applicant_id = $1)           AS my_job_applications,
+          (SELECT COUNT(*)::int FROM connections
+             WHERE status = 'accepted' AND (requester_id = $1 OR addressee_id = $1))     AS my_connections,
+          (SELECT COUNT(*)::int FROM mentorships
+             WHERE status = 'accepted' AND (mentor_id = $1 OR mentee_id = $1))             AS my_mentorships,
+          (SELECT COALESCE(SUM(amount), 0) FROM donations
+             WHERE status = 'SUCCESS' AND donor_user_id = $1)                            AS my_donations_total,
+          (SELECT COUNT(*)::int FROM event_task_assignees WHERE user_id = $1)            AS my_assigned_tasks
+      `, [uid])
+    ]);
+
+    const out = { ...core.rows[0], ...mine.rows[0] };
+    out.donations_total = Number(out.donations_total);
+    out.my_donations_total = Number(out.my_donations_total);
+
+    if (isStaff) {
+      const staff = await db.query(`
+        SELECT
+          (SELECT COUNT(*)::int FROM users WHERE NOT is_verified)                        AS pending_verifications,
+          (SELECT COUNT(*)::int FROM chapters WHERE status = 'pending_review')           AS pending_chapters,
+          (SELECT COUNT(*)::int FROM stories WHERE status = 'pending_review')                   AS pending_stories,
+          (SELECT COUNT(*)::int FROM events WHERE approval_status = 'pending_approval')           AS pending_events,
+          (SELECT COUNT(*)::int FROM event_tasks)                                        AS tasks_total,
+          (SELECT COUNT(*)::int FROM event_tasks WHERE status = 'completed')             AS tasks_completed,
+          (SELECT COUNT(*)::int FROM audit_logs)                                         AS audit_entries,
+          (SELECT COUNT(*)::int FROM import_history)                                     AS imports_total,
+          (SELECT COUNT(*)::int FROM broadcasts)                                         AS broadcasts_total,
+          (SELECT COUNT(*)::int FROM custom_fields)                                      AS custom_fields_total
+      `);
+      Object.assign(out, staff.rows[0]);
+      out.moderation_pending = out.pending_chapters + out.pending_stories + out.pending_events;
+    }
+
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* Analytics figures, staff only. Returns only metrics that have rows behind
+   them; the caller renders an empty state for anything absent. Deliberately no
+   growth percentages, month-over-month deltas or trend lines: nothing in the
+   schema records a historical snapshot to compare against, so any such number
+   would be fabricated. */
+app.get('/api/stats/analytics', requireRole(...MODERATOR_ROLES), async (req, res) => {
+  try {
+    const [totals, byDept, byBatch, campaigns, gateways, eventRoi] = await Promise.all([
+      db.query(`
+        SELECT
+          (SELECT COUNT(*)::int FROM users)                                   AS users,
+          (SELECT COUNT(*)::int FROM alumni_profiles)                         AS profiles,
+          (SELECT COUNT(*)::int FROM events)                                  AS events,
+          (SELECT COUNT(*)::int FROM event_registrations)                     AS registrations,
+          (SELECT COUNT(*)::int FROM jobs)                                    AS jobs,
+          (SELECT COUNT(*)::int FROM job_applications)                        AS job_applications,
+          (SELECT COUNT(*)::int FROM mentorships)                             AS mentorships,
+          (SELECT COUNT(*)::int FROM chapter_memberships)                     AS chapter_memberships,
+          (SELECT COUNT(*)::int FROM connections WHERE status = 'accepted')   AS connections,
+          (SELECT COUNT(*)::int FROM donations WHERE status = 'SUCCESS')      AS donations,
+          (SELECT COALESCE(SUM(amount),0) FROM donations WHERE status='SUCCESS') AS donations_amount
+      `),
+      db.query(`SELECT department, COUNT(*)::int AS n FROM alumni_profiles
+                WHERE department IS NOT NULL AND department <> ''
+                GROUP BY department ORDER BY n DESC, department`),
+      db.query(`SELECT batch, COUNT(*)::int AS n FROM alumni_profiles
+                WHERE batch IS NOT NULL GROUP BY batch ORDER BY batch`),
+      db.query(`
+        SELECT c.id, c.name, c.goal_amount,
+               COALESCE(SUM(d.amount) FILTER (WHERE d.status = 'SUCCESS'), 0)      AS raised,
+               COUNT(d.id) FILTER (WHERE d.status = 'SUCCESS')::int                AS payments,
+               COUNT(DISTINCT d.donor_user_id) FILTER (WHERE d.status='SUCCESS')::int AS donors
+        FROM campaigns c LEFT JOIN donations d ON d.campaign_id = c.id
+        GROUP BY c.id, c.name, c.goal_amount ORDER BY c.id`),
+      db.query(`SELECT payment_gateway, COUNT(*)::int AS n,
+                       COALESCE(SUM(amount),0) AS amount
+                FROM donations WHERE status = 'SUCCESS'
+                GROUP BY payment_gateway ORDER BY amount DESC`),
+      // Ticket revenue is the sum of what registrations actually paid, so a free
+      // event reports 0 rather than capacity x list price.
+      db.query(`
+        SELECT e.id, e.title, e.starts_on, e.capacity,
+               COUNT(r.id)::int                       AS registrations,
+               COALESCE(SUM(r.amount_paid), 0)        AS revenue
+        FROM events e LEFT JOIN event_registrations r ON r.event_id = e.id
+        GROUP BY e.id, e.title, e.starts_on, e.capacity
+        ORDER BY e.starts_on DESC NULLS LAST, e.id DESC`)
+    ]);
+
+    const t = totals.rows[0];
+    t.donations_amount = Number(t.donations_amount);
 
     res.json({
-      proposal: proposal.rows[0] || null,
-      budgets: budgets.rows,
-      sponsors: sponsors.rows,
-      committees: committees.rows,
-      tasks: tasks.rows,
-      procurement: procurement.rows,
-      volunteers: volunteers.rows,
-      risks: risks.rows
+      totals: t,
+      byDepartment: byDept.rows,
+      byBatch: byBatch.rows,
+      campaigns: campaigns.rows.map(c => ({
+        ...c,
+        goal_amount: Number(c.goal_amount),
+        raised: Number(c.raised)
+      })),
+      gateways: gateways.rows.map(g => ({ ...g, amount: Number(g.amount) })),
+      events: eventRoi.rows.map(e => ({ ...e, revenue: Number(e.revenue) }))
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/events/proposals', requireAuth, async (req, res) => {
-  const { name, description, objectives, category, type, venue, eventDate, expectedAttendance } = req.body;
+/* Where alumni actually are, from alumni_profiles.country / .city. The map used
+   to draw fixed clusters totalling 12,847 people across 47 countries. */
+app.get('/api/stats/map', requireAuth, async (req, res) => {
   try {
-    const result = await db.query(`
-      INSERT INTO event_proposals (name, description, objectives, category, type, venue, event_date, expected_attendance, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending_approval')
-      RETURNING *
-    `, [name, description, objectives, category || 'Alumni Gala', type || 'Reunion', venue || 'DIC Auditorium', eventDate || 'Aug 15, 2026', expectedAttendance || 500]);
-
-    await db.query(`
-      INSERT INTO notifications (target_role, icon, title, subtitle)
-      VALUES ('super_admin', '🎪', 'New Event Proposal Awaiting Approval', $1)
-    `, [`Event proposal "${name}" was submitted for review.`]);
-
-    res.json(result.rows[0]);
+    const [countries, cities, totals] = await Promise.all([
+      db.query(`SELECT country, COUNT(*)::int AS n FROM alumni_profiles
+                WHERE country IS NOT NULL AND country <> ''
+                GROUP BY country ORDER BY n DESC, country`),
+      db.query(`SELECT country, city, COUNT(*)::int AS n FROM alumni_profiles
+                WHERE city IS NOT NULL AND city <> ''
+                GROUP BY country, city ORDER BY n DESC, city`),
+      db.query(`
+        SELECT COUNT(*)::int AS profiles,
+               COUNT(*) FILTER (WHERE country IS NOT NULL AND country <> '')::int AS located,
+               COUNT(*) FILTER (WHERE country ILIKE 'bangladesh')::int            AS in_bangladesh,
+               COUNT(*) FILTER (WHERE country IS NOT NULL AND country <> ''
+                                  AND country NOT ILIKE 'bangladesh')::int        AS international
+        FROM alumni_profiles`)
+    ]);
+    res.json({
+      countries: countries.rows,
+      cities: cities.rows,
+      ...totals.rows[0],
+      chapters: (await db.query(
+        `SELECT COUNT(*)::int AS n FROM chapters WHERE status = 'approved'`)).rows[0].n
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/events/budgets', requireRole(...MODERATOR_ROLES), async (req, res) => {
-  const { eventId, category, estimatedCost, actualCost, vendorName } = req.body;
-  try {
-    const result = await db.query(`
-      INSERT INTO event_budgets (event_id, category, estimated_cost, actual_cost, vendor_name)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING *
-    `, [eventId || 1, category, estimatedCost || 0, actualCost || 0, vendorName || 'Direct Vendor']);
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/events/sponsors', requireRole(...MODERATOR_ROLES), async (req, res) => {
-  const { eventId, company, contactPerson, packageTier, contributionAmount, pipelineStatus } = req.body;
-  try {
-    const result = await db.query(`
-      INSERT INTO event_sponsors (event_id, company, contact_person, package_tier, contribution_amount, pipeline_status)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING *
-    `, [eventId || 1, company, contactPerson || 'Contact Lead', packageTier || 'gold', contributionAmount || 100000, pipelineStatus || 'agreed']);
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/events/tasks', requireRole(...MODERATOR_ROLES), async (req, res) => {
-  const { eventId, committeeName, title, description, priority, status, assignedTo, deadline } = req.body;
-  try {
-    const result = await db.query(`
-      INSERT INTO event_tasks (event_id, committee_name, title, description, priority, status, assigned_to, deadline)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING *
-    `, [eventId || 1, committeeName || 'General', title, description || '', priority || 'medium', status || 'todo', assignedTo || 'Unassigned', deadline || 'Aug 10, 2026']);
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.put('/api/events/tasks/:id/status', requireRole(...MODERATOR_ROLES), async (req, res) => {
-  const taskId = parseInt(req.params.id);
-  const { status } = req.body;
-  try {
-    const result = await db.query('UPDATE event_tasks SET status = $1 WHERE id = $2 RETURNING *', [status, taskId]);
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/events/procurement', requireRole(...MODERATOR_ROLES), async (req, res) => {
-  const { eventId, itemName, category, quantity, estimatedPrice, actualPrice, vendorName, deliveryStatus } = req.body;
-  try {
-    const result = await db.query(`
-      INSERT INTO event_procurement (event_id, item_name, category, quantity, estimated_price, actual_price, vendor_name, delivery_status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING *
-    `, [eventId || 1, itemName, category || 'General', quantity || 1, estimatedPrice || 0, actualPrice || 0, vendorName || 'Vendor', deliveryStatus || 'delivered']);
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/events/ai-estimate', (req, res) => {
-  const { attendance, eventType } = req.body;
-  const pax = parseInt(attendance) || 500;
-  
-  const estimatedBudget = pax * 450; // ৳450 per head
-  const venueCost = Math.round(estimatedBudget * 0.25);
-  const foodCost = Math.round(estimatedBudget * 0.40);
-  const techCost = Math.round(estimatedBudget * 0.15);
-  const merchandiseCost = Math.round(estimatedBudget * 0.10);
-  const miscCost = Math.round(estimatedBudget * 0.10);
-
+/* The permission matrix, generated from the guard constants this file actually
+   enforces rather than from a second copy maintained by hand in the browser.
+   ROLE_CAPABILITIES below is derived from ADMIN_ROLES / MODERATOR_ROLES, so the
+   table can never disagree with the middleware. */
+app.get('/api/stats/rbac', requireAuth, (req, res) => {
+  const roles = ['alumni', 'moderator', 'dept_admin', 'univ_admin', 'super_admin'];
+  const capabilities = [
+    { key: 'browse',      label: 'Browse directory, events, jobs and chapters', allowed: roles },
+    { key: 'own_profile', label: 'Edit own profile and privacy settings',       allowed: roles },
+    { key: 'register',    label: 'Register for events and hold tickets',        allowed: roles },
+    { key: 'moderate',    label: 'Approve chapters, stories and profiles',      allowed: MODERATOR_ROLES },
+    { key: 'events_manage', label: 'Create and manage events, tasks and people', allowed: MODERATOR_ROLES },
+    { key: 'planner',     label: 'Event budget, sponsors, vendors, procurement', allowed: MODERATOR_ROLES },
+    { key: 'broadcast',   label: 'Send broadcasts',                             allowed: MODERATOR_ROLES },
+    { key: 'audit',       label: 'Read the immutable audit log',                allowed: ADMIN_ROLES },
+    { key: 'bulk_import', label: 'Bulk-import alumni records',                  allowed: ADMIN_ROLES },
+    { key: 'custom_fields', label: 'Define custom profile fields',              allowed: ADMIN_ROLES },
+    { key: 'campaigns',   label: 'Create and edit donation campaigns',          allowed: ADMIN_ROLES },
+    { key: 'compliance',  label: 'Identity vault and DSAR handling',            allowed: ADMIN_ROLES }
+  ];
   res.json({
-    recommendedBudget: estimatedBudget,
-    breakdown: {
-      venue: venueCost,
-      food: foodCost,
-      stageTech: techCost,
-      merchandise: merchandiseCost,
-      miscellaneous: miscCost
-    },
-    suggestedTimeline: [
-      { week: 'Week 1', milestone: 'Submit Proposal & Confirm Venue Booking' },
-      { week: 'Week 2', milestone: 'Finalize Title & Gold Sponsors (Target: ৳5L+)' },
-      { week: 'Week 3', milestone: 'Launch Ticketing & Omnichannel Campaign' },
-      { week: 'Week 4', milestone: 'Procure Welcome Kits, Badges & T-Shirts' },
-      { week: 'Week 5', milestone: 'Volunteer Shift Briefing & Stage Sound Check' },
-      { week: 'Week 6', milestone: 'Event Execution Day & Live QR Registration' }
-    ],
-    riskRecommendations: [
-      'Ensure 250kVA standby diesel generator is reserved for evening keynote.',
-      'Deploy 25+ volunteers for check-in to maintain <45s queue times.',
-      'Prepare indoor gym backup location in case of monsoon rain.'
-    ]
+    roles,
+    capabilities: capabilities.map(c => ({
+      key: c.key,
+      label: c.label,
+      allowed: roles.filter(r => c.allowed.includes(r))
+    }))
   });
 });
 
-/* ============================================================
-   MOUNTED ROUTE MODULES
-   Registered before the SPA catch-all so /api/* resolves first.
-   ============================================================ */
+/* The offline-sync ledger. sync_mutations is real and is written by the event
+   registration path in routes_events.js, which uses client_mutation_id to make
+   a retried registration idempotent. The admin panel that reads this used to
+   show six invented queue entries — a 47.2 KB photo upload, a duplicate-checkin
+   conflict, "247 synced today", a 99.8% success rate and a 3.8 MB payload
+   against a 5 MB cap. None of those figures existed anywhere. */
+app.get('/api/sync-mutations', requireRole(...ADMIN_ROLES), async (req, res) => {
+  try {
+    const rows = await db.query(`
+      SELECT s.id, s.client_mutation_id, s.entity, s.action, s.applied, s.created_at,
+             u.full_name AS user_name
+      FROM sync_mutations s
+      LEFT JOIN users u ON u.id = s.user_id
+      ORDER BY s.created_at DESC, s.id DESC
+      LIMIT 100
+    `);
+    const counts = await db.query(`
+      SELECT COUNT(*)::int AS total,
+             COUNT(*) FILTER (WHERE applied)::int      AS applied,
+             COUNT(*) FILTER (WHERE NOT applied)::int  AS unapplied
+      FROM sync_mutations`);
+    res.json({ mutations: rows.rows, ...counts.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* Referral requests, so they stop disappearing into a black hole. POST
+   /api/jobs/:id/refer has always written job_referrals rows, but nothing could
+   read them back — no endpoint and no screen. This is the read path. */
+app.get('/api/job-referrals', requireAuth, async (req, res) => {
+  try {
+    const isStaff = MODERATOR_ROLES.includes(req.user.role);
+    // A poster sees requests against their own postings; staff see all.
+    const rows = await db.query(`
+      SELECT r.id, r.job_id, r.message, r.status, r.created_at,
+             j.title AS job_title, j.company,
+             requester.full_name AS requester_name, requester.email AS requester_email,
+             referrer.full_name  AS referrer_name
+      FROM job_referrals r
+      JOIN jobs j ON j.id = r.job_id
+      LEFT JOIN users requester ON requester.id = r.requester_id
+      LEFT JOIN users referrer  ON referrer.id  = r.referrer_id
+      WHERE $2::boolean OR r.referrer_id = $1 OR r.requester_id = $1
+      ORDER BY r.created_at DESC, r.id DESC
+      LIMIT 100
+    `, [req.user.uid, isStaff]);
+    res.json(rows.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* Audience segmentation, staff only.
+
+   The panel this serves used to be entirely invented. Its match count started
+   at a literal 3,420 and every filter change called updateSegmentCount(), whose
+   whole body was Math.floor(Math.random() * 2000) + 1500 — a fresh random
+   number between 1,500 and 3,500 each time, presented as "Alumni matched"
+   beside a badge reading "Real-Time Vector Filtering". The filter options were
+   invented too: a batch range of 2000-2026 over profiles that run 2014-2021,
+   and three industry domains that did not match the values in the column.
+
+   GET /api/segment/options returns the values that exist; GET /api/segment/count
+   counts the profiles a filter combination actually selects. */
+app.get('/api/segment/options', requireRole(...MODERATOR_ROLES), async (req, res) => {
+  try {
+    const [batches, depts, industries, span] = await Promise.all([
+      db.query(`SELECT DISTINCT batch FROM alumni_profiles WHERE batch IS NOT NULL ORDER BY batch`),
+      db.query(`SELECT department, COUNT(*)::int AS n FROM alumni_profiles
+                WHERE department IS NOT NULL AND department <> '' GROUP BY department ORDER BY n DESC, department`),
+      db.query(`SELECT industry, COUNT(*)::int AS n FROM alumni_profiles
+                WHERE industry IS NOT NULL AND industry <> '' GROUP BY industry ORDER BY n DESC, industry`),
+      db.query(`SELECT MIN(batch)::int AS min_batch, MAX(batch)::int AS max_batch,
+                       COUNT(*)::int AS total,
+                       COUNT(*) FILTER (WHERE can_mentor)::int AS mentors
+                FROM alumni_profiles`)
+    ]);
+    res.json({
+      batches: batches.rows.map(r => r.batch),
+      departments: depts.rows,
+      industries: industries.rows,
+      ...span.rows[0],
+      // Donor status is derived from settled donations, not a stored flag.
+      donors: (await db.query(
+        `SELECT COUNT(DISTINCT donor_user_id)::int AS n FROM donations WHERE status = 'SUCCESS'`)).rows[0].n
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* Counts the alumni profiles a filter combination selects, and returns the
+   same filters back so the caller can show what was counted. Every filter maps
+   to a column that exists; there is no filter here the query cannot honour. */
+app.get('/api/segment/count', requireRole(...MODERATOR_ROLES), async (req, res) => {
+  const { batchFrom, batchTo, department, industry, donor, mentor } = req.query;
+  const where = ['1=1'];
+  const params = [];
+
+  const from = parseInt(batchFrom, 10);
+  const to = parseInt(batchTo, 10);
+  if (Number.isInteger(from)) { params.push(from); where.push(`ap.batch >= $${params.length}`); }
+  if (Number.isInteger(to))   { params.push(to);   where.push(`ap.batch <= $${params.length}`); }
+  if (department && department !== 'all') { params.push(department); where.push(`ap.department = $${params.length}`); }
+  if (industry && industry !== 'all')     { params.push(industry);   where.push(`ap.industry = $${params.length}`); }
+  if (mentor === 'true') where.push('ap.can_mentor = TRUE');
+
+  if (donor === 'donors') {
+    where.push(`EXISTS (SELECT 1 FROM donations d WHERE d.donor_user_id = u.id AND d.status = 'SUCCESS')`);
+  } else if (donor === 'nondonors') {
+    where.push(`NOT EXISTS (SELECT 1 FROM donations d WHERE d.donor_user_id = u.id AND d.status = 'SUCCESS')`);
+  }
+
+  try {
+    const r = await db.query(`
+      SELECT COUNT(*)::int AS matched
+      FROM users u JOIN alumni_profiles ap ON ap.user_id = u.id
+      WHERE ${where.join(' AND ')}
+    `, params);
+    const total = (await db.query(
+      'SELECT COUNT(*)::int AS n FROM users u JOIN alumni_profiles ap ON ap.user_id = u.id')).rows[0].n;
+    res.json({ matched: r.rows[0].matched, total, filters: { batchFrom, batchTo, department, industry, donor, mentor } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* Verify an account. The Approve button on the verification queue used to raise
+   a toast reading "<name> approved successfully" and change nothing at all — the
+   account stayed unverified and the same two invented people reappeared on the
+   next render. This writes users.is_verified. */
+app.put('/api/users/:id/verify', requireRole(...MODERATOR_ROLES), async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid user id' });
+  const verified = req.body?.verified !== false;
+  try {
+    const r = await db.query(
+      'UPDATE users SET is_verified = $1 WHERE id = $2 RETURNING id, full_name, is_verified',
+      [verified, id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
+    await writeAuditSafe(verified ? 'Alumni Verified' : 'Verification Revoked',
+      `${r.rows[0].full_name} (user #${id}) by ${req.user.uid}`);
+    res.json(r.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* Accounts still awaiting verification — the real queue behind the dashboard
+   panel that used to list two invented people. */
+app.get('/api/verification-queue', requireRole(...MODERATOR_ROLES), async (req, res) => {
+  try {
+    const rows = await db.query(`
+      SELECT u.id, u.full_name, u.initials, u.email, u.department, u.created_at,
+             ap.batch, ap.student_id
+      FROM users u
+      LEFT JOIN alumni_profiles ap ON ap.user_id = u.id
+      WHERE NOT u.is_verified
+      ORDER BY u.created_at DESC, u.id DESC
+      LIMIT 50
+    `);
+    res.json(rows.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 const guards = { requireAuth, requireRole, ADMIN_ROLES, MODERATOR_ROLES };
 
@@ -1212,8 +1967,20 @@ const guards = { requireAuth, requireRole, ADMIN_ROLES, MODERATOR_ROLES };
 const v2 = require('./routes_v2')(app, guards);
 _writeAudit = v2.writeAudit;   // late-bind the audit writer declared above
 
-// Event Management Planner (Phase 6).
+// Events, tickets, tasks, people, directory (v5). Mounted before the planner
+// so the /api/events/* namespace resolves here.
+require('./routes_events')(app, { ...guards, writeAudit: v2.writeAudit });
+
+// Event "Advanced" modules: budget, sponsors, vendors, marketing, meetings,
+// risks, committees, volunteers, logistics, timeline. Staff-only.
 require('./routes_planner')(app, { ...guards, writeAudit: v2.writeAudit });
+
+// Administrator account provisioning and lifecycle. Super admin only; these are
+// ordinary users rows, not a second identity system.
+require('./routes_admin_users')(app, {
+  ...guards, SUPER_ONLY, STAFF_ROLES,
+  hashPassword, writeAudit: v2.writeAudit, auditCtx, publicUser
+});
 
 // PDPA 2026 / CA 2023 compliance: consent, encrypted vault, DSAR.
 require('./routes_compliance')(app, {
@@ -1240,9 +2007,29 @@ app.use((req, res, next) => {
   next();
 });
 
-// Serve frontend SPA for all remaining routes
+/* Two entry points, one backend.
+
+   /admin serves the staff portal; everything else serves the alumni site. The
+   split is by path today so it can be tested and reverted without touching DNS.
+   When admin.<domain> is pointed at this deployment, the host check below picks
+   the same file — set ADMIN_ORIGIN and the subdomain works with no further
+   change. Both entry points call the same API on their own origin, so nothing
+   about authentication moves.
+
+   Note these serve different HTML but identical JavaScript files: the portals
+   differ by which modules they load, not by having their own copies. */
+const ADMIN_HOST_PREFIX = 'admin.';
+
+function wantsAdminPortal(req) {
+  if (/^\/admin(\/|$)/.test(req.path)) return true;
+  const host = String(req.hostname || '').toLowerCase();
+  if (host.startsWith(ADMIN_HOST_PREFIX)) return true;
+  const adminOrigin = (process.env.ADMIN_ORIGIN || '').toLowerCase();
+  return !!adminOrigin && adminOrigin.includes(host) && host !== '';
+}
+
 app.use((req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+  res.sendFile(path.join(__dirname, wantsAdminPortal(req) ? 'admin.html' : 'index.html'));
 });
 
 // Start Express Server locally or export for Vercel Serverless
@@ -1254,3 +2041,6 @@ if (require.main === module) {
 }
 
 module.exports = app;
+// The reset CLI mints tokens through the same helper the endpoint uses, so
+// there is one definition of what a valid reset token is.
+module.exports.issueResetToken = issueResetToken;

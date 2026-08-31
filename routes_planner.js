@@ -1,11 +1,15 @@
 /* ============================================================
-   DIC ALUMNI PLATFORM — EVENT MANAGEMENT PLANNER (Phase 6)
+   DIC ALUMNI PLATFORM — EVENT "ADVANCED" MODULES
 
-   Extends the existing planner rather than replacing it. server.js keeps its
-   original proposal / budget / sponsor / task / procurement / AI-estimate
-   endpoints; this module adds the pieces that were read-only or missing:
-   committees, volunteers, risks, vendors, timeline, logistics, marketing,
-   meetings, reports, analytics and the approval workflow.
+   Budget, sponsors, vendors, procurement, marketing, meetings, risks,
+   committees, volunteers, logistics and timeline — the parts of event
+   planning a small college event does not need, kept behind the Advanced
+   disclosure in the UI.
+
+   v5: every route here is staff-only. These endpoints previously answered
+   any signed-in user, which exposed sponsor contacts, vendor contract values
+   and meeting minutes to ordinary alumni. Events, tickets, tasks and people
+   moved to routes_events.js; approval moved onto the event row.
    ============================================================ */
 
 const db = require('./db');
@@ -17,8 +21,9 @@ function crud(app, guards, { path, table, columns, required = [], label }) {
   const ok = (res, fn) => fn().catch(err => res.status(500).json({ error: err.message }));
   const keys = Object.keys(columns);
 
-  app.get(`/api/planner/${path}`, requireAuth, (req, res) => ok(res, async () => {
-    const eventId = parseInt(req.query.eventId) || 1;
+  app.get(`/api/planner/${path}`, requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
+    const eventId = parseInt(req.query.eventId);
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
     const rows = await db.query(`SELECT * FROM ${table} WHERE event_id = $1 ORDER BY id ASC`, [eventId]);
     res.json(rows.rows);
   }));
@@ -29,8 +34,10 @@ function crud(app, guards, { path, table, columns, required = [], label }) {
         return res.status(400).json({ error: `${r} is required` });
       }
     }
+    const eventId = parseInt(req.body.eventId);
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
     const cols = ['event_id', ...keys];
-    const vals = [parseInt(req.body.eventId) || 1, ...keys.map(k => {
+    const vals = [eventId, ...keys.map(k => {
       const v = req.body[k];
       return v === undefined || v === '' ? null : v;
     })];
@@ -39,7 +46,7 @@ function crud(app, guards, { path, table, columns, required = [], label }) {
 
     const row = await db.query(
       `INSERT INTO ${table} (${dbCols}) VALUES (${placeholders}) RETURNING *`, vals);
-    await writeAudit(`${label} Added`, `${table} #${row.rows[0].id} by user ${req.user.uid}`, '📋');
+    await writeAudit(`${label} Added`, `${table} #${row.rows[0].id} by user ${req.user.uid}`, 'clipboard-list');
     res.json(row.rows[0]);
   }));
 
@@ -59,7 +66,7 @@ function crud(app, guards, { path, table, columns, required = [], label }) {
   app.delete(`/api/planner/${path}/:id`, requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
     const row = await db.query(`DELETE FROM ${table} WHERE id = $1 RETURNING id`, [parseInt(req.params.id)]);
     if (!row.rows.length) return res.status(404).json({ error: `${label} not found` });
-    await writeAudit(`${label} Deleted`, `${table} #${req.params.id} by user ${req.user.uid}`, '🗑');
+    await writeAudit(`${label} Deleted`, `${table} #${req.params.id} by user ${req.user.uid}`, 'trash-2');
     res.json({ success: true });
   }));
 }
@@ -108,70 +115,37 @@ module.exports = function mountPlanner(app, guards) {
     columns: { title: 'title', agenda: 'agenda', meetingDate: 'meeting_date', meetingTime: 'meeting_time',
                location: 'location', attendees: 'attendees', minutes: 'minutes', status: 'status' } });
 
-  /* ─── UPDATE/DELETE for the modules that only had create+read ─── */
+  /* Budget, sponsors and procurement used to have PUT/DELETE only — their
+     create path lived on the legacy /api/events/* endpoints that v5 removed,
+     which left the Advanced tab's "Add" buttons posting to nothing. They now
+     go through the same factory as every other module. */
 
-  const patchable = [
-    { path: 'budgets', table: 'event_budgets', label: 'Budget Line',
-      columns: { category: 'category', estimatedCost: 'estimated_cost', actualCost: 'actual_cost',
-                 vendorName: 'vendor_name', status: 'status', paymentStatus: 'payment_status' } },
-    { path: 'sponsors', table: 'event_sponsors', label: 'Sponsor',
-      columns: { company: 'company', contactPerson: 'contact_person', email: 'email', phone: 'phone',
-                 packageTier: 'package_tier', contributionAmount: 'contribution_amount',
-                 pipelineStatus: 'pipeline_status', deliverables: 'deliverables' } },
-    { path: 'tasks', table: 'event_tasks', label: 'Task',
-      columns: { title: 'title', description: 'description', committeeName: 'committee_name',
-                 priority: 'priority', status: 'status', assignedTo: 'assigned_to', deadline: 'deadline' } },
-    { path: 'procurement', table: 'event_procurement', label: 'Procurement Item',
-      columns: { itemName: 'item_name', category: 'category', quantity: 'quantity',
-                 estimatedPrice: 'estimated_price', actualPrice: 'actual_price',
-                 vendorName: 'vendor_name', deliveryStatus: 'delivery_status' } }
-  ];
+  crud(app, guards, { path: 'budgets', table: 'event_budgets', label: 'Budget Line',
+    required: ['category'],
+    columns: { category: 'category', estimatedCost: 'estimated_cost', actualCost: 'actual_cost',
+               vendorName: 'vendor_name', status: 'status', paymentStatus: 'payment_status' } });
 
-  patchable.forEach(({ path, table, label, columns }) => {
-    app.put(`/api/planner/${path}/:id`, requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
-      const sets = [], vals = [parseInt(req.params.id)];
-      Object.keys(columns).forEach(k => {
-        if (req.body[k] !== undefined) { vals.push(req.body[k]); sets.push(`${columns[k]} = $${vals.length}`); }
-      });
-      if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
-      const row = await db.query(`UPDATE ${table} SET ${sets.join(', ')} WHERE id=$1 RETURNING *`, vals);
-      if (!row.rows.length) return res.status(404).json({ error: `${label} not found` });
-      res.json(row.rows[0]);
-    }));
+  crud(app, guards, { path: 'sponsors', table: 'event_sponsors', label: 'Sponsor',
+    required: ['company'],
+    columns: { company: 'company', contactPerson: 'contact_person', email: 'email', phone: 'phone',
+               packageTier: 'package_tier', contributionAmount: 'contribution_amount',
+               pipelineStatus: 'pipeline_status', deliverables: 'deliverables' } });
 
-    app.delete(`/api/planner/${path}/:id`, requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
-      const row = await db.query(`DELETE FROM ${table} WHERE id=$1 RETURNING id`, [parseInt(req.params.id)]);
-      if (!row.rows.length) return res.status(404).json({ error: `${label} not found` });
-      await writeAudit(`${label} Deleted`, `${table} #${req.params.id} by user ${req.user.uid}`, '🗑');
-      res.json({ success: true });
-    }));
-  });
+  crud(app, guards, { path: 'procurement', table: 'event_procurement', label: 'Procurement Item',
+    required: ['itemName'],
+    columns: { itemName: 'item_name', category: 'category', quantity: 'quantity',
+               estimatedPrice: 'estimated_price', actualPrice: 'actual_price',
+               vendorName: 'vendor_name', deliveryStatus: 'delivery_status' } });
 
-  /* ─── APPROVAL WORKFLOW ─── */
-
-  app.get('/api/planner/proposals', requireAuth, (req, res) => ok(res, async () => {
-    const rows = await db.query('SELECT * FROM event_proposals ORDER BY id DESC');
-    res.json(rows.rows);
-  }));
-
-  app.put('/api/planner/proposals/:id/status', requireRole(...ADMIN_ROLES), (req, res) => ok(res, async () => {
-    const valid = ['draft', 'pending_approval', 'approved', 'in_planning', 'completed'];
-    const { status } = req.body || {};
-    if (!valid.includes(status)) return res.status(400).json({ error: `status must be one of ${valid.join(', ')}` });
-
-    const row = await db.query('UPDATE event_proposals SET status=$2 WHERE id=$1 RETURNING *',
-      [parseInt(req.params.id), status]);
-    if (!row.rows.length) return res.status(404).json({ error: 'Proposal not found' });
-
-    await writeAudit('Proposal Status Changed',
-      `"${row.rows[0].name}" → ${status} by user ${req.user.uid}`, '🎪');
-    res.json(row.rows[0]);
-  }));
+  /* Event approval moved to routes_events.js in v5: approval is now a
+     property of the event itself (events.approval_status) rather than a
+     parallel event_proposals workflow that no UI could ever reach. */
 
   /* ─── REPORTS & ANALYTICS (were hardcoded figures / toasts) ─── */
 
-  app.get('/api/planner/analytics/:eventId', requireAuth, (req, res) => ok(res, async () => {
-    const eventId = parseInt(req.params.eventId) || 1;
+  app.get('/api/planner/analytics/:eventId', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
+    const eventId = parseInt(req.params.eventId);
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
 
     const [budget, sponsors, tasks, procurement, volunteers, risks, marketing, timeline, vendors] =
       await Promise.all([
@@ -234,8 +208,9 @@ module.exports = function mountPlanner(app, guards) {
   }));
 
   // Real CSV export — downloadEventReport() used to be a toast.
-  app.get('/api/planner/report/:eventId', requireAuth, (req, res) => ok(res, async () => {
-    const eventId = parseInt(req.params.eventId) || 1;
+  app.get('/api/planner/report/:eventId', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
+    const eventId = parseInt(req.params.eventId);
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
     const type = (req.query.type || 'full').toLowerCase();
 
     const sections = {
@@ -276,13 +251,17 @@ module.exports = function mountPlanner(app, guards) {
 
   /* ─── Extended planner bundle: everything the workspace needs in one call ─── */
 
-  app.get('/api/planner/workspace/:eventId', requireAuth, (req, res) => ok(res, async () => {
-    const eventId = parseInt(req.params.eventId) || 1;
+  app.get('/api/planner/workspace/:eventId', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
+    const eventId = parseInt(req.params.eventId);
+    if (!eventId) return res.status(400).json({ error: 'eventId is required' });
     const q = (sql) => db.query(sql, [eventId]).then(r => r.rows);
 
-    const [proposal, budgets, sponsors, committees, tasks, procurement,
+    // NOTE: this used to also fetch `event_proposals WHERE id = eventId`, which
+    // paired an event with whichever proposal happened to share its primary key.
+    // Proposals are gone in v5; approval lives on the event row.
+    const [event, budgets, sponsors, committees, tasks, procurement,
            volunteers, risks, vendors, timeline, logistics, marketing, meetings] = await Promise.all([
-      db.query('SELECT * FROM event_proposals WHERE id=$1', [eventId]).then(r => r.rows[0] || null),
+      db.query('SELECT * FROM events WHERE id=$1', [eventId]).then(r => r.rows[0] || null),
       q('SELECT * FROM event_budgets WHERE event_id=$1 ORDER BY id'),
       q('SELECT * FROM event_sponsors WHERE event_id=$1 ORDER BY id'),
       q('SELECT * FROM event_committees WHERE event_id=$1 ORDER BY id'),
@@ -297,7 +276,7 @@ module.exports = function mountPlanner(app, guards) {
       q('SELECT * FROM event_meetings WHERE event_id=$1 ORDER BY meeting_date NULLS LAST, id')
     ]);
 
-    res.json({ proposal, budgets, sponsors, committees, tasks, procurement,
+    res.json({ event, budgets, sponsors, committees, tasks, procurement,
                volunteers, risks, vendors, timeline, logistics, marketing, meetings });
   }));
 };

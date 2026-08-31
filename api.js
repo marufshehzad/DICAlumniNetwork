@@ -86,7 +86,17 @@ const API = {
     }
   },
 
-  logout() {
+  /* Signing out now ends the session server-side as well. It used to only
+     remove the browser's copy, which left the token itself valid for the rest
+     of its twelve hours. The local copy is cleared whatever the request does,
+     so a network failure cannot leave someone stuck signed in. */
+  async logout() {
+    const token = getSessionToken();
+    if (token) {
+      try {
+        await fetchWithTimeout(`${API_BASE_URL}/api/auth/logout`, { method: 'POST' }, 4000);
+      } catch { /* offline or already expired — the local drop below still applies */ }
+    }
     setSessionToken(null);
   },
 
@@ -298,108 +308,6 @@ const API = {
     } catch (e) {
       return null;
     }
-  },
-
-  // ─── EVENT PLANNER API HELPERS ───
-  async getEventPlanner(id = 1) {
-    try {
-      const res = await fetchWithTimeout(`${API_BASE_URL}/api/events/planner/${id}`);
-      if (!res.ok) throw new Error('API Error');
-      return await res.json();
-    } catch (e) {
-      return null;
-    }
-  },
-
-  async submitEventProposal(data) {
-    try {
-      const res = await fetchWithTimeout(`${API_BASE_URL}/api/events/proposals`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      return await res.json();
-    } catch (e) {
-      return null;
-    }
-  },
-
-  async addEventBudget(data) {
-    try {
-      const res = await fetchWithTimeout(`${API_BASE_URL}/api/events/budgets`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      return await res.json();
-    } catch (e) {
-      return null;
-    }
-  },
-
-  async addEventSponsor(data) {
-    try {
-      const res = await fetchWithTimeout(`${API_BASE_URL}/api/events/sponsors`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      return await res.json();
-    } catch (e) {
-      return null;
-    }
-  },
-
-  async addEventTask(data) {
-    try {
-      const res = await fetchWithTimeout(`${API_BASE_URL}/api/events/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      return await res.json();
-    } catch (e) {
-      return null;
-    }
-  },
-
-  async updateTaskStatus(taskId, status) {
-    try {
-      const res = await fetchWithTimeout(`${API_BASE_URL}/api/events/tasks/${taskId}/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
-      });
-      return await res.json();
-    } catch (e) {
-      return null;
-    }
-  },
-
-  async addEventProcurement(data) {
-    try {
-      const res = await fetchWithTimeout(`${API_BASE_URL}/api/events/procurement`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      return await res.json();
-    } catch (e) {
-      return null;
-    }
-  },
-
-  async getEventAIEstimate(data) {
-    try {
-      const res = await fetchWithTimeout(`${API_BASE_URL}/api/events/ai-estimate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      return await res.json();
-    } catch (e) {
-      return null;
-    }
   }
 };
 
@@ -432,22 +340,69 @@ async function apiRequest(method, path, body) {
   }
 }
 
+// Builds ?a=1&b=2 from an object, skipping empty values.
+function qs(params) {
+  const parts = Object.entries(params || {})
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
+  return parts.length ? `?${parts.join('&')}` : '';
+}
+
 // True when a helper returned a failure envelope rather than data.
 function apiFailed(result) {
   return !result || (typeof result === 'object' && !Array.isArray(result) && 'error' in result);
 }
 
 Object.assign(API, {
-  // ─── EVENTS & TICKETING ───
-  getEvents:        (status)        => apiRequest('GET',    `/api/events${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+  // ─── EVENTS, TICKETS, TASKS, PEOPLE (v5) ───
+  getEvents:        (params = {})   => apiRequest('GET',    '/api/events' + qs(params)),
+  getMyEvents:      ()             => apiRequest('GET',    '/api/events/mine'),
+  getEvent:         (id)            => apiRequest('GET',    `/api/events/${id}`),
+  getEventOverview: (id)            => apiRequest('GET',    `/api/events/${id}/overview`),
   createEvent:      (d)             => apiRequest('POST',   '/api/events', d),
   updateEvent:      (id, d)         => apiRequest('PUT',    `/api/events/${id}`, d),
+  approveEvent:     (id)            => apiRequest('PUT',    `/api/events/${id}/approve`),
+  rejectEvent:      (id, reason)    => apiRequest('PUT',    `/api/events/${id}/reject`, { reason }),
+  cancelEvent:      (id, reason)    => apiRequest('PUT',    `/api/events/${id}/cancel`, { reason }),
   deleteEvent:      (id)            => apiRequest('DELETE', `/api/events/${id}`),
+
+  getTicketTypes:   (id)            => apiRequest('GET',    `/api/events/${id}/ticket-types`),
+  addTicketType:    (id, d)         => apiRequest('POST',   `/api/events/${id}/ticket-types`, d),
+  updateTicketType: (ttId, d)       => apiRequest('PUT',    `/api/events/ticket-types/${ttId}`, d),
+  deleteTicketType: (ttId)          => apiRequest('DELETE', `/api/events/ticket-types/${ttId}`),
+
   registerForEvent: (id, d)         => apiRequest('POST',   `/api/events/${id}/register`, d || {}),
   cancelRegistration:(id)           => apiRequest('DELETE', `/api/events/${id}/register`),
   getMyTicket:      (id)            => apiRequest('GET',    `/api/events/${id}/my-ticket`),
   getAttendees:     (id)            => apiRequest('GET',    `/api/events/${id}/attendees`),
+  attendeesCsvUrl:  (id)            => `${API_BASE_URL}/api/events/${id}/attendees.csv`,
   checkInTicket:    (ticketCode)    => apiRequest('POST',   '/api/events/checkin', { ticketCode }),
+
+  getEventTasks:    (id)            => apiRequest('GET',    `/api/events/${id}/tasks`),
+  getTask:          (taskId)        => apiRequest('GET',    `/api/events/tasks/${taskId}`),
+  createTask:       (id, d)         => apiRequest('POST',   `/api/events/${id}/tasks`, d),
+  addStandardChecklist:(id)         => apiRequest('POST',   `/api/events/${id}/tasks/standard-checklist`),
+  updateTask:       (taskId, d)     => apiRequest('PUT',    `/api/events/tasks/${taskId}`, d),
+  verifyTask:       (taskId)        => apiRequest('PUT',    `/api/events/tasks/${taskId}/verify`),
+  deleteTask:       (taskId)        => apiRequest('DELETE', `/api/events/tasks/${taskId}`),
+  addTaskAssignees: (taskId, payload) => apiRequest('POST', `/api/events/tasks/${taskId}/assignees`,
+                                       Array.isArray(payload) ? { userIds: payload } : payload),
+  removeTaskAssignee:(taskId, userId) => apiRequest('DELETE', `/api/events/tasks/${taskId}/assignees/${userId}`),
+  addTaskNote:      (taskId, body)  => apiRequest('POST',   `/api/events/tasks/${taskId}/notes`, { body }),
+  addChecklistItem: (taskId, label) => apiRequest('POST',   `/api/events/tasks/${taskId}/checklist`, { label }),
+  setChecklistItem: (itemId, isDone) => apiRequest('PUT',   `/api/events/tasks/checklist/${itemId}`, { isDone }),
+  deleteChecklistItem:(itemId)      => apiRequest('DELETE', `/api/events/tasks/checklist/${itemId}`),
+  runReminderSweep: ()              => apiRequest('POST',   '/api/events/tasks/reminder-sweep'),
+
+  getEventPeople:   (id)            => apiRequest('GET',    `/api/events/${id}/people`),
+  addEventPeople:   (id, d)         => apiRequest('POST',   `/api/events/${id}/people`, d),
+  addExternalPerson:(id, d)         => apiRequest('POST',   `/api/events/${id}/external-people`, d),
+  updateExternalPerson:(personId, d)=> apiRequest('PUT',    `/api/events/external-people/${personId}`, d),
+  removeEventPerson:(personId)      => apiRequest('DELETE', `/api/events/people/${personId}`),
+  removeTaskPerson: (taskId, personId) =>
+                                       apiRequest('DELETE', `/api/events/tasks/${taskId}/assignees/person/${personId}`),
+
+  searchDirectory:  (params = {})   => apiRequest('GET',    '/api/directory/search' + qs(params)),
 
   // ─── JOBS ───
   getJobs:          (q = {})        => apiRequest('GET',    `/api/jobs?${new URLSearchParams(q)}`),
@@ -457,6 +412,28 @@ Object.assign(API, {
   applyToJob:       (id, d)         => apiRequest('POST',   `/api/jobs/${id}/apply`, d || {}),
   getJobApplicants: (id)            => apiRequest('GET',    `/api/jobs/${id}/applicants`),
   requestReferral:  (id, message)   => apiRequest('POST',   `/api/jobs/${id}/refer`, { message }),
+
+  // ─── REAL PLATFORM STATISTICS ───
+  // Backs every dashboard tile, analytics figure and map number. Each field is
+  // a COUNT or SUM over rows that exist; none of it is a stored counter.
+  getStatsOverview:     ()          => apiRequest('GET',    '/api/stats/overview'),
+  getStatsAnalytics:    ()          => apiRequest('GET',    '/api/stats/analytics'),
+  getStatsMap:          ()          => apiRequest('GET',    '/api/stats/map'),
+  getRbacMatrix:        ()          => apiRequest('GET',    '/api/stats/rbac'),
+  getVerificationQueue: ()          => apiRequest('GET',    '/api/verification-queue'),
+
+  // ─── ADMINISTRATOR ACCOUNTS (super admin only) ───
+  getAdministrators:    ()          => apiRequest('GET',    '/api/admin/administrators'),
+  getAdministrator:     (id)        => apiRequest('GET',    '/api/admin/administrators/' + id),
+  createAdministrator:  (d)         => apiRequest('POST',   '/api/admin/administrators', d),
+  updateAdministrator:  (id, d)     => apiRequest('PUT',    '/api/admin/administrators/' + id, d),
+  setAdministratorStatus: (id, s)   => apiRequest('PUT',    '/api/admin/administrators/' + id + '/status', { status: s }),
+  resetAdministratorPassword: (id)  => apiRequest('POST',   '/api/admin/administrators/' + id + '/reset-password', {}),
+  getSegmentOptions:    ()          => apiRequest('GET',    '/api/segment/options'),
+  getSegmentCount:      (q)         => apiRequest('GET',    '/api/segment/count?' + new URLSearchParams(q)),
+  verifyUser:        (id, v = true) => apiRequest('PUT',    '/api/users/' + id + '/verify', { verified: v }),
+  getSyncMutations:     ()          => apiRequest('GET',    '/api/sync-mutations'),
+  getJobReferrals:      ()          => apiRequest('GET',    '/api/job-referrals'),
 
   // ─── CAMPAIGNS & DONATIONS ───
   getCampaigns:     ()              => apiRequest('GET',    '/api/campaigns'),
@@ -492,16 +469,14 @@ Object.assign(API, {
   sendBroadcastApi: (d)             => apiRequest('POST',   '/api/broadcasts', d),
   getAuditLogs:     ()              => apiRequest('GET',    '/api/audit-logs'),
 
-  // ─── EVENT PLANNER ───
-  getPlannerWorkspace: (eventId = 1) => apiRequest('GET',   `/api/planner/workspace/${eventId}`),
-  getPlannerAnalytics: (eventId = 1) => apiRequest('GET',   `/api/planner/analytics/${eventId}`),
-  getPlannerList:   (kind, eventId = 1) => apiRequest('GET', `/api/planner/${kind}?eventId=${eventId}`),
+  // ─── EVENT ADVANCED MODULES (staff only) ───
+  getPlannerWorkspace: (eventId) => apiRequest('GET',   `/api/planner/workspace/${eventId}`),
+  getPlannerAnalytics: (eventId) => apiRequest('GET',   `/api/planner/analytics/${eventId}`),
+  getPlannerList:   (kind, eventId) => apiRequest('GET', `/api/planner/${kind}?eventId=${eventId}`),
   createPlannerItem:(kind, d)       => apiRequest('POST',   `/api/planner/${kind}`, d),
   updatePlannerItem:(kind, id, d)   => apiRequest('PUT',    `/api/planner/${kind}/${id}`, d),
   deletePlannerItem:(kind, id)      => apiRequest('DELETE', `/api/planner/${kind}/${id}`),
-  getProposals:     ()              => apiRequest('GET',    '/api/planner/proposals'),
-  setProposalStatus:(id, status)    => apiRequest('PUT',    `/api/planner/proposals/${id}/status`, { status }),
-  plannerReportUrl: (eventId = 1, type = 'full') => `${API_BASE_URL}/api/planner/report/${eventId}?type=${type}`,
+  plannerReportUrl: (eventId, type = 'full') => `${API_BASE_URL}/api/planner/report/${eventId}?type=${type}`,
 
   // ─── COMPLIANCE ───
   recordConsent:    (d)             => apiRequest('POST',   '/api/consent', d),
@@ -523,6 +498,11 @@ Object.assign(API, {
 Object.assign(API, {
   changePassword: (currentPassword, newPassword) =>
     apiRequest('POST', '/api/auth/change-password', { currentPassword, newPassword }),
+  // Changing a password ends every session opened under the old one, so the
+  // response carries a replacement token for this browser.
+  forgotPassword:   (email)         => apiRequest('POST',   '/api/auth/forgot-password', { email }),
+  resetPassword:    (token, newPassword) =>
+    apiRequest('POST', '/api/auth/reset-password', { token, newPassword }),
   getMyProfile: () => apiRequest('GET', '/api/profile/me'),
   updateMyProfile: (data) => apiRequest('PUT', '/api/profile/me', data)
 });

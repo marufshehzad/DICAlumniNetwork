@@ -23,7 +23,7 @@
 - **Validation Engine:** Real-time checking for required fields, email format, phone format, CGPA numerical ranges, and passing years.
 - **4-Priority Duplicate Detection:** Auto-detects duplicates by Student ID > Roll Number > Email > Mobile Number.
 - **Duplicate Handling Strategies:** Skip duplicates, update existing profiles, or merge records.
-- **Automated Credential Generation:** Configurable password strategy (Static Temp Password `12345678`, `StudentID + Suffix`, or `Cryptographic Random`).
+- **Automated Credential Generation:** Each import batch gets a freshly generated temporary password, shown once to the administrator who ran it and stored only as a scrypt hash. Every imported account is flagged to choose its own password at first sign-in.
 - **Downloadable Error Report:** Generates `bulk_import_error_report.csv` for invalid rows detailing exact errors & suggested fixes.
 - **Import Audit History:** Complete historical log of past import batches (Date, Admin, Total/Success/Failed/Duplicates, Processing Speed).
 
@@ -43,15 +43,36 @@
 
 ---
 
-## 🔐 5-Level Role-Based Access Control (RBAC) & Demo Logins
+## 🔐 5-Level Role-Based Access Control (RBAC)
 
-| Role Level | Role Title | Demo Email | Password | Access Rights & Dashboard View |
-|---|---|---|---|---|
-| **Level 1** | **Alumni** | `alumni@dic.edu.bd` | `12345678` | Profile completion, Networking, Directory, Mentorship, Events, Jobs, Career Tracker, DIC News & Live Polls. |
-| **Level 2** | **Moderator** | `moderator@dic.edu.bd` | `12345678` | **Moderator Dashboard**: Pending profile approvals queue, reported posts, community safety index (99.4%), content moderation tools. |
-| **Level 3** | **Department Admin** | `departmentadmin@dic.edu.bd` | `12345678` | **Dept Admin Dashboard (CSE/SWE/BBA/EEE)**: Department placement funnel, department verification queue, department announcements. |
-| **Level 4** | **College Admin** | `collegeadmin@dic.edu.bd` | `12345678` | **College Command Center**: DIC-wide alumni count (38,420), total funds (৳45.2L), 12-month engagement trends, college broadcasts. |
-| **Level 5** | **Super Admin** | `admin@dic.edu.bd` | `12345678` | **Super Admin Control Panel**: Bulk User Import, Dynamic Custom Fields, Infrastructure & server health, immutable audit logs, feature flags, database tools. |
+| Role Level | Role Title | Access Rights & Dashboard View |
+|---|---|---|
+| **Level 1** | **Alumni** | Profile completion, Networking, Directory, Mentorship, Events, Jobs, Career Tracker, DIC News & Live Polls. |
+| **Level 2** | **Moderator** | **Moderator Dashboard**: Pending profile approvals queue, reported posts, content moderation tools. |
+| **Level 3** | **Department Admin** | **Dept Admin Dashboard (CSE/SWE/BBA/EEE)**: Department placement funnel, department verification queue, department announcements. |
+| **Level 4** | **College Admin** | **College Command Center**: college-wide alumni figures, engagement trends, college broadcasts, event approval. |
+| **Level 5** | **Super Admin** | **Super Admin Control Panel**: Bulk User Import, Dynamic Custom Fields, immutable audit logs, database tools. |
+
+A user's role comes from the `users.role` column and is decided server-side at
+sign-in. It cannot be changed from the browser.
+
+### Sign-in credentials
+
+This table used to publish the e-mail address and password of every account,
+including Super Admin, and the same values were hardcoded in `app.js`. Both are
+gone. Seeded accounts now ship **locked** and cannot sign in until you set a
+password:
+
+```bash
+node rotate_credentials.js --all      # generate strong passwords for seeded accounts
+node rotate_credentials.js --check    # report any account still on a weak password
+```
+
+Generated passwords are written once to `admin-credentials.local.txt`
+(gitignored) and are never printed to the console. Store them in a password
+manager and delete the file. To choose your own instead, set
+`ADMIN_PW_SUPER_ADMIN`, `ADMIN_PW_UNIV_ADMIN`, `ADMIN_PW_DEPT_ADMIN` or
+`ADMIN_PW_MODERATOR` before running the script — see `.env.example`.
 
 ---
 

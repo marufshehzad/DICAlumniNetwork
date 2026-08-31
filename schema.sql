@@ -10,7 +10,11 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL DEFAULT '12345678',
+    -- No usable default. A row inserted without an explicit password_hash gets a
+    -- sentinel that verifyPassword() always rejects, so an account can never come
+    -- into existence already signable-in with a guessable password. The previous
+    -- default was the literal '12345678'.
+    password_hash VARCHAR(255) NOT NULL DEFAULT 'LOCKED$no-password-set',
     full_name VARCHAR(255) NOT NULL,
     initials VARCHAR(10) NOT NULL,
     role VARCHAR(50) NOT NULL CHECK (role IN ('alumni', 'moderator', 'dept_admin', 'univ_admin', 'super_admin')),

@@ -6,11 +6,11 @@
 -- 1. SEED RBAC USERS
 INSERT INTO users (id, email, password_hash, full_name, initials, role, role_label, department, icon, is_verified)
 VALUES 
-  (1, 'admin@dic.edu.bd', '12345678', 'Super Admin', 'SA', 'super_admin', 'Super Admin', 'System & Security', '👑', true),
-  (2, 'collegeadmin@dic.edu.bd', '12345678', 'College Admin', 'CA', 'univ_admin', 'College Admin', 'DIC Administration', '🏛', true),
-  (3, 'departmentadmin@dic.edu.bd', '12345678', 'Dr. Shahabuddin', 'DA', 'dept_admin', 'Dept Admin (CSE)', 'CSE Department', '🏢', true),
-  (4, 'moderator@dic.edu.bd', '12345678', 'Content Moderator', 'CM', 'moderator', 'Moderator', 'DIC Community', '🛡', true),
-  (5, 'alumni@dic.edu.bd', '12345678', 'Mohiuddin Rahman', 'MR', 'alumni', 'Alumni Member', 'BSc CSE (2020)', '🎓', true)
+  (1, 'admin@dic.edu.bd', 'LOCKED$run-rotate_credentials.js', 'Super Admin', 'SA', 'super_admin', 'Super Admin', 'System & Security', '👑', true),
+  (2, 'collegeadmin@dic.edu.bd', 'LOCKED$run-rotate_credentials.js', 'College Admin', 'CA', 'univ_admin', 'College Admin', 'DIC Administration', '🏛', true),
+  (3, 'departmentadmin@dic.edu.bd', 'LOCKED$run-rotate_credentials.js', 'Dr. Shahabuddin', 'DA', 'dept_admin', 'Dept Admin (CSE)', 'CSE Department', '🏢', true),
+  (4, 'moderator@dic.edu.bd', 'LOCKED$run-rotate_credentials.js', 'Content Moderator', 'CM', 'moderator', 'Moderator', 'DIC Community', '🛡', true),
+  (5, 'alumni@dic.edu.bd', 'LOCKED$run-rotate_credentials.js', 'Mohiuddin Rahman', 'MR', 'alumni', 'Alumni Member', 'BSc CSE (2020)', '🎓', true)
 ON CONFLICT (id) DO NOTHING;
 
 SELECT setval('users_id_seq', (SELECT MAX(id) FROM users));

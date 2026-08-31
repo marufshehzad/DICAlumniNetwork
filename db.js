@@ -4,7 +4,15 @@
    Supports both Local & Cloud PostgreSQL (Neon, Supabase, Render, etc.)
    ============================================================ */
 
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+
+/* A DATE column carries no time and no zone. node-pg's default parser turns it
+   into a JS Date at the *server's* local midnight, which then serialises to
+   JSON as a UTC instant — so a task due 2026-10-29 reached the browser as
+   "2026-10-28T18:00:00Z" on a UTC+6 host and re-saved as the 28th. Handing
+   DATE back as the plain 'YYYY-MM-DD' string keeps it zone-free end to end.
+   TIMESTAMPTZ (1184) is untouched: those really are instants. */
+types.setTypeParser(1082, (v) => v);
 const fs = require('fs');
 const path = require('path');
 
