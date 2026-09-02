@@ -184,29 +184,12 @@ async function votePoll(pollId, idx) {
   renderActivePoll();
 }
 
-function renderTrendingTags() {
-  const el = document.getElementById('trending-tags');
-  if (!el) return;
-  const tags = ['#Reunion2026', '#bKashScholarship', '#AITechSymposium', '#BUETPartnership', '#MentorshipDrive'];
-  el.innerHTML = `<div class="trending-tag-cloud">${tags.map(t => `<span class="trending-tag" onclick="showToast('Filtering feed for ${t}')">${t}</span>`).join('')}</div>`;
-}
-
-function renderPastPolls() {
-  const el = document.getElementById('past-polls');
-  if (!el) return;
-  el.innerHTML = `
-    <div style="font-size:12px;color:var(--text-secondary)">
-      <div style="padding:6px 0;border-bottom:1px solid var(--border-glass)">
-        <div style="font-weight:700">FY26 Mentorship Model</div>
-        <div style="font-size:10px;color:var(--teal)"><i data-lucide="check" class="ui-icon"></i> 1-on-1 Matching won (64%)</div>
-      </div>
-      <div style="padding:6px 0">
-        <div style="font-weight:700">Digital ID Card Design</div>
-        <div style="font-size:10px;color:var(--teal)"><i data-lucide="check" class="ui-icon"></i> Glassmorphism Dark won (78%)</div>
-      </div>
-    </div>
-  `;
-}
+/* renderTrendingTags() and renderPastPolls() were removed with the cards they
+   drew. The five "trending" tags were fixed strings and clicking one only
+   raised a toast saying the feed was being filtered; nothing filtered. The two
+   "past polls", with their 64% and 78% winners, were markup - only one active
+   poll is stored at a time and there is no history table or endpoint to draw
+   from. renderActivePoll() and votePoll() above are real and stay. */
 
 // ─── 7. GAMIFICATION & BADGES ────────────────────────────────
 /* The engagement panel showed "1,840 PTS · Gold Tier Alumni" to every account,

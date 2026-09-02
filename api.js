@@ -440,8 +440,11 @@ Object.assign(API, {
   createCampaign:   (d)             => apiRequest('POST',   '/api/campaigns', d),
   updateCampaign:   (id, d)         => apiRequest('PUT',    `/api/campaigns/${id}`, d),
   deleteCampaign:   (id)            => apiRequest('DELETE', `/api/campaigns/${id}`),
+  // Records a pledge. There is no browser-callable path to a settled donation:
+  // confirmDonation() used to POST {success:true} and is gone with its endpoint.
   createDonation:   (d)             => apiRequest('POST',   '/api/donations', d),
-  confirmDonation:  (id, d)         => apiRequest('POST',   `/api/donations/${id}/confirm`, d || { success: true }),
+  cancelPledge:     (id)            => apiRequest('POST',   `/api/donations/${id}/cancel`),
+  recordDonationPayment: (id, d)    => apiRequest('POST',   `/api/donations/${id}/record-payment`, d || { received: true }),
   getMyDonations:   ()              => apiRequest('GET',    '/api/donations/mine'),
   getDonorLeaderboard: ()           => apiRequest('GET',    '/api/donations/leaderboard'),
 

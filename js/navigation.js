@@ -146,7 +146,7 @@ function showPage(page) {
     dashboard:      () => render(window.renderDashboard),
     directory:      () => render(window.renderAlumniGrid),
     mentorship:     () => render(window.renderMentorships),
-    donations:      () => render(window.renderCampaignsEnhanced),
+    donations:      () => { render(window.renderCampaignsEnhanced); render(window.renderMyDonations); },
     events:         () => render(window.renderEventsPage),
     chapters:       () => render(window.renderChapters),
     map:            () => render(window.renderMapClusters),
@@ -154,8 +154,6 @@ function showPage(page) {
     news:           () => {
       render(window.renderNewsFeed);
       render(window.renderActivePoll);
-      render(window.renderTrendingTags);
-      render(window.renderPastPolls);
       render(window.renderSpotlightAlumni);
     },
     profile:        () => {

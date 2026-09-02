@@ -12,14 +12,20 @@
 
 
 
-// ─── DONATE MODAL ───
+/* ─── PLEDGE MODAL ───
+   This was a donation modal: pick an amount, pick bKash/Nagad/Rocket/Card,
+   type a PIN into a fake gateway screen, and the browser then told the server
+   the payment had succeeded. No gateway existed at any point in that flow.
+
+   What the platform can actually do is record that someone intends to give,
+   and let the alumni office confirm the money once it arrives. So the form
+   records a pledge, and says so. */
 function showDonateModal(campaignId, campaignName) {
   state.selectedAmount = null;
-  state.selectedGateway = null;
 
   showModal(`
     <div class="modal-header">
-      <div class="modal-title"><i data-lucide="heart" class="ui-icon"></i> Donate</div>
+      <div class="modal-title"><i data-lucide="heart" class="ui-icon"></i> Pledge a donation</div>
       <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
     </div>
     <div style="margin-bottom:14px;padding:12px;background:var(--bg-glass);border:1px solid var(--border-glass);border-radius:var(--radius-sm)">
@@ -38,18 +44,17 @@ function showDonateModal(campaignId, campaignName) {
       </div>
     </div>
     <div class="modal-section">
-      <div class="modal-section-title">Payment Method</div>
-      <div class="gateway-grid">
-        ${[['bkash','<i data-lucide="smartphone" class="ui-icon"></i>','bKash'],['nagad','<i data-lucide="smartphone" class="ui-icon"></i>','Nagad'],['rocket','<i data-lucide="rocket" class="ui-icon"></i>','Rocket'],['card','<i data-lucide="credit-card" class="ui-icon"></i>','Card']].map(([id, icon, label]) =>
-          `<div class="gateway-option" onclick="selectGateway(this, '${id}')">
-             <div style="font-size:22px">${icon}</div><div style="font-size:12px;font-weight:700">${label}</div>
-           </div>`).join('')}
+      <div class="login-note" style="display:block">
+        <strong>No payment is taken here.</strong> Online payment is not connected yet.
+        Your pledge is recorded and the alumni office will contact you to arrange
+        payment. Nothing is counted towards the campaign total until they confirm
+        the funds have arrived.
       </div>
     </div>
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-secondary);margin:14px 0;cursor:pointer">
-      <input type="checkbox" id="donate-anonymous" /> Donate anonymously
+      <input type="checkbox" id="donate-anonymous" /> Keep my name off the public donor list
     </label>
-    <button class="btn btn-primary btn-full" onclick="processDonation(${campaignId}, '${escapeHtml(campaignName).replace(/'/g, '&#39;')}')">Continue to Payment →</button>
+    <button class="btn btn-primary btn-full" onclick="processDonation(${campaignId}, '${escapeHtml(campaignName).replace(/'/g, '&#39;')}')">Record my pledge</button>
   `);
 }
 
@@ -60,11 +65,9 @@ function selectAmount(btn, amount) {
   document.getElementById('custom-amount').value = '';
 }
 
-function selectGateway(el, gateway) {
-  document.querySelectorAll('.gateway-option').forEach(g => g.classList.remove('selected'));
-  el.classList.add('selected');
-  state.selectedGateway = gateway;
-}
+/* selectGateway() lived here. It drove a bKash/Nagad/Rocket/Card picker in the
+   donate modal whose only effect was to label the ledger row with a brand no
+   gateway had ever seen. Removed with the picker. */
 function campaignDeadline(c) {
   const days = parseInt(c.days_left, 10);
   if (!Number.isFinite(days) || !c.created_at) return '';
@@ -122,7 +125,6 @@ async function renderCampaignsEnhanced() {
     const goal = Number(c.goal_amount) || 0;
     const pct = goal > 0 ? Math.min(100, Math.round((raised / goal) * 100)) : 0;
     const remaining = Math.max(0, goal - raised);
-    const gateways = Array.isArray(c.gateways) ? c.gateways : [];
     const safeName = escapeHtml(c.name).replace(/'/g, '&#39;');
     return `
     <div class="campaign-card">
@@ -146,11 +148,11 @@ async function renderCampaignsEnhanced() {
       </div>
       <div class="campaign-footer">
         <div class="gateway-pills">
-          ${gateways.map(g => `<span class="gateway-pill ${escapeHtml(g)}">${escapeHtml(g.charAt(0).toUpperCase() + g.slice(1))}</span>`).join('')}
+          <span class="gateway-pill">Pledge · paid offline</span>
         </div>
         <div style="display:flex;gap:6px">
           ${canManage ? `<button class="btn btn-ghost btn-sm" onclick="deleteCampaignPrompt(${c.id}, '${safeName}')"><i data-lucide="trash-2" class="ui-icon"></i></button>` : ''}
-          <button class="donate-btn" onclick="showDonateModal(${c.id}, '${safeName}')">Donate →</button>
+          <button class="donate-btn" onclick="showDonateModal(${c.id}, '${safeName}')">Pledge →</button>
         </div>
       </div>
     </div>`;
@@ -207,108 +209,141 @@ async function renderDonorLeaderboard() {
 
 // ─── DONATIONS ───
 
+/* Records the pledge. There is no second step: the browser has nothing to
+   authorise, because nothing is being charged. The simulated gateway screen
+   that used to sit here — a bKash/Nagad/Rocket logo, four PIN boxes that were
+   never read, a 'Confirm Payment' button and a 'Simulate a failed payment'
+   button, both of which POSTed the outcome to the server — is gone. */
 async function processDonation(campaignId, campaignName) {
   const custom = document.getElementById('custom-amount');
   const amount = state.selectedAmount || (custom && parseFloat(custom.value));
 
-  if (!amount || amount <= 0) { showToast('⚠ Please select or enter a donation amount'); return; }
-  if (!state.selectedGateway) { showToast('⚠ Please select a payment gateway'); return; }
+  if (!amount || amount <= 0) { showToast('\u26a0 Please select or enter an amount'); return; }
 
-  // Phase 1: write the PENDING ledger row before contacting the gateway.
   const created = await API.createDonation({
-    campaignId, amount, gateway: state.selectedGateway,
+    campaignId, amount,
     isAnonymous: document.getElementById('donate-anonymous')?.checked || false
   });
 
-  if (apiFailed(created)) { showToast(`⚠ ${created?.error || 'Could not start the donation.'}`); return; }
-
-  const gwNames = { bkash: 'bKash', nagad: 'Nagad', rocket: 'Rocket', card: 'Visa/Mastercard' };
-  const gwName = gwNames[state.selectedGateway] || state.selectedGateway;
-  const donation = created.donation;
-
-  showModal(`
-    <div class="modal-header">
-      <div class="modal-title"><i data-lucide="lock-keyhole" class="ui-icon"></i> Authorize Payment</div>
-      <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
-    </div>
-    <div class="payment-step">
-      <div style="font-size:44px;margin-bottom:10px">${state.selectedGateway === 'bkash' ? '<i data-lucide="smartphone" class="ui-icon"></i>' : state.selectedGateway === 'nagad' ? '<i data-lucide="smartphone" class="ui-icon"></i>' : state.selectedGateway === 'rocket' ? '<i data-lucide="rocket" class="ui-icon"></i>' : '<i data-lucide="credit-card" class="ui-icon"></i>'}</div>
-      <div style="font-size:17px;font-weight:800;margin-bottom:6px">Authorising via ${escapeHtml(gwName)}</div>
-      <div style="color:var(--text-secondary);margin-bottom:6px">Amount: <strong style="color:var(--teal)">৳${Number(amount).toLocaleString()}</strong></div>
-      <div style="font-family:monospace;font-size:11px;color:var(--text-muted);margin-bottom:18px">Ref ${escapeHtml(donation.transaction_reference)}</div>
-      <div style="background:var(--bg-glass);border:1px solid var(--border-glass);border-radius:var(--radius-sm);padding:16px;margin-bottom:18px">
-        <div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">Enter your ${escapeHtml(gwName)} PIN</div>
-        <div class="otp-inputs" style="justify-content:center">
-          ${[0,1,2,3].map(() => '<input type="password" class="otp-box" maxlength="1" inputmode="numeric" />').join('')}
-        </div>
-      </div>
-      <button class="btn btn-primary btn-full" onclick="settleDonation(${donation.id}, true)"><i data-lucide="check" class="ui-icon"></i> Confirm Payment</button>
-      <button class="btn btn-ghost btn-full mt-8" onclick="settleDonation(${donation.id}, false)">Simulate a failed payment</button>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:10px">A PENDING ledger entry has already been recorded. The campaign total updates only on confirmation.</div>
-    </div>
-  `);
-}
-
-async function settleDonation(donationId, success) {
-  const res = await API.confirmDonation(donationId, {
-    success, failureReason: success ? null : 'Simulated gateway decline'
-  });
-
-  if (apiFailed(res)) { showToast(`⚠ ${res?.error || 'Could not settle the transaction.'}`); return; }
-
-  const d = res.donation;
-
-  if (d.status === 'FAILED') {
-    showModal(`
-      <div class="modal-header">
-        <div class="modal-title"><i data-lucide="circle-x" class="ui-icon"></i> Payment Failed</div>
-        <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
-      </div>
-      <div class="payment-step">
-        <div style="font-size:44px;margin-bottom:10px"><i data-lucide="triangle-alert" class="ui-icon"></i></div>
-        <div style="font-size:16px;font-weight:800;margin-bottom:6px">The transaction was declined</div>
-        <div style="color:var(--text-secondary);margin-bottom:8px">${escapeHtml(d.failure_reason || 'The gateway rejected the payment.')}</div>
-        <div style="font-family:monospace;font-size:11px;color:var(--text-muted);margin-bottom:18px">Ref ${escapeHtml(d.transaction_reference)}</div>
-        <button class="btn btn-primary btn-full" onclick="closeModal(); showPage('donations')">Try again</button>
-      </div>
-    `);
-    renderCampaignsEnhanced();
+  if (apiFailed(created)) {
+    showToast('\u26a0 ' + ((created && created.error) || 'Could not record the pledge.'));
     return;
   }
 
-  const date = new Date(d.completed_at || Date.now()).toLocaleString('en-GB', { timeZone: 'Asia/Dhaka' });
+  const d = created.donation;
+  const date = new Date(d.created_at || Date.now()).toLocaleString('en-GB', { timeZone: 'Asia/Dhaka' });
 
-  showModal(`
-    <div class="modal-header">
-      <div class="modal-title"><i data-lucide="party-popper" class="ui-icon"></i> Payment Successful</div>
-      <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
-    </div>
-    <div class="payment-step">
-      <div class="payment-success"><i data-lucide="circle-check-big" class="ui-icon"></i></div>
-      <div class="payment-success-title">Thank you for your donation!</div>
-      <div class="payment-success-sub">Your contribution has been recorded in the ledger.</div>
-      <div class="receipt-preview">
-        <div style="font-size:13px;font-weight:700;margin-bottom:10px;text-align:center">OFFICIAL TAX RECEIPT</div>
-        <div style="font-size:11px;text-align:center;color:var(--text-muted);margin-bottom:12px">Daffodil International College Alumni Association</div>
-        <div class="receipt-row"><span>Donor</span><span>${escapeHtml(d.is_anonymous ? 'Anonymous' : d.donor_name)}</span></div>
-        <div class="receipt-row"><span>Receipt No.</span><span style="font-family:monospace;font-size:11px">${escapeHtml(d.receipt_code)}</span></div>
-        <div class="receipt-row"><span>Transaction</span><span style="font-family:monospace;font-size:11px">${escapeHtml(d.transaction_reference)}</span></div>
-        <div class="receipt-row"><span>Gateway</span><span>${escapeHtml(d.payment_gateway)}</span></div>
-        <div class="receipt-row"><span>Date</span><span style="font-size:11px">${escapeHtml(date)}</span></div>
-        <div class="receipt-row"><span>Amount</span><span>৳${Number(d.amount).toLocaleString()}</span></div>
-      </div>
-      <div style="margin-top:16px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-        <button class="btn btn-outline" onclick="downloadReceipt(${d.id})"><i data-lucide="file-text" class="ui-icon"></i> Download Receipt</button>
-        <button class="btn btn-outline" onclick="closeModal()"><i data-lucide="check" class="ui-icon"></i> Done</button>
-      </div>
-    </div>
-  `);
+  showModal(
+    '<div class="modal-header">' +
+      '<div class="modal-title"><i data-lucide="handshake" class="ui-icon"></i> Pledge recorded</div>' +
+      '<button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>' +
+    '</div>' +
+    '<div class="payment-step">' +
+      '<div class="payment-success"><i data-lucide="circle-check-big" class="ui-icon"></i></div>' +
+      '<div class="payment-success-title">Thank you</div>' +
+      '<div class="payment-success-sub">Your pledge to ' + escapeHtml(campaignName) + ' is on record.</div>' +
+      '<div class="receipt-preview">' +
+        '<div style="font-size:13px;font-weight:700;margin-bottom:4px;text-align:center">PLEDGE RECORD</div>' +
+        '<div style="font-size:11px;text-align:center;color:var(--text-muted);margin-bottom:12px">' +
+          'Not a receipt. No funds have been collected.</div>' +
+        '<div class="receipt-row"><span>Donor</span><span>' +
+          escapeHtml(d.is_anonymous ? 'Anonymous' : d.donor_name) + '</span></div>' +
+        '<div class="receipt-row"><span>Reference</span><span style="font-family:monospace;font-size:11px">' +
+          escapeHtml(d.transaction_reference) + '</span></div>' +
+        '<div class="receipt-row"><span>Recorded</span><span style="font-size:11px">' +
+          escapeHtml(date) + '</span></div>' +
+        '<div class="receipt-row"><span>Amount pledged</span><span>\u09f3' +
+          Number(d.amount).toLocaleString() + '</span></div>' +
+        '<div class="receipt-row"><span>Status</span><span>Awaiting payment</span></div>' +
+      '</div>' +
+      '<div style="font-size:12px;color:var(--text-secondary);margin-top:14px;line-height:1.5">' +
+        'The alumni office will contact you to arrange payment. Once they confirm the ' +
+        'funds have arrived, this becomes a donation and a receipt is issued.</div>' +
+      '<div style="margin-top:16px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">' +
+        '<button class="btn btn-outline" onclick="closeModal()">' +
+          '<i data-lucide="check" class="ui-icon"></i> Done</button>' +
+      '</div>' +
+    '</div>'
+  );
 
   state.selectedAmount = null;
-  state.selectedGateway = null;
   renderCampaignsEnhanced();
   renderDonorLeaderboard();
+  renderMyDonations();
   renderNotifications();
+}
+
+/* The donor's own ledger. Before this, a pledge vanished the moment the modal
+   closed: nothing listed it, nothing could settle it, and downloadReceipt()
+   below had lost its only call site when the old fake success modal was
+   removed. Staff (ADMIN_ROLES) additionally get the confirm control here,
+   which is the only route to a settled donation anywhere in the product. */
+async function renderMyDonations() {
+  const el = document.getElementById('my-donations');
+  if (!el) return;
+
+  const rows = await API.getMyDonations();
+  if (apiFailed(rows)) {
+    el.innerHTML = renderErrorState(rows?.error || 'Could not load your donations.', 'renderMyDonations()');
+    return;
+  }
+  if (!rows.length) {
+    el.innerHTML = renderEmptyState('<i data-lucide="heart" class="ui-icon"></i>', 'No pledges yet',
+      'Pledges you make will be listed here until the alumni office confirms payment.');
+    return;
+  }
+
+  const isStaff = state.currentUser && ['super_admin', 'univ_admin'].includes(state.currentUser.role);
+  const LABEL = { PLEDGED: 'Awaiting payment', SUCCESS: 'Received', CANCELLED: 'Closed',
+                  FAILED: 'Closed', PENDING: 'Awaiting payment', REFUNDED: 'Refunded' };
+
+  el.innerHTML = rows.map(r => {
+    const status = LABEL[r.status] || r.status;
+    const tone = r.status === 'SUCCESS' ? 'teal' : (r.status === 'PLEDGED' || r.status === 'PENDING') ? 'amber' : '';
+    return '<div class="broadcast-entry">' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-weight:700;font-size:13px">' + escapeHtml(r.campaign_name || 'Campaign') + '</div>' +
+        '<div style="font-size:12px;color:var(--text-secondary)">\u09f3' +
+          Number(r.amount).toLocaleString() + ' \u00b7 ' + escapeHtml(r.transaction_reference) + '</div>' +
+        '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">' +
+          escapeHtml(formatRelativeTime(r.created_at)) +
+          (r.receipt_code ? ' \u00b7 receipt ' + escapeHtml(r.receipt_code) : '') + '</div>' +
+      '</div>' +
+      '<div style="text-align:right;flex-shrink:0;display:flex;flex-direction:column;gap:6px;align-items:flex-end">' +
+        '<span class="card-badge ' + tone + '">' + escapeHtml(status) + '</span>' +
+        (r.status === 'SUCCESS'
+          ? '<button class="btn btn-ghost btn-sm" onclick="downloadReceipt(' + r.id + ')">' +
+              '<i data-lucide="file-text" class="ui-icon"></i> Receipt</button>'
+          : '') +
+        (r.status === 'PLEDGED' && isStaff
+          ? '<button class="btn btn-outline btn-sm" onclick="recordDonationReceived(' + r.id + ')">' +
+              '<i data-lucide="badge-check" class="ui-icon"></i> Mark received</button>'
+          : '') +
+        (r.status === 'PLEDGED' && !isStaff
+          ? '<button class="btn btn-ghost btn-sm" onclick="withdrawPledge(' + r.id + ')">Withdraw</button>'
+          : '') +
+      '</div>' +
+    '</div>';
+  }).join('');
+  if (typeof refreshIcons === 'function') refreshIcons();
+}
+
+// Staff only, and the server enforces that - this is simply the control.
+async function recordDonationReceived(id) {
+  const method = prompt('How were the funds received? (e.g. bank transfer, cash at the office)', 'bank transfer');
+  if (method === null) return;
+  const res = await API.recordDonationPayment(id, { received: true, method: method.trim() || 'manual' });
+  if (apiFailed(res)) { showToast('\u26a0 ' + ((res && res.error) || 'Could not record the payment.')); return; }
+  showToast('Recorded as received. A receipt has been issued to the donor.');
+  renderMyDonations(); renderCampaignsEnhanced(); renderDonorLeaderboard();
+}
+
+async function withdrawPledge(id) {
+  if (!confirm('Withdraw this pledge? The alumni office will no longer expect payment.')) return;
+  const res = await API.cancelPledge(id);
+  if (apiFailed(res)) { showToast('\u26a0 ' + ((res && res.error) || 'Could not withdraw the pledge.')); return; }
+  showToast('Pledge withdrawn.');
+  renderMyDonations(); renderCampaignsEnhanced();
 }
 
 // Generates a real downloadable receipt from the ledger row.
@@ -321,19 +356,19 @@ async function downloadReceipt(donationId) {
 
   const lines = [
     'DAFFODIL INTERNATIONAL COLLEGE — ALUMNI ASSOCIATION',
-    'OFFICIAL DONATION RECEIPT (Tax Deductible)',
+    'DONATION LEDGER RECORD',
+    'Not a tax receipt. Confirmed donations only are marked RECEIVED below.',
     '',
     `Receipt No.      : ${d.receipt_code || '—'}`,
     `Transaction Ref  : ${d.transaction_reference}`,
     `Donor            : ${d.is_anonymous ? 'Anonymous' : d.donor_name}`,
     `Campaign         : ${d.campaign_name || '—'}`,
     `Amount           : BDT ${Number(d.amount).toLocaleString()}`,
-    `Payment Gateway  : ${d.payment_gateway}`,
+    `Method           : ${d.recorded_method || 'not yet received'}`,
     `Status           : ${d.status}`,
     `Date             : ${new Date(d.completed_at || d.created_at).toLocaleString('en-GB')}`,
     '',
-    'This receipt was generated from the institutional donation ledger.',
-    'Verify at: alumni.dic.edu.bd/verify/' + (d.receipt_code || '')
+    'Generated from the institutional donation ledger.'
   ];
 
   downloadTextFile(`DIC_Receipt_${d.receipt_code || d.id}.txt`, lines.join('\n'));
@@ -371,11 +406,6 @@ function showCreateCampaign() {
           <option value="scholarship">Scholarship</option><option value="education">Education</option>
           <option value="infrastructure">Infrastructure</option><option value="sports">Sports</option>
         </select></div>
-      <div class="input-group"><label class="input-label">Payment Gateways</label>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          ${['bkash','nagad','rocket','card'].map((g, i) =>
-            `<button type="button" class="chip campaign-gateway${i !== 2 ? ' active' : ''}" data-gateway="${g}" onclick="this.classList.toggle('active')">${g.charAt(0).toUpperCase() + g.slice(1)}</button>`).join('')}
-        </div></div>
       <button type="submit" class="btn btn-primary btn-full">Create Campaign</button>
     </form>
   `);
@@ -383,14 +413,12 @@ function showCreateCampaign() {
 
 async function handleCreateCampaignSubmit(e) {
   if (e) e.preventDefault();
-  const gateways = [...document.querySelectorAll('.campaign-gateway.active')].map(b => b.dataset.gateway);
   const res = await API.createCampaign({
     name: document.getElementById('campaign-name').value.trim(),
     description: document.getElementById('campaign-desc').value.trim(),
     goalAmount: document.getElementById('campaign-goal').value,
     daysLeft: document.getElementById('campaign-days').value,
-    tag: document.getElementById('campaign-tag').value,
-    gateways
+    tag: document.getElementById('campaign-tag').value
   });
 
   if (apiFailed(res)) { showToast(`⚠ ${res?.error || 'Could not create the campaign.'}`); return; }

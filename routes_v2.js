@@ -214,12 +214,21 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
     const rows = await db.query(`
       SELECT c.*,
              COALESCE(d.total, 0)  AS raised_live,
-             COALESCE(d.donors, 0) AS donors_live
+             COALESCE(d.donors, 0) AS donors_live,
+             COALESCE(p.total, 0)  AS pledged_live,
+             COALESCE(p.donors, 0) AS pledgers_live
       FROM campaigns c
       LEFT JOIN (
         SELECT campaign_id, SUM(amount) AS total, COUNT(DISTINCT donor_user_id) AS donors
         FROM donations WHERE status = 'SUCCESS' GROUP BY campaign_id
       ) d ON d.campaign_id = c.id
+      /* Pledges are reported separately and never folded into raised_live.
+         A pledge is an intention; counting it as money raised is the whole
+         mistake this release exists to undo. */
+      LEFT JOIN (
+        SELECT campaign_id, SUM(amount) AS total, COUNT(DISTINCT donor_user_id) AS donors
+        FROM donations WHERE status = 'PLEDGED' GROUP BY campaign_id
+      ) p ON p.campaign_id = c.id
       ORDER BY c.id ASC
     `);
     res.json(rows.rows);
@@ -257,69 +266,124 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
     res.json({ success: true });
   }));
 
-  // Two-phase donation: a PENDING ledger row is written before the gateway is
-  // called, then confirmed. REQ-05 requires the ledger to exist even if the
-  // gateway callback never arrives.
+  /* A pledge, not a payment.
+
+     This endpoint used to write a PENDING row "before the gateway is called",
+     and POST /api/donations/:id/confirm then took the outcome from the request
+     body: any signed-in donor could POST {success:true} against their own row
+     and move it to SUCCESS. No gateway was ever called, because none is
+     connected — so every SUCCESS in this ledger was self-attested, and the
+     campaign totals, the donor leaderboard and the analytics gateway split all
+     reported money nobody had received.
+
+     What the platform can honestly record today is an intention to give. That
+     is what this writes. Money becomes money only when a member of staff
+     confirms it arrived, through record-payment below. */
   app.post('/api/donations', requireAuth, (req, res) => ok(res, async () => {
-    const { campaignId, amount, gateway, isAnonymous } = req.body;
+    const { campaignId, amount, isAnonymous, note } = req.body;
     const value = parseFloat(amount);
     if (!value || value <= 0) return res.status(400).json({ error: 'A positive amount is required' });
-    if (!gateway) return res.status(400).json({ error: 'Select a payment method' });
 
     const camp = await db.query('SELECT name FROM campaigns WHERE id=$1', [parseInt(campaignId)]);
     if (!camp.rows.length) return res.status(404).json({ error: 'Campaign not found' });
 
     const me = await db.query('SELECT full_name FROM users WHERE id=$1', [req.user.uid]);
+    /* payment_gateway is written as 'pledge' rather than a bKash/Nagad/Rocket
+       label the donor picked from a menu. The column used to hold whichever
+       brand the browser sent, which made the analytics gateway split read as
+       though four payment rails were in use. None are. */
     const row = await db.query(`
       INSERT INTO donations (campaign_id, donor_user_id, donor_name, amount, payment_gateway,
                              transaction_reference, status, is_anonymous)
-      VALUES ($1,$2,$3,$4,$5,$6,'PENDING',$7) RETURNING *
+      VALUES ($1,$2,$3,$4,'pledge',$5,'PLEDGED',$6) RETURNING *
     `, [parseInt(campaignId), req.user.uid, me.rows[0].full_name, value,
-        gateway, ref('TXN'), !!isAnonymous]);
+        ref('PLG'), !!isAnonymous]);
+
+    await db.query(
+      `INSERT INTO notifications (user_id, icon, title, subtitle) VALUES ($1,'🤝','Pledge recorded',$2)`,
+      [req.user.uid,
+       `Your ৳${value.toLocaleString()} pledge to ${camp.rows[0].name} is recorded. ` +
+       'The alumni office will be in touch to arrange payment.']);
+
+    await writeAudit('Donation Pledged',
+      `৳${value} to campaign ${parseInt(campaignId)} by user ${req.user.uid}` +
+      (note ? ` · note: ${String(note).slice(0, 120)}` : ''), '🤝');
 
     res.json({ donation: row.rows[0], campaign: camp.rows[0].name });
   }));
 
-  app.post('/api/donations/:id/confirm', requireAuth, (req, res) => ok(res, async () => {
+  /* Staff confirm that funds actually arrived. This is the only path to
+     SUCCESS, and a donor cannot reach it: ADMIN_ROLES only, and the confirming
+     account is written onto the row and into the audit trail. Until a payment
+     gateway is integrated, this is a human attesting to a bank statement — so
+     the record says who attested, and when. */
+  app.post('/api/donations/:id/record-payment', requireRole(...ADMIN_ROLES), (req, res) => ok(res, async () => {
     const id = parseInt(req.params.id);
-    const { success = true, failureReason } = req.body || {};
+    const { received = true, method, reason } = req.body || {};
 
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
       const cur = await client.query('SELECT * FROM donations WHERE id=$1 FOR UPDATE', [id]);
       if (!cur.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Donation not found' }); }
-      if (cur.rows[0].donor_user_id !== req.user.uid && !ADMIN_ROLES.includes(req.user.role)) {
-        await client.query('ROLLBACK'); return res.status(403).json({ error: 'Not your transaction' });
-      }
-      // Idempotent: a retried gateway callback must not double-count the ledger.
-      if (cur.rows[0].status !== 'PENDING') {
+
+      // Idempotent: a row that has already been settled is never re-counted.
+      if (!['PLEDGED', 'PENDING'].includes(cur.rows[0].status)) {
         await client.query('ROLLBACK');
         return res.json({ donation: cur.rows[0], alreadySettled: true });
       }
 
-      const receipt = success ? ref('DIC-RCPT') : null;
+      const receipt = received ? ref('DIC-RCPT') : null;
       const upd = await client.query(`
-        UPDATE donations SET status=$2, receipt_code=$3, failure_reason=$4, completed_at=CURRENT_TIMESTAMP
-        WHERE id=$1 RETURNING *
-      `, [id, success ? 'SUCCESS' : 'FAILED', receipt, success ? null : (failureReason || 'Gateway declined')]);
+        UPDATE donations
+           SET status=$2, receipt_code=$3, failure_reason=$4, completed_at=CURRENT_TIMESTAMP,
+               recorded_by=$5, recorded_at=CURRENT_TIMESTAMP, recorded_method=$6
+         WHERE id=$1 RETURNING *
+      `, [id, received ? 'SUCCESS' : 'CANCELLED', receipt,
+          received ? null : (reason || 'Not received'), req.user.uid,
+          received ? (method ? String(method).slice(0, 100) : 'manual') : null]);
 
-      if (success) {
+      if (received) {
         await client.query(`
           UPDATE campaigns SET raised_amount = raised_amount + $2, donors_count = donors_count + 1
           WHERE id = $1
         `, [cur.rows[0].campaign_id, cur.rows[0].amount]);
 
-        await client.query(`INSERT INTO notifications (user_id, icon, title, subtitle) VALUES ($1,'💰','Donation Receipt',$2)`,
-          [req.user.uid, `Your ৳${Number(cur.rows[0].amount).toLocaleString()} donation is confirmed. Receipt ${receipt}.`]);
+        if (cur.rows[0].donor_user_id) {
+          await client.query(
+            `INSERT INTO notifications (user_id, icon, title, subtitle) VALUES ($1,'💰','Donation received',$2)`,
+            [cur.rows[0].donor_user_id,
+             `The alumni office has confirmed your ৳${Number(cur.rows[0].amount).toLocaleString()} donation. Receipt ${receipt}.`]);
+        }
       }
 
       await client.query('COMMIT');
-      if (success) await writeAudit('Donation Settled', `৳${cur.rows[0].amount} via ${cur.rows[0].payment_gateway} · ${receipt}`, '💰');
+      await writeAudit(received ? 'Donation Payment Recorded' : 'Donation Pledge Closed',
+        `৳${cur.rows[0].amount} · donation ${id} · by user ${req.user.uid}` +
+        (received ? ` · ${receipt}` : ` · ${reason || 'not received'}`), '💰',
+        { actorId: req.user.uid, targetType: 'donation', targetId: id });
       res.json({ donation: upd.rows[0] });
     } catch (e) {
       await client.query('ROLLBACK'); throw e;
     } finally { client.release(); }
+  }));
+
+  // A donor may withdraw their own pledge; staff may close anyone's.
+  app.post('/api/donations/:id/cancel', requireAuth, (req, res) => ok(res, async () => {
+    const id = parseInt(req.params.id);
+    const cur = await db.query('SELECT * FROM donations WHERE id=$1', [id]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'Donation not found' });
+    if (cur.rows[0].donor_user_id !== req.user.uid && !ADMIN_ROLES.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Not your pledge' });
+    }
+    if (cur.rows[0].status !== 'PLEDGED') {
+      return res.status(409).json({ error: 'Only an open pledge can be withdrawn' });
+    }
+    const upd = await db.query(
+      `UPDATE donations SET status='CANCELLED', failure_reason='Withdrawn by donor',
+              completed_at=CURRENT_TIMESTAMP WHERE id=$1 RETURNING *`, [id]);
+    await writeAudit('Donation Pledge Withdrawn', `donation ${id} by user ${req.user.uid}`, '🤝');
+    res.json({ donation: upd.rows[0] });
   }));
 
   app.get('/api/donations/mine', requireAuth, (req, res) => ok(res, async () => {

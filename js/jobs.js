@@ -113,7 +113,7 @@ async function renderJobsEnhanced(filter = '') {
   }
   if (jobs.length === 0) {
     container.innerHTML = renderEmptyState('<i data-lucide="briefcase" class="ui-icon"></i>', 'No openings match your filters',
-      'Verified alumni can post roles using the button above.');
+      'Any signed-in member can post a role using the button above.');
     return;
   }
 

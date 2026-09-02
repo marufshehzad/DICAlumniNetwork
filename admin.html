@@ -180,14 +180,14 @@
       </div>
       <div class="topbar-search">
         <span class="search-icon"><i data-lucide="search" class="ui-icon"></i></span>
-        <input type="text" class="topbar-search-input" placeholder="Ask DIC AI — find alumni, jobs, or events…" id="global-search" oninput="handleGlobalSearch(this.value)" />
+        <input type="text" class="topbar-search-input" placeholder="Search alumni by name, company, skill or batch…" id="global-search" oninput="handleGlobalSearch(this.value)" />
       </div>
       <div class="topbar-actions">
         <!-- Role is decided by the authenticated server-side user record and is
              shown read-only. It was a <select> that re-authenticated as any
              role using credentials shipped in app.js. -->
         <span class="role-display" id="topbar-role-display"></span>
-        <div class="offline-status online" id="offline-status" title="PostgreSQL 16 Engine Connected · PDPA 2026 Compliant">
+        <div class="offline-status" id="offline-status">
           <span class="status-dot"></span>
           <span class="status-text">PostgreSQL 16 · Live</span>
         </div>
@@ -225,21 +225,21 @@
         <div class="page-header">
           <div>
             <h1 class="page-title">Alumni Directory</h1>
-            <p class="page-subtitle">Search verified DIC alumni profiles</p>
+            <p class="page-subtitle">Search DIC alumni profiles</p>
           </div>
         </div>
         <!-- Search Bar -->
         <div class="ai-search-bar glass-card">
           <span class="ai-search-icon"><i data-lucide="bot" class="ui-icon"></i></span>
-          <input type="text" class="ai-search-input" id="dir-search" placeholder="Ask ConnectAI — 'Find software engineers in Dhaka class of 2019'" oninput="filterDirectory(this.value)" />
+          <input type="text" class="ai-search-input" id="dir-search" placeholder="Search by name, company, skill, department or city" oninput="filterDirectory(this.value)" />
           <button class="voice-btn" title="Voice Input"><i data-lucide="mic" class="ui-icon"></i></button>
           <div class="search-indicator" id="search-indicator" style="display:none;">
             <div class="typing-dots"><span></span><span></span><span></span></div>
-            <span>Searching vectors…</span>
+            <span>Searching…</span>
           </div>
         </div>
         <div class="transliteration-badge hidden" id="transliteration-badge">
-          <i data-lucide="languages" class="ui-icon"></i> Bangla detected — passing through transliteration layer… <span class="tl-latency">&lt;150ms</span>
+          <i data-lucide="languages" class="ui-icon"></i> Bangla detected — searching for this text as typed
         </div>
         <!-- Filters -->
         <div class="filter-chips" id="filter-chips">
@@ -334,12 +334,12 @@
         <div class="page-header">
           <div>
             <h1 class="page-title">Alumni Job Board</h1>
-            <p class="page-subtitle">Closed-loop network · Alumni-only postings</p>
+            <p class="page-subtitle">Open to every signed-in member · not visible to the public</p>
           </div>
           <button class="btn btn-primary" onclick="showPostJobModal()">+ Post a Job</button>
         </div>
         <div class="alumni-only-banner">
-          <i data-lucide="lock" class="ui-icon"></i> Closed-Loop Network — Only verified alumni can post and apply. Non-alumni access is restricted.
+          <i data-lucide="lock" class="ui-icon"></i> Signed-in members only — the job board is not public.
         </div>
         <div class="jobs-layout">
           <div class="jobs-main">
@@ -457,7 +457,7 @@
         <div class="page-header">
           <div>
             <h1 class="page-title">Donation Campaigns</h1>
-            <p class="page-subtitle">bKash · Nagad · Rocket · International Card</p>
+            <p class="page-subtitle">Pledge ledger — no online payment is connected; the alumni office confirms funds</p>
           </div>
           <button class="btn btn-primary" onclick="showCreateCampaign()">+ New Campaign</button>
         </div>
@@ -487,6 +487,10 @@
           </div>
         </div>
         <div class="campaigns-grid" id="campaigns-grid"></div>
+        <div class="glass-card mt-16">
+          <div class="card-header"><h3 class="card-title"><i data-lucide="receipt" class="ui-icon"></i> My pledges &amp; donations</h3></div>
+          <div id="my-donations"></div>
+        </div>
       </div>
 
       <!-- ============ EVENTS PAGE ============ -->
@@ -521,7 +525,7 @@
         <div class="page-header">
           <div>
             <h1 class="page-title">Executive Analytics</h1>
-            <p class="page-subtitle">Impact dashboard · Exportable reports</p>
+            <p class="page-subtitle">Impact dashboard</p>
           </div>
           <div class="page-header-actions">
           </div>
@@ -593,7 +597,7 @@
         <div class="page-header">
           <div>
             <h1 class="page-title">Broadcasts</h1>
-            <p class="page-subtitle">Announcements sent to alumni, with real delivery counts</p>
+            <p class="page-subtitle">In-app announcements, with the size of the audience they reached</p>
           </div>
           <button class="btn btn-primary" onclick="showBroadcastModal()"><i data-lucide="megaphone" class="ui-icon"></i> New Broadcast</button>
         </div>
@@ -666,7 +670,7 @@
         <span class="bnav-icon"><i data-lucide="users" class="ui-icon"></i></span><span class="bnav-label">Directory</span>
       </a>
       <a class="bottom-nav-item" onclick="showPage('mentorship')" id="bnav-mentorship">
-        <span class="bnav-icon"><i data-lucide="bot" class="ui-icon"></i></span><span class="bnav-label">ConnectAI</span>
+        <span class="bnav-icon"><i data-lucide="handshake" class="ui-icon"></i></span><span class="bnav-label">Mentorship</span>
       </a>
       <a class="bottom-nav-item" onclick="showPage('events')" id="bnav-events">
         <span class="bnav-icon"><i data-lucide="calendar-days" class="ui-icon"></i></span><span class="bnav-label">Events</span>

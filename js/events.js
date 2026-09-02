@@ -57,7 +57,7 @@ async function renderEventROIAnalytics() {
   table.innerHTML =
     '<div class="table-scroll"><table class="rbac-table"><thead><tr>' +
       '<th>Event</th><th>Registered</th><th>Capacity</th><th>Fill rate</th>' +
-      '<th>Checked in</th><th>Ticket revenue</th>' +
+      '<th>Checked in</th><th>Ticket value (uncollected)</th>' +
     '</tr></thead><tbody>' +
     rows.map(function (r) {
       return '<tr><td style="font-weight:700">' + escapeHtml(r.name) + '</td>' +
@@ -586,7 +586,10 @@ function evPublicCard(e) {
         '<p class="ev-card-type">' + escapeHtml(e.event_type || 'Event') + ' · ' +
           (e.is_paid ? 'Paid' : 'Free') + '</p>' +
       '</div>' +
+      /* A priced ticket cannot be issued while no gateway can take the money,
+          so a paid event is not "Open" to online registration. */
       (full ? '<span class="ev-pill warn">' + evIcon('hourglass') + ' Full</span>'
+            : e.is_paid ? '<span class="ev-pill warn">' + evIcon('phone') + ' Book by phone</span>'
             : '<span class="ev-pill success">' + evIcon('circle-check-big') + ' Open</span>') +
     '</div>' +
     (e.description ? '<p class="ev-card-desc">' + escapeHtml(e.description) + '</p>' : '') +
@@ -601,8 +604,11 @@ function evPublicCard(e) {
       (e.is_registered
         ? '<button class="btn btn-outline btn-sm" onclick="evViewTicket(' + e.id + ')">' + evIcon('ticket') + ' View ticket</button>' +
           '<button class="btn btn-ghost btn-sm" onclick="evCancelTicket(' + e.id + ')">Cancel</button>'
-        : '<button class="btn btn-primary btn-sm" onclick="evRegister(' + e.id + ')">' +
-            evIcon(full ? 'hourglass' : 'ticket') + ' ' + (full ? 'Join waitlist' : 'Get ticket') + '</button>') +
+        : e.is_paid
+          ? '<button class="btn btn-outline btn-sm" disabled title="Online payment is not connected yet">' +
+              evIcon('phone') + ' Contact the alumni office</button>'
+          : '<button class="btn btn-primary btn-sm" onclick="evRegister(' + e.id + ')">' +
+              evIcon(full ? 'hourglass' : 'ticket') + ' ' + (full ? 'Join waitlist' : 'Get ticket') + '</button>') +
     '</div></article>';
 }
 
@@ -755,7 +761,7 @@ function evTabOverview() {
       evStat('armchair', available.toLocaleString(), 'Seats available') +
       evStat('clipboard-list', o.tasks.total, 'Tasks') +
       evStat('circle-check-big', o.tasks.completionRate + '%', 'Tasks complete', 'success') +
-      (e.is_paid ? evStat('banknote', evMoney(o.revenue), 'Ticket revenue', 'success') : '') +
+      (e.is_paid ? evStat('banknote', evMoney(o.revenue), 'Ticket value (uncollected)') : '') +
       (o.tasks.overdue ? evStat('triangle-alert', o.tasks.overdue, 'Overdue', 'danger') : '') +
     '</div>' +
 
@@ -1597,7 +1603,7 @@ function evAttendeeRow(a) {
       '<span>' + evPersonMeta(a) + '</span>' +
       '<span class="ev-mono">' + escapeHtml(a.ticket_code) +
         (a.ticket_type_name ? ' · ' + escapeHtml(a.ticket_type_name) : '') +
-        (Number(a.amount_paid) > 0 ? ' · ' + evMoney(a.amount_paid) : '') + '</span>' +
+        (Number(a.amount_paid) > 0 ? ' · due ' + evMoney(a.amount_paid) : '') + '</span>' +
     '</div>' +
     '<div class="ev-person-actions">' +
       (a.checked_in
@@ -1997,7 +2003,7 @@ async function evTabReports() {
             evIcon('file-text') + ' Full report CSV</a>' +
         '</div></div>' +
       '<div class="ev-stats">' +
-        evStat('banknote', evMoney(o.revenue), 'Ticket revenue', 'success') +
+        evStat('banknote', evMoney(o.revenue), 'Ticket value (uncollected)') +
         (spend !== null ? evStat('receipt', evMoney(spend), 'Recorded spend') : '') +
         (net !== null ? evStat(net >= 0 ? 'trending-up' : 'trending-down', evMoney(net),
                                'Net', net >= 0 ? 'success' : 'danger') : '') +
@@ -2304,6 +2310,15 @@ function evWizardStep2() {
       '<label class="ev-radio" for="ev-w-paid"><input type="radio" id="ev-w-paid" name="paid" value="paid"' +
         (t.isPaid ? ' checked' : '') + ' onchange="evWizardSetPaid(true)" />' +
         '<span><strong>Paid</strong><span>One or more ticket types with prices</span></span></label>' +
+      /* No payment gateway is connected, so a priced ticket cannot be sold
+         through the site. The option stays - an organiser still needs to record
+         what a ticket costs - but it must not read as a working checkout. */
+      (t.isPaid
+        ? '<p class="ev-muted small" style="margin-top:8px">' +
+            'Online payment is not connected yet, so alumni cannot register for a ' +
+            'priced ticket here. Prices are recorded and the alumni office collects ' +
+            'payment directly. Free ticket types stay open to everyone.</p>'
+        : '') +
     '</fieldset>' +
 
     (t.isPaid
@@ -2756,12 +2771,22 @@ async function evRegister(eventId) {
       '<div class="ev-ticketchoices">' + types.map(function (t) {
         const left = t.quota == null ? null : Math.max(0, t.quota - t.sold);
         const soldOut = left === 0;
-        return '<button type="button" class="ev-ticketchoice" ' + (soldOut ? 'disabled' : '') + ' ' +
+        // A priced ticket cannot be issued while no gateway can take the money.
+        const priced = Number(t.price) > 0;
+        const blocked = soldOut || priced;
+        return '<button type="button" class="ev-ticketchoice" ' + (blocked ? 'disabled' : '') + ' ' +
           'onclick="evDoRegister(' + eventId + ',' + t.id + ')">' +
           '<span class="ev-ticketchoice-name"><strong>' + escapeHtml(t.name) + '</strong>' +
-          '<span>' + (left == null ? 'No limit' : (soldOut ? 'Sold out' : left + ' left')) + '</span></span>' +
-          '<span class="ev-ticketchoice-price">' + (Number(t.price) > 0 ? evMoney(t.price) : 'Free') + '</span>' +
-          '</button>'; }).join('') + '</div>');
+          '<span>' + (priced ? 'Contact the alumni office'
+                             : (left == null ? 'No limit' : (soldOut ? 'Sold out' : left + ' left'))) +
+          '</span></span>' +
+          '<span class="ev-ticketchoice-price">' + (priced ? evMoney(t.price) : 'Free') + '</span>' +
+          '</button>'; }).join('') +
+      '</div>' +
+      (types.some(function (t) { return Number(t.price) > 0; })
+        ? '<p class="ev-muted small" style="margin-top:10px">Priced tickets are not ' +
+          'available online yet. Please contact the alumni office to book one.</p>'
+        : ''));
     evRefreshIcons();
     return;
   }
@@ -2813,7 +2838,8 @@ async function evViewTicket(eventId) {
         (t.ticket_type_name ? ' · ' + escapeHtml(t.ticket_type_name) : '') +
         (t.checked_in ? ' · ' + evIcon('check') + ' Checked in' : '') + '</p>' +
       (Number(t.amount_paid) > 0
-        ? '<p class="ev-muted small">Paid ' + evMoney(t.amount_paid) + '</p>' : '') +
+        ? '<p class="ev-muted small">Ticket price ' + evMoney(t.amount_paid) +
+          ' — payable to the alumni office</p>' : '') +
       '<p class="ev-help">Show this QR code at the entrance.</p>' +
     '</div>', { dismissable: true });
   evRefreshIcons();

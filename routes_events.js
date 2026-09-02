@@ -18,13 +18,34 @@
 const crypto = require('crypto');
 const db = require('./db');
 
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || '';
+/* Ticket QR signing key. This used to read
+     crypto.createHmac('sha256', ENCRYPTION_KEY || 'dic-ticket')
+   which meant a deployment that forgot ENCRYPTION_KEY silently signed every
+   ticket with a constant published in this file — anyone reading the source
+   could mint a QR that passed check-in. There is no safe fallback for a
+   signing key, so there is no fallback: the vault's rule (routes_v2.js:11-20)
+   applies here too, and the ticket subsystem refuses to operate instead.
 
-// Same construction the pre-v5 code used, so every ticket QR issued before
-// this release still validates byte-for-byte.
-const signTicket = (code, eventId, userId) =>
-  crypto.createHmac('sha256', ENCRYPTION_KEY || 'dic-ticket')
-        .update(`${code}:${eventId}:${userId}`).digest('hex').slice(0, 16);
+   The construction itself is unchanged, so tickets issued by earlier releases
+   under a real ENCRYPTION_KEY still validate byte-for-byte. */
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || '';
+const ticketSigningReady = /^[0-9a-fA-F]{64}$/.test(ENCRYPTION_KEY);
+
+if (!ticketSigningReady) {
+  console.warn('⚠  ENCRYPTION_KEY missing or malformed — ticket issuing and QR ' +
+               'check-in are disabled. Generate one with: ' +
+               'node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+}
+
+const signTicket = (code, eventId, userId) => {
+  if (!ticketSigningReady) {
+    // Never reached through an HTTP path: both callers check the flag first and
+    // answer 503. This throw is the backstop for any future caller.
+    throw new Error('ticket signing key unavailable');
+  }
+  return crypto.createHmac('sha256', ENCRYPTION_KEY)
+               .update(`${code}:${eventId}:${userId}`).digest('hex').slice(0, 16);
+};
 
 const ref = (prefix) =>
   `${prefix}-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
@@ -504,6 +525,13 @@ module.exports = function mountEvents(app, guards) {
      ══════════════════════════════════════════════════════════ */
 
   app.post('/api/events/:id/register', requireAuth, (req, res) => ok(res, async () => {
+    /* No signing key, no ticket. Issuing one anyway would hand out a QR that
+       check-in could never trust, which is worse than refusing. */
+    if (!ticketSigningReady) {
+      return res.status(503).json({
+        error: 'Ticketing is temporarily unavailable. Please contact the alumni office.'
+      });
+    }
     const eventId = num(req.params.id);
     const { paymentGateway, clientMutationId, ticketTypeId } = req.body || {};
 
@@ -562,6 +590,23 @@ module.exports = function mountEvents(app, guards) {
         type = t.rows[0] || null;
       }
 
+      /* No payment gateway is connected to this platform. Until one is, a
+         priced ticket cannot be issued: the old code set amount_paid to the
+         list price at INSERT and returned a confirmed ticket, so the row —
+         and every revenue figure built on it — asserted a payment that never
+         happened. Free tickets are unaffected; a 0.00 type is a free ticket.
+         Existing paid registrations are left exactly as they are. */
+      const requestedPrice = type ? Number(type.price) || 0
+        : parseFloat(String(event.price || '').replace(/[^\d.]/g, '')) || 0;
+      if (requestedPrice > 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({
+          error: 'This ticket has a price and online payment is not available yet. ' +
+                 'Please contact the alumni office to register for a paid ticket.',
+          reason: 'online_payment_unavailable'
+        });
+      }
+
       const takenTotal = await client.query(
         "SELECT COUNT(*)::int n FROM event_registrations WHERE event_id=$1 AND status='confirmed'", [eventId]);
       let full = takenTotal.rows[0].n >= event.capacity;
@@ -584,8 +629,9 @@ module.exports = function mountEvents(app, guards) {
         t: ticketCode, e: eventId, u: req.user.uid,
         s: signTicket(ticketCode, eventId, req.user.uid)
       });
-      const priceValue = type ? Number(type.price) || 0
-        : parseFloat(String(event.price).replace(/[^\d.]/g, '')) || 0;
+      // Always 0 while paid registration is refused above; kept as the column
+      // the ticket price will occupy once a gateway settles it.
+      const priceValue = requestedPrice;
 
       const reg = await client.query(`
         INSERT INTO event_registrations
@@ -700,6 +746,14 @@ module.exports = function mountEvents(app, guards) {
   }));
 
   app.post('/api/events/checkin', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
+    /* Without the key a scanned QR cannot be verified. Checking someone in on
+       an unverifiable code would record an attendance the system cannot stand
+       behind, so check-in stops with the rest of the ticket subsystem. */
+    if (!ticketSigningReady) {
+      return res.status(503).json({
+        error: 'Ticket check-in is temporarily unavailable. Please contact the alumni office.'
+      });
+    }
     let { ticketCode } = req.body || {};
     if (!ticketCode) return res.status(400).json({ error: 'ticketCode is required' });
     ticketCode = String(ticketCode).trim();

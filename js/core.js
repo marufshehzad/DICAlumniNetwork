@@ -37,10 +37,8 @@ let state = {
   currentUser: null, // populated only by a successful /api/auth/login or /api/auth/me
   charts: {},
   searchTimeout: null,
-  selectedGateway: null,
   selectedAmount: null,
   analyticsChart: null,
-  connectedAlumni: {},
   // Server-side directory query state (search/filter/sort/paging).
   directory: { search: '', batch: '', domain: '', mentor: false, sort: 'name', limit: 12, offset: 0 },
 };
@@ -417,27 +415,13 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
-// ─── OFFLINE SIMULATION ──────────────────────────────────────
-let isOnline = true;
-function simulateOffline() {
-  isOnline = !isOnline;
-  const el = document.getElementById('offline-status');
-  if (isOnline) {
-    el.className = 'offline-status online';
-    el.innerHTML = '<span class="status-dot"></span><span class="status-text">Online</span>';
-    showToast('🟢 Connection restored. Syncing 247 records…');
-  } else {
-    el.className = 'offline-status offline';
-    el.innerHTML = '<span class="status-dot"></span><span class="status-text">Offline Queue Active</span>';
-    showToast('🟡 Offline mode. Changes will sync when connected.');
-  }
-}
-
-// Click offline status to toggle
-document.addEventListener('DOMContentLoaded', () => {
-  const el = document.getElementById('offline-status');
-  if (el) el.addEventListener('click', simulateOffline);
-});
+/* simulateOffline() sat here, wired to a click on the topbar status pill. It
+   flipped a local boolean - it never checked the network - and claimed an
+   "Offline Queue Active" outbox and a sync of "247 records". There is no
+   client-side outbox (js/admin.js says as much where the sync panel is drawn),
+   no service worker and no IndexedDB, so nothing was ever queued: while the
+   pill read "offline", writes failed normally. Removed along with its click
+   binding; the pill is now inert rather than lying. */
 
 // ─── MOBILE PROGRESSIVE DISCLOSURE HELPER ───
 function toggleProgressiveDisclosure(targetId, btn) {

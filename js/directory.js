@@ -24,10 +24,14 @@ async function renderAlumniGrid({ append = false } = {}) {
   if (!append) containers.forEach(c => c.innerHTML = renderSkeletonCards(4, 'alumni'));
   if (countEl && !append) countEl.textContent = 'Loading profiles…';
 
-  const result = await API.getAlumni({
-    search: d.search, batch: d.batch, domain: d.domain,
-    mentor: d.mentor, sort: d.sort, limit: d.limit, offset: d.offset
-  });
+  // The cards need the real connection state, so fetch both together.
+  const [result] = await Promise.all([
+    API.getAlumni({
+      search: d.search, batch: d.batch, domain: d.domain,
+      mentor: d.mentor, sort: d.sort, limit: d.limit, offset: d.offset
+    }),
+    loadConnectionState()
+  ]);
 
   if (result === null) {
     container.innerHTML = renderErrorState('Could not load the alumni directory.', 'renderAlumniGrid()');
@@ -94,42 +98,88 @@ function toggleChip(el, filter) {
   renderAlumniGrid();
 }
 
-function connectAlumni(name, btn) {
-  if (!state.connectedAlumni) state.connectedAlumni = {};
-  if (state.connectedAlumni[name]) {
-    showToast('ℹ️ Connection request already sent to ' + name);
+/* Connections are real rows, not a local flag.
+
+   connectAlumni() used to take a display NAME, set state.connectedAlumni[name]
+   in memory, paint the button "Connected" and stop. Nothing was sent: the
+   request did not exist after a refresh, the other person was never told, and
+   two alumni with the same name shared one state key. GET /api/connections and
+   POST /api/connections/:userId have existed the whole time and nothing called
+   them.
+
+   Honest states, and only these three:
+     no row       -> "+ Connect"
+     pending      -> "Requested"   (the other person has been notified)
+     accepted     -> "Connected"
+   'accepted' is not reachable today. The backend can create a request and list
+   it, but there is no endpoint that answers one, so a request stays pending
+   until that lands. The button says "Requested" rather than "Connected" for
+   exactly that reason - see the Phase 3 report. */
+
+// Keyed by the OTHER person's user id, from GET /api/connections.
+let CONNECTION_STATE = {};
+
+async function loadConnectionState() {
+  const rows = await API.getConnections();
+  if (apiFailed(rows) || !Array.isArray(rows)) return;
+  const me = state.currentUser && state.currentUser.id;
+  CONNECTION_STATE = {};
+  rows.forEach(r => {
+    const other = r.requester_id === me ? r.addressee_id : r.requester_id;
+    CONNECTION_STATE[other] = r.status;
+  });
+}
+
+function connectionLabel(status) {
+  if (status === 'accepted') return '<i data-lucide="check" class="ui-icon"></i> Connected';
+  if (status === 'pending')  return '<i data-lucide="clock" class="ui-icon"></i> Requested';
+  if (status === 'declined') return 'Not connected';
+  return '+ Connect';
+}
+
+async function connectAlumni(userId, btn) {
+  const id = parseInt(userId, 10);
+  if (!id) return;
+
+  if (CONNECTION_STATE[id]) {
+    showToast('You already have a connection request with this alumnus.');
     return;
   }
-  state.connectedAlumni[name] = true;
-  
-  if (btn) {
-    btn.innerHTML = '<i data-lucide="check" class="ui-icon"></i> Connected';
-    btn.classList.add('connected');
-    btn.setAttribute('disabled', 'true');
-    btn.style.background = 'rgba(0,212,170,0.15)';
-    btn.style.color = 'var(--teal)';
-    btn.style.borderColor = 'rgba(0,212,170,0.4)';
-  } else {
-    document.querySelectorAll('.connect-btn').forEach(b => {
-      if (b.getAttribute('onclick') && b.getAttribute('onclick').includes(name)) {
-        b.innerHTML = '<i data-lucide="check" class="ui-icon"></i> Connected';
-        b.classList.add('connected');
-        b.setAttribute('disabled', 'true');
-        b.style.background = 'rgba(0,212,170,0.15)';
-        b.style.color = 'var(--teal)';
-        b.style.borderColor = 'rgba(0,212,170,0.4)';
-      }
-    });
+
+  if (btn) btn.setAttribute('disabled', 'true');
+  const res = await API.connectWith(id);
+
+  if (apiFailed(res)) {
+    /* 409 means a row already exists - reconcile rather than insisting.
+       apiRequest wraps a non-2xx body as {error, status, data}, so the row the
+       server sent back is at res.data.connection, not res.connection. */
+    const existing = res && res.data && res.data.connection;
+    if (existing) {
+      CONNECTION_STATE[id] = existing.status;
+      if (btn) { btn.innerHTML = connectionLabel(existing.status); btn.classList.add('connected'); }
+      showToast(res.error || 'A connection already exists.');
+      return;
+    }
+    if (btn) btn.removeAttribute('disabled');
+    showToast((res && res.error) || 'Could not send the connection request.');
+    return;
   }
-  
-  showToast('🤝 Connection request sent to ' + name + '!');
+
+  CONNECTION_STATE[id] = res.connection ? res.connection.status : 'pending';
+  if (btn) {
+    btn.innerHTML = connectionLabel(CONNECTION_STATE[id]);
+    btn.classList.add('connected');
+  }
+  if (typeof refreshIcons === 'function') refreshIcons();
+  showToast('Connection request sent. They have been notified.');
 }
 
 // Single card renderer shared by the directory grid and the dashboard
 // recommendations — these were two near-identical copies that had already
 // drifted apart (one omitted the verified ring, the other the click target).
 function renderAlumniCard(a) {
-  const isConn = state.connectedAlumni && state.connectedAlumni[a.name];
+  const connStatus = CONNECTION_STATE[a.id];
+  const isConn = !!connStatus;
   const color = a.color || '#00A859';
   const nameAttr = escapeHtml(a.name).replace(/'/g, '&#39;');
   const subtitle = [a.role, a.company].filter(Boolean).join(' · ') || 'Profile incomplete';
@@ -153,8 +203,8 @@ function renderAlumniCard(a) {
       </div>
       <div class="alumni-card-actions">
         <button class="connect-btn ${isConn ? 'connected' : ''}"
-                onclick="event.stopPropagation(); connectAlumni('${nameAttr}', this)"
-                ${isConn ? 'disabled' : ''}>${isConn ? '<i data-lucide="check" class="ui-icon"></i> Connected' : '+ Connect'}</button>
+                onclick="event.stopPropagation(); connectAlumni(${a.id}, this)"
+                ${isConn ? 'disabled' : ''}>${connectionLabel(connStatus)}</button>
         ${a.mentor ? `<button class="mentor-req-btn" onclick="event.stopPropagation(); showMentorModal('${nameAttr}', ${a.id})"><i data-lucide="handshake" class="ui-icon"></i> Request Mentorship</button>` : ''}
       </div>
     </div>`;

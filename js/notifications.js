@@ -131,7 +131,7 @@ async function renderBroadcastHistory() {
     return;
   }
   if (rows.length === 0) {
-    el.innerHTML = renderEmptyState('<i data-lucide="megaphone" class="ui-icon"></i>', 'No broadcasts sent yet', 'Announcements you send will be listed here with delivery counts.');
+    el.innerHTML = renderEmptyState('<i data-lucide="megaphone" class="ui-icon"></i>', 'No broadcasts sent yet', 'Announcements you send will be listed here with their audience size.');
     return;
   }
 
@@ -146,8 +146,8 @@ async function renderBroadcastHistory() {
         </div>
       </div>
       <div style="text-align:right;flex-shrink:0">
-        <div class="card-badge teal">${b.delivered_count}/${b.recipients_count} delivered</div>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">${(b.channels || []).join(' · ')}</div>
+        <div class="card-badge teal">${b.recipients_count} recipient${b.recipients_count === 1 ? '' : 's'}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">in-app</div>
       </div>
     </div>`).join('');
 }
@@ -171,16 +171,16 @@ async function sendBroadcast() {
   const title = document.getElementById('broadcast-title')?.value.trim();
   const body = document.getElementById('broadcast-body')?.value.trim();
   const targetRole = document.getElementById('broadcast-target')?.value || 'all';
-  const channels = [...document.querySelectorAll('.broadcast-channel.active')].map(c => c.dataset.channel);
 
   if (!title) { showToast('⚠ Enter a broadcast title.'); return; }
   if (!body) { showToast('⚠ Enter the message body.'); return; }
 
-  const res = await API.sendBroadcastApi({ title, body, channels: channels.length ? channels : ['push'], targetRole });
+  // Always in-app: that is the only delivery this platform performs.
+  const res = await API.sendBroadcastApi({ title, body, channels: ['in_app'], targetRole });
   if (apiFailed(res)) { showToast(`⚠ ${res?.error || 'Broadcast failed.'}`); return; }
 
   closeModal();
-  showToast(`📢 Broadcast delivered to ${res.recipients} recipient${res.recipients === 1 ? '' : 's'} via ${(channels.length ? channels : ['push']).join(' + ')}.`);
+  showToast(`📢 Posted as an in-app notification to ${res.recipients} recipient${res.recipients === 1 ? '' : 's'}.`);
   if (typeof renderBroadcastHistory === 'function') renderBroadcastHistory();
   renderNotifications();
 }
@@ -204,10 +204,15 @@ function showBroadcastModal() {
         <option value="dept_admin">Department admins</option>
         <option value="univ_admin">College admins</option>
       </select></div>
-    <div class="input-group"><label class="input-label">Channels</label>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        ${[['push','<i data-lucide="bell" class="ui-icon"></i> Push'],['sms','<i data-lucide="message-circle" class="ui-icon"></i> SMS'],['email','<i data-lucide="mail" class="ui-icon"></i> Email']].map((c, i) =>
-          `<button type="button" class="chip broadcast-channel${i === 0 ? ' active' : ''}" data-channel="${c[0]}" onclick="this.classList.toggle('active')">${c[1]}</button>`).join('')}
+    <!-- An SMS chip and an Email chip sat beside the in-app one. Selecting
+         either changed nothing: the send handler's only effect is INSERT INTO
+         notifications, and the repository contains no SMS, email or push
+         provider. They are gone rather than disabled, because a disabled chip
+         still advertises a channel this platform does not have. -->
+    <div class="input-group"><label class="input-label">Delivery</label>
+      <div class="login-note" style="display:block">
+        Broadcasts are delivered as in-app notifications. No email or SMS
+        transport is connected to this platform.
       </div></div>
     <button class="btn btn-primary btn-full" onclick="sendBroadcast()"><i data-lucide="megaphone" class="ui-icon"></i> Send Broadcast</button>
     <div style="font-size:11px;color:var(--text-muted);margin-top:10px;text-align:center">Recipients are resolved from the live audience and delivered as in-app notifications.</div>

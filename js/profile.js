@@ -104,12 +104,12 @@ async function viewAlumniProfile(id) {
   showModal(`
     <div class="onboarding-header">
       <div style="display:flex;align-items:center;gap:12px">
-        <div class="alumni-avatar verified-ring" style="width:52px;height:52px;font-size:18px;background:var(--teal)">
+        <div class="alumni-avatar ${profile.verified ? 'verified-ring' : ''}" style="width:52px;height:52px;font-size:18px;background:var(--teal)">
           <span>${profile.initials || profile.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()}</span>
-          <div class="verified-badge-icon"><i data-lucide="check" class="ui-icon"></i></div>
+          ${profile.verified ? '<div class="verified-badge-icon"><i data-lucide="check" class="ui-icon"></i></div>' : ''}
         </div>
         <div style="flex:1">
-          <div class="onboarding-title" style="font-size:18px">${profile.name}</div>
+          <div class="onboarding-title" style="font-size:18px">${escapeHtml(profile.name)}</div>
           <div class="onboarding-sub">${[profile.jobTitle, profile.company].filter(Boolean).join(" · ") || "Profile incomplete"}</div>
           <div style="font-size:11px;color:var(--teal);margin-top:2px"><i data-lucide="graduation-cap" class="ui-icon"></i> ${val(profile.degree)}${profile.batch ? ` (Batch ${profile.batch})` : ""} · ${val(profile.department)}</div>
         </div>
@@ -130,11 +130,18 @@ async function viewAlumniProfile(id) {
         </div>
       </div>` : ''}
 
-      <!-- VERIFICATION BADGES -->
+      <!-- IDENTITY.
+           This read "Email Verified" whenever the email field was simply
+           non-empty, and "DIC Alumni Board Verified" unconditionally for
+           everyone. Neither was backed: there is no email-verification flow in
+           the schema or the code. users.is_verified is the one real signal, and
+           an administrator sets it from the verification queue. -->
       <div class="verification-badges-grid">
-        ${profile.studentId ? `<span class="verify-pill"><i data-lucide="check" class="ui-icon"></i> Student ID ${escapeHtml(profile.studentId)}</span>` : ""}
-        ${profile.email ? `<span class="verify-pill"><i data-lucide="check" class="ui-icon"></i> Email Verified (${escapeHtml(profile.email)})</span>` : ""}
-        <span class="verify-pill"><i data-lucide="check" class="ui-icon"></i> DIC Alumni Board Verified</span>
+        ${profile.studentId ? `<span class="verify-pill"><i data-lucide="id-card" class="ui-icon"></i> Student ID ${escapeHtml(profile.studentId)}</span>` : ""}
+        ${profile.email ? `<span class="verify-pill"><i data-lucide="mail" class="ui-icon"></i> ${escapeHtml(profile.email)}</span>` : ""}
+        ${profile.verified
+          ? `<span class="verify-pill"><i data-lucide="check" class="ui-icon"></i> Verified by a DIC administrator</span>`
+          : `<span class="verify-pill warn"><i data-lucide="clock" class="ui-icon"></i> Awaiting administrator verification</span>`}
       </div>
 
       <!-- ABOUT BIO -->
@@ -162,15 +169,18 @@ async function viewAlumniProfile(id) {
         </div>
       </div>
 
-      <!-- PRD UTILITIES (DIGITAL PASS & DSAR EXPORT) -->
+      <!-- DSAR EXPORT.
+           A "Download Digital Pass" button sat beside this one. It generated
+           nothing - the handler was a toast claiming a PKPass had been built.
+           The export button below is real: it fetches /api/dsar/export and
+           saves the file. -->
       <div style="display:flex;gap:8px">
-        <button class="btn btn-outline btn-sm" style="flex:1" onclick="showToast('🎟 Generated DIC Wallet Pass (Apple/Google PKPass)')"><i data-lucide="ticket" class="ui-icon"></i> Download Digital Pass</button>
-        <button class="btn btn-outline btn-sm" style="flex:1" onclick="exportProfileDSAR('${profile.name}')"><i data-lucide="download" class="ui-icon"></i> Export Data (DSAR JSON)</button>
+        <button class="btn btn-outline btn-sm" style="flex:1" onclick="exportProfileDSAR()"><i data-lucide="download" class="ui-icon"></i> Export my data (DSAR JSON)</button>
       </div>
 
       <!-- ACTION BUTTONS -->
       <div class="field-grid-2" style="margin-top:10px">
-        <button class="btn btn-primary btn-full" onclick="closeModal(); connectAlumni('${profile.name}')">+ Connect</button>
+        <button class="btn btn-primary btn-full" onclick="closeModal(); connectAlumni(${profile.id})">+ Connect</button>
         <button class="btn btn-outline btn-full" onclick="closeModal(); showMentorModal('${escapeHtml(profile.name).replace(/'/g, '&#39;')}', ${profile.id})"><i data-lucide="handshake" class="ui-icon"></i> Request Mentorship</button>
       </div>
     </div>

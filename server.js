@@ -68,11 +68,74 @@ app.use((req, res, next) => {
    admin.<domain>/ landed on the alumni portal while admin.<domain>/anything-else
    correctly landed on the staff portal. Named files, /admin.html included, are
    still served directly. */
-app.use(express.static(__dirname, { index: false }));
+/* The repository root is the web root, which meant `express.static(__dirname)`
+   served every file in it to anyone who asked — including `.env` (SESSION_SECRET
+   and ENCRYPTION_KEY), `admin-credentials.local.txt` (the super admin's
+   password), `db.js`, every `routes_*.js`, and the SQL schema. A single
+   unauthenticated GET was a total takeover, and it also handed out the key that
+   signs ticket QR codes and encrypts the identity vault.
+
+   Static serving is now an allow-list. Only the files the two portals actually
+   reference are reachable; anything else with a file extension is a 404 before
+   it reaches express.static. Extensionless paths fall through to the SPA
+   handler at the bottom of this file, which is what routes /directory, /admin
+   and friends. */
+const PUBLIC_FILES = new Set([
+  '/index.html', '/admin.html', '/styles.css', '/api.js', '/manifest.json',
+  '/dic.png', '/dics.png', '/favicon.ico'
+]);
+const PUBLIC_DIRS = ['/js/', '/assets/'];
+
+app.use((req, res, next) => {
+  let p;
+  try { p = decodeURIComponent(req.path); } catch { return res.status(400).type('text/plain').send('Bad request'); }
+
+  if (p.startsWith('/api/')) return next();
+  if (p.includes('..')) return res.status(404).type('text/plain').send('Not found');
+  // A dotfile is never a page. path.extname('/.env') is '', so without this it
+  // would fall through to the SPA handler and answer 200 with the app shell.
+  if (p.split('/').some(seg => seg.startsWith('.') && seg.length > 1)) {
+    return res.status(404).type('text/plain').send('Not found');
+  }
+  if (!path.extname(p)) return next();          // SPA route, not a file request
+
+  const allowed = PUBLIC_FILES.has(p) ||
+    (PUBLIC_DIRS.some(d => p.startsWith(d)) && /\.(js|css|png|jpe?g|svg|webp|gif|ico|woff2?)$/i.test(p));
+  if (!allowed) return res.status(404).type('text/plain').send('Not found');
+  next();
+});
+
+app.use(express.static(__dirname, { index: false, dotfiles: 'deny' }));
 
 /* ============================================================
    AUTHENTICATION — password hashing, signed sessions, RBAC
    ============================================================ */
+
+/* Production must not boot on improvised secrets. Development keeps its
+   conveniences — an ephemeral session secret, a disabled vault — because
+   neither can reach real data there. In production both are load-bearing:
+   an ephemeral SESSION_SECRET silently signs out every user on each restart
+   (and on every serverless cold start), and a missing ENCRYPTION_KEY disables
+   the identity vault and, since this release, ticketing as well. Failing at
+   boot with a named cause beats discovering either at 2am.
+
+   This throws rather than calling process.exit so the reason is visible in a
+   serverless function log instead of an opaque platform abort. */
+const IS_PRODUCTION = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
+
+if (IS_PRODUCTION) {
+  const missing = [];
+  if (!process.env.SESSION_SECRET) missing.push('SESSION_SECRET');
+  if (!/^[0-9a-fA-F]{64}$/.test(process.env.ENCRYPTION_KEY || '')) missing.push('ENCRYPTION_KEY (64 hex characters)');
+  if (missing.length) {
+    // The names only — never the values, and never a partial value.
+    throw new Error(
+      `Refusing to start in production: required secret(s) missing or malformed: ${missing.join(', ')}. ` +
+      'Set them in the environment. Generate one with: ' +
+      'node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
+    );
+  }
+}
 
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 if (!process.env.SESSION_SECRET) {
@@ -314,7 +377,7 @@ app.get('/api/health', async (req, res) => {
    a running deployment — so the environment decides, not the caller. Set
    ALLOW_DB_RESEED=true to override it deliberately on a staging box. */
 app.post('/api/seed-db', requireRole(...SUPER_ONLY), async (req, res) => {
-  const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
+  const isProduction = IS_PRODUCTION;
   if (isProduction && process.env.ALLOW_DB_RESEED !== 'true') {
     await writeAuditSafe('Database Re-seed Refused',
       `blocked in production; requested by user ${req.user.uid}`, '🛑');
@@ -1153,20 +1216,15 @@ app.get('/api/moderation', requireRole(...MODERATOR_ROLES), async (req, res) => 
   try {
     const pendingChapters = await db.query('SELECT * FROM chapters WHERE status = $1 ORDER BY id DESC', ['pending_review']);
     const pendingStories = await db.query('SELECT * FROM stories WHERE status = $1 ORDER BY id DESC', ['pending_review']);
-    // v5: events carry their own approval status; there is no separate
-    // proposal queue any more.
-    const pendingEvents = await db.query(`
-      SELECT e.id, e.title, e.description, e.starts_on, e.venue, e.capacity,
-             e.event_type, e.organizer_department, e.created_at,
-             u.full_name AS created_by_name, u.role_label AS created_by_role
-        FROM events e
-        LEFT JOIN users u ON u.id = e.created_by
-       WHERE e.approval_status = 'pending_approval'
-       ORDER BY e.created_at DESC`);
+    /* Events are deliberately absent. This endpoint used to also return
+       pendingEvents, but nothing ever rendered them — renderModerationPanel
+       draws chapters and stories only — so the queue silently claimed a
+       responsibility it did not carry. Event approval lives where the event
+       does: the workspace, which shows the proposal in full and calls
+       PUT /api/events/:id/approve|reject. One path, not one and a half. */
     res.json({
       pendingChapters: pendingChapters.rows,
-      pendingStories: pendingStories.rows,
-      pendingEvents: pendingEvents.rows
+      pendingStories: pendingStories.rows
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

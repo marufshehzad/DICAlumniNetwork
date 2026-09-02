@@ -181,9 +181,9 @@ function showMentorModal(mentorName = '', mentorId = null) {
       <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
     </div>
     <div class="socratic-prompt">
-      <div class="socratic-prompt-icon"><i data-lucide="bot" class="ui-icon"></i></div>
+      <div class="socratic-prompt-icon"><i data-lucide="lightbulb" class="ui-icon"></i></div>
       <div class="socratic-prompt-text">
-        <strong>ConnectAI:</strong> Be specific about your goal and what guidance you need — focused requests are accepted far more often.
+        <strong>Tip:</strong> Be specific about your goal and what guidance you need — focused requests are accepted far more often.
       </div>
     </div>
     <div style="margin-bottom:14px;padding:12px;background:var(--bg-glass);border:1px solid var(--border-glass);border-radius:var(--radius-sm)">

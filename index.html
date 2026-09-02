@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="AlumniConnect — The AI-Powered Alumni Networking & Management Platform for Bangladeshi Institutions" />
-  <title>AlumniConnect — AI-Powered Alumni Network</title>
+  <meta name="description" content="DIC Alumni Network — the alumni networking and management platform for Daffodil International College" />
+  <title>DIC Alumni Network — Daffodil International College</title>
   <!-- OpenGraph & WhatsApp In-App Browser Meta Tags -->
   <meta property="og:title" content="DIC Alumni Network — Daffodil International College" />
   <meta property="og:description" content="Official Alumni System for Daffodil International College (DIC)" />
@@ -179,7 +179,7 @@
               <div class="login-error hidden" id="signup-error" role="alert"></div>
               <button type="submit" class="btn btn-primary btn-full" id="signup-submit-btn">Create Account →</button>
             </form>
-            <p class="auth-hint">New accounts start unverified. A DIC administrator reviews and verifies your alumni status before full access is granted.</p>
+            <p class="auth-hint">New accounts start unverified. A DIC administrator will review and confirm your alumni status; until then your profile is marked unverified to other members.</p>
           </div><!-- /auth-panel-signup -->
         </div>
       </div>
@@ -243,14 +243,14 @@
       </div>
       <div class="topbar-search">
         <span class="search-icon"><i data-lucide="search" class="ui-icon"></i></span>
-        <input type="text" class="topbar-search-input" placeholder="Ask DIC AI — find alumni, jobs, or events…" id="global-search" oninput="handleGlobalSearch(this.value)" />
+        <input type="text" class="topbar-search-input" placeholder="Search alumni by name, company, skill or batch…" id="global-search" oninput="handleGlobalSearch(this.value)" />
       </div>
       <div class="topbar-actions">
         <!-- Role is decided by the authenticated server-side user record and is
              shown read-only. It was a <select> that re-authenticated as any
              role using credentials shipped in app.js. -->
         <span class="role-display" id="topbar-role-display"></span>
-        <div class="offline-status online" id="offline-status" title="PostgreSQL 16 Engine Connected · PDPA 2026 Compliant">
+        <div class="offline-status" id="offline-status">
           <span class="status-dot"></span>
           <span class="status-text">PostgreSQL 16 · Live</span>
         </div>
@@ -286,21 +286,21 @@
         <div class="page-header">
           <div>
             <h1 class="page-title">Alumni Directory</h1>
-            <p class="page-subtitle">Search verified DIC alumni profiles</p>
+            <p class="page-subtitle">Search DIC alumni profiles</p>
           </div>
         </div>
         <!-- Search Bar -->
         <div class="ai-search-bar glass-card">
           <span class="ai-search-icon"><i data-lucide="bot" class="ui-icon"></i></span>
-          <input type="text" class="ai-search-input" id="dir-search" placeholder="Ask ConnectAI — 'Find software engineers in Dhaka class of 2019'" oninput="filterDirectory(this.value)" />
+          <input type="text" class="ai-search-input" id="dir-search" placeholder="Search by name, company, skill, department or city" oninput="filterDirectory(this.value)" />
           <button class="voice-btn" title="Voice Input"><i data-lucide="mic" class="ui-icon"></i></button>
           <div class="search-indicator" id="search-indicator" style="display:none;">
             <div class="typing-dots"><span></span><span></span><span></span></div>
-            <span>Searching vectors…</span>
+            <span>Searching…</span>
           </div>
         </div>
         <div class="transliteration-badge hidden" id="transliteration-badge">
-          <i data-lucide="languages" class="ui-icon"></i> Bangla detected — passing through transliteration layer… <span class="tl-latency">&lt;150ms</span>
+          <i data-lucide="languages" class="ui-icon"></i> Bangla detected — searching for this text as typed
         </div>
         <!-- Filters -->
         <div class="filter-chips" id="filter-chips">
@@ -407,7 +407,7 @@
         <div class="page-header">
           <div>
             <h1 class="page-title">Donation Campaigns</h1>
-            <p class="page-subtitle">bKash · Nagad · Rocket · International Card</p>
+            <p class="page-subtitle">Pledge ledger — no online payment is connected; the alumni office confirms funds</p>
           </div>
           <button class="btn btn-primary" onclick="showCreateCampaign()">+ New Campaign</button>
         </div>
@@ -437,6 +437,10 @@
           </div>
         </div>
         <div class="campaigns-grid" id="campaigns-grid"></div>
+        <div class="glass-card mt-16">
+          <div class="card-header"><h3 class="card-title"><i data-lucide="receipt" class="ui-icon"></i> My pledges &amp; donations</h3></div>
+          <div id="my-donations"></div>
+        </div>
       </div>
 
       <!-- ============ EVENTS PAGE ============ -->
@@ -487,12 +491,12 @@
         <div class="page-header">
           <div>
             <h1 class="page-title">Alumni Job Board</h1>
-            <p class="page-subtitle">Closed-loop network · Alumni-only postings</p>
+            <p class="page-subtitle">Open to every signed-in member · not visible to the public</p>
           </div>
           <button class="btn btn-primary" onclick="showPostJobModal()">+ Post a Job</button>
         </div>
         <div class="alumni-only-banner">
-          <i data-lucide="lock" class="ui-icon"></i> Closed-Loop Network — Only verified alumni can post and apply. Non-alumni access is restricted.
+          <i data-lucide="lock" class="ui-icon"></i> Signed-in members only — the job board is not public.
         </div>
         <div class="jobs-layout">
           <div class="jobs-main">
@@ -536,7 +540,7 @@
         <div class="page-header">
           <div>
             <h1 class="page-title">Executive Analytics</h1>
-            <p class="page-subtitle">Impact dashboard · Exportable reports</p>
+            <p class="page-subtitle">Impact dashboard</p>
           </div>
           <div class="page-header-actions">
           </div>
@@ -633,14 +637,11 @@
               <div class="card-header"><h3 class="card-title">Spotlight Alumni</h3></div>
               <div id="spotlight-alumni"></div>
             </div>
-            <div class="glass-card mt-16">
-              <div class="card-header"><h3 class="card-title">Trending Tags</h3></div>
-              <div id="trending-tags"></div>
-            </div>
-            <div class="glass-card mt-16">
-              <div class="card-header"><h3 class="card-title">Past Polls</h3></div>
-              <div id="past-polls"></div>
-            </div>
+            <!-- Trending Tags and Past Polls sat here. The five tags were fixed
+                 strings whose click handler only raised a toast claiming to
+                 filter; nothing filtered. The two "past polls" and their 64% /
+                 78% results were markup - no poll history is stored and no
+                 endpoint serves one. -->
           </div>
         </div>
       </div>
@@ -707,7 +708,7 @@
         <div class="page-header">
           <div>
             <h1 class="page-title">My DIC Profile</h1>
-            <p class="page-subtitle">Complete 10-Section Digital Identity · Field Privacy Controls · Verification Badges</p>
+            <p class="page-subtitle">Complete 10-Section Digital Identity</p>
           </div>
           <button class="btn btn-primary" onclick="showEditProfileV2()"><i data-lucide="pen-line" class="ui-icon"></i> Edit Profile</button>
         </div>
@@ -782,20 +783,18 @@
                 </div>
               <div class="id-hologram"></div>
             </div>
-            <div class="id-wallet-btns">
-              <button class="wallet-btn apple" onclick="showToast('🍎 Added to Apple Wallet')"><i data-lucide="wallet" class="ui-icon"></i> Add to Apple Wallet</button>
-              <button class="wallet-btn google" onclick="showToast('G Added to Google Wallet')">G Add to Google Wallet</button>
-            </div>
-            <!-- Verification Badges Card -->
-            <div class="glass-card mt-16">
-              <div class="card-header"><h3 class="card-title"><i data-lucide="shield" class="ui-icon"></i> Verification Badges</h3></div>
-              <div class="verification-badges-grid">
-                <span class="verify-pill"><i data-lucide="check" class="ui-icon"></i> Email Verified</span>
-                <span class="verify-pill"><i data-lucide="check" class="ui-icon"></i> Phone Verified</span>
-                <span class="verify-pill"><i data-lucide="check" class="ui-icon"></i> Student ID Verified</span>
-                <span class="verify-pill"><i data-lucide="check" class="ui-icon"></i> Alumni Board Verified</span>
-              </div>
-            </div>
+            <!-- Two wallet buttons sat here. Neither generated anything: both were
+                 showToast() calls asserting a pass had been added. The platform
+                 issues no PKPass and signs no Google Wallet object, and there is
+                 no endpoint that could. Removed rather than left as decoration. -->
+            <!-- A "Verification Badges" card sat here with four green ticks -
+                 Email, Phone, Student ID and Alumni Board - rendered
+                 unconditionally for every account, including one that had just
+                 signed up seconds earlier. Three of the four could never be
+                 backed: there is no email-verification, phone-verification or
+                 student-ID-verification flow in the schema or the code. The one
+                 real signal, users.is_verified, already renders on the ID card
+                 above (see hydrateUserProfile in js/profile.js). -->
           </div>
           <!-- Profile Details -->
           <div class="profile-details">
@@ -840,7 +839,7 @@
         <span class="bnav-icon"><i data-lucide="users" class="ui-icon"></i></span><span class="bnav-label">Directory</span>
       </a>
       <a class="bottom-nav-item" onclick="showPage('mentorship')" id="bnav-mentorship">
-        <span class="bnav-icon"><i data-lucide="bot" class="ui-icon"></i></span><span class="bnav-label">ConnectAI</span>
+        <span class="bnav-icon"><i data-lucide="handshake" class="ui-icon"></i></span><span class="bnav-label">Mentorship</span>
       </a>
       <a class="bottom-nav-item" onclick="showPage('events')" id="bnav-events">
         <span class="bnav-icon"><i data-lucide="calendar-days" class="ui-icon"></i></span><span class="bnav-label">Events</span>
