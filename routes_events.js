@@ -1413,7 +1413,12 @@ module.exports = function mountEvents(app, guards) {
      pass over the whole events table, and only the people who manage events
      have any reason to trigger it. The client already calls it exclusively
      from evRunMaintenanceSweep(), which is itself gated on evCanManage(). */
-  app.post('/api/events/tasks/reminder-sweep', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
+  /* The sweep itself, lifted out of the route so the scheduler runs exactly
+     this code rather than a second copy of it. Both callers below are thin
+     wrappers. It is safe to run repeatedly: the status roll-forward is a
+     calendar-driven UPDATE that matches nothing once applied, and every
+     reminder is de-duplicated per task, per person, per calendar day. */
+  async function runReminderSweep() {
     /* Advance event run status from the calendar. Nothing did this before, so
        an event stayed 'upcoming' for ever and the Past filter was always empty. */
     const advanced = await db.query(`
@@ -1456,8 +1461,11 @@ module.exports = function mountEvents(app, guards) {
       });
       sent++;
     }
-    res.json({ sent, scanned: due.rows.length, statusAdvanced: advanced.rowCount });
-  }));
+    return { sent, scanned: due.rows.length, statusAdvanced: advanced.rowCount };
+  }
 
-  return { STANDARD_CHECKLIST, EVENT_TYPES };
+  app.post('/api/events/tasks/reminder-sweep', requireRole(...MODERATOR_ROLES), (req, res) =>
+    ok(res, async () => res.json(await runReminderSweep())));
+
+  return { STANDARD_CHECKLIST, EVENT_TYPES, runReminderSweep };
 };

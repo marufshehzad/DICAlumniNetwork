@@ -9,23 +9,45 @@
     "The rewrite sends /api/* to the Express app; everything else is served as a",
     "static file, and server.js's own fallback picks index.html or admin.html by",
     "path and Host. Both portals therefore run on this one deployment: point",
-    "admin.<domain> at it and set ADMIN_ORIGIN, and no other change is needed."
+    "admin.<domain> at it and set ADMIN_ORIGIN, and no other change is needed.",
+    "",
+    "crons: Vercel triggers these paths on schedule with an Authorization: Bearer",
+    "header carrying CRON_SECRET, which is exactly what requireScheduler in",
+    "server.js checks. Times are UTC. Dhaka is UTC+6, so 20:10 UTC is 02:10 local —",
+    "a quiet hour, and after any nightly backup rather than during it.",
+    "A VPS deployment ignores this block and uses crontab instead; see",
+    "OPERATIONS_RUNBOOK.md section C. Only one of the two is ever enabled."
   ],
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "X-Frame-Options", "value": "SAMEORIGIN" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "SAMEORIGIN"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
       ]
     },
     {
       "$comment": "The staff portal must never be indexed or framed.",
       "source": "/admin(.*)",
       "headers": [
-        { "key": "X-Robots-Tag", "value": "noindex, nofollow" },
-        { "key": "X-Frame-Options", "value": "DENY" }
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        }
       ]
     }
   ],
@@ -33,6 +55,20 @@
     {
       "source": "/api/(.*)",
       "destination": "/api/index.js"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/internal/jobs/run?job=event-maintenance",
+      "schedule": "10 20 * * *"
+    },
+    {
+      "path": "/api/internal/jobs/run?job=deletion-purge",
+      "schedule": "25 20 * * *"
+    },
+    {
+      "path": "/api/internal/jobs/run?job=mentorship-expiry",
+      "schedule": "40 20 * * *"
     }
   ]
 }

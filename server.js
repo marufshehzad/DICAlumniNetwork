@@ -8,7 +8,10 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const db = require('./db');
+const mailer = require('./mailer');
+const jobs = require('./jobs');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -97,6 +100,14 @@ app.use((req, res, next) => {
   if (p.split('/').some(seg => seg.startsWith('.') && seg.length > 1)) {
     return res.status(404).type('text/plain').send('Not found');
   }
+  /* Directories that must never resolve to anything, extension or not. Without
+     this, "/backups/" has no extension, so it falls through to the SPA handler
+     and answers 200 with the application shell — harmless in itself, but a
+     path under the backup directory should say "no such thing", not hand back
+     a page that implies something is there. */
+  if (/^\/(backups|node_modules|ops|api\/index)\b/i.test(p)) {
+    return res.status(404).type('text/plain').send('Not found');
+  }
   if (!path.extname(p)) return next();          // SPA route, not a file request
 
   const allowed = PUBLIC_FILES.has(p) ||
@@ -106,6 +117,42 @@ app.use((req, res, next) => {
 });
 
 app.use(express.static(__dirname, { index: false, dotfiles: 'deny' }));
+
+/* ─── REQUEST LOG ───────────────────────────────────────────
+   The platform logged almost nothing, so "the site was slow at 10am" or "a
+   member says saving failed yesterday" had no evidence behind it. One line per
+   API request, structured enough to grep and narrow enough to be safe.
+
+   What is deliberately absent: the request body (it carries passwords and
+   reset tokens), the Authorization header (it carries the session token), and
+   query strings (a reset link arrives as ?reset=<token>). The correlation id
+   goes out on the response so an operator can match a user's screenshot to a
+   log line without either party quoting anything sensitive. */
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next();
+
+  const id = crypto.randomBytes(6).toString('hex');
+  req.correlationId = id;
+  res.setHeader('X-Request-Id', id);
+  const started = Date.now();
+
+  res.on('finish', () => {
+    // Path only — never req.originalUrl, which would include the query string.
+    const line = [
+      new Date().toISOString(),
+      id,
+      req.method,
+      req.path,
+      res.statusCode,
+      (Date.now() - started) + 'ms',
+      req.user ? 'uid=' + req.user.uid : 'anon'
+    ].join(' ');
+    if (res.statusCode >= 500) console.error('[api] ' + line);
+    else if (res.statusCode >= 400) console.warn('[api] ' + line);
+    else if (process.env.LOG_REQUESTS === 'all') console.log('[api] ' + line);
+  });
+  next();
+});
 
 /* ============================================================
    AUTHENTICATION — password hashing, signed sessions, RBAC
@@ -127,6 +174,17 @@ if (IS_PRODUCTION) {
   const missing = [];
   if (!process.env.SESSION_SECRET) missing.push('SESSION_SECRET');
   if (!/^[0-9a-fA-F]{64}$/.test(process.env.ENCRYPTION_KEY || '')) missing.push('ENCRYPTION_KEY (64 hex characters)');
+  /* Without this the scheduler cannot authenticate, which means the 30-day
+     deletion purge never runs. That is a promise the platform makes to every
+     user who asks to be erased, so a deployment that cannot keep it should not
+     start. */
+  if (!process.env.CRON_SECRET || process.env.CRON_SECRET.length < 32) {
+    missing.push('CRON_SECRET (32+ characters)');
+  }
+  /* Mail is required unless the operator has explicitly chosen to go without
+     it and keep reset_link.js as the only recovery path. Silence is not
+     consent: MAIL_TRANSPORT has to say so. */
+  for (const v of mailer.missingMailConfig()) missing.push(v);
   if (missing.length) {
     // The names only — never the values, and never a partial value.
     throw new Error(
@@ -355,18 +413,29 @@ function publicUser(row) {
 }
 
 // ─── 1. HEALTH CHECK & CLOUD DB INITIALIZER ───
+/* ─── HEALTH ────────────────────────────────────────────────
+   A monitor needs a single unauthenticated URL that goes non-200 when the
+   platform is actually broken, and reveals nothing when it is not.
+
+   This used to answer with the database product and version, whether the
+   deployment was cloud or local, and the exact number of user accounts — a
+   free reconnaissance endpoint. It now reports liveness only. The detail an
+   operator needs during an incident lives behind /api/ops/status, which
+   requires an administrator session.
+
+   The check is a real round trip to the database, not a process liveness
+   ping: an app that cannot reach its database is down, however healthy the
+   Node process feels. */
 app.get('/api/health', async (req, res) => {
+  const started = Date.now();
   try {
-    const result = await db.query('SELECT NOW() as current_time, COUNT(*) as user_count FROM users');
-    res.json({
-      status: 'online',
-      database: db.isCloud ? 'Cloud PostgreSQL (SSL Active)' : 'PostgreSQL 16 (Local)',
-      is_cloud: db.isCloud,
-      time: result.rows[0].current_time,
-      total_users: parseInt(result.rows[0].user_count)
-    });
+    await db.query('SELECT 1');
+    res.json({ status: 'ok', database: 'ok', latencyMs: Date.now() - started });
   } catch (err) {
-    res.status(500).json({ status: 'error', message: err.message, is_cloud: db.isCloud });
+    // The reason goes to the log for an operator; the caller is told only that
+    // the dependency is down, in case the message carries connection detail.
+    console.error('[health] database unreachable: ' + err.message);
+    res.status(503).json({ status: 'degraded', database: 'unreachable' });
   }
 });
 
@@ -729,13 +798,31 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   try {
     if (email) {
       const r = await db.query(
-        `SELECT id, status FROM users WHERE LOWER(email) = $1`, [email]);
+        `SELECT id, status, email, full_name FROM users WHERE LOWER(email) = $1`, [email]);
       const row = r.rows[0];
       // A suspended account gets no reset: recovering it is an administrator's
       // decision, not the holder's.
       if (row && row.status === 'active') {
-        await issueResetToken(row.id);
-        // The action is audited; the token is not part of the entry.
+        const token = await issueResetToken(row.id);
+
+        /* Delivered by email since Phase 4. The base URL comes from
+           PUBLIC_ORIGIN so the link points at the deployment rather than at
+           whatever Host header the caller happened to send — otherwise anyone
+           could have a reset link minted that points at their own server. */
+        const base = (process.env.PUBLIC_ORIGIN || `${req.protocol}://${req.get('host')}`)
+          .replace(/\/$/, '');
+        const msg = mailer.passwordResetMessage({
+          name: row.full_name,
+          url: `${base}/?reset=${encodeURIComponent(token)}`,
+          minutes: Math.round(RESET_TTL_MS / 60000)
+        });
+        /* Awaited so a mail failure is logged against this request, but the
+           result is deliberately ignored: the response below is identical
+           whether the send worked, failed, or was dropped by configuration.
+           A mail outage must not become a way to test which addresses exist. */
+        await mailer.send({ to: row.email, subject: msg.subject, text: msg.text });
+
+        // The action is audited; neither the token nor the link is part of the entry.
         await writeAuditSafe('Password Reset Requested', `user ${row.id}`, '🔑',
           { actorId: row.id, targetType: 'user', targetId: row.id, ip: clientIp(req) });
       }
@@ -2027,7 +2114,8 @@ _writeAudit = v2.writeAudit;   // late-bind the audit writer declared above
 
 // Events, tickets, tasks, people, directory (v5). Mounted before the planner
 // so the /api/events/* namespace resolves here.
-require('./routes_events')(app, { ...guards, writeAudit: v2.writeAudit });
+// Held so the scheduler can run the same sweep the HTTP endpoint runs.
+const eventsModule = require('./routes_events')(app, { ...guards, writeAudit: v2.writeAudit });
 
 // Event "Advanced" modules: budget, sponsors, vendors, marketing, meetings,
 // risks, committees, volunteers, logistics, timeline. Staff-only.
@@ -2048,6 +2136,148 @@ require('./routes_compliance')(app, {
   encryptionReady: v2.encryptionReady,
   writeAudit: v2.writeAudit
 });
+
+/* ══════════════════════════════════════════════════════════
+   SCHEDULER
+   ══════════════════════════════════════════════════════════
+
+   One entry point for every scheduled job. Whatever fires it — Vercel Cron, a
+   system crontab, or an administrator clicking "run now" — arrives here, so
+   there is one implementation of each job rather than one per trigger.
+
+   Two credentials open this door and nothing else does:
+
+     the scheduler secret   CRON_SECRET, sent as a bearer token or X-Cron-Key.
+                            This is what a cron entry uses. It is never sent to
+                            a browser and never appears in frontend code.
+
+     a super admin session  so an operator can run a job by hand from the admin
+                            portal when a scheduled run failed.
+
+   Every other caller is refused, including moderators and college admins:
+   these jobs delete accounts and mutate every event row, which is not a
+   moderator's authority however legitimate their session is. */
+
+function schedulerCredentialOk(req) {
+  const expected = process.env.CRON_SECRET || '';
+  if (!expected) return false;              // unset means nothing can pass
+
+  const header = req.get('x-cron-key') || '';
+  const auth = req.get('authorization') || '';
+  const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  const offered = header || bearer;
+  if (!offered) return false;
+
+  // Constant-time: a length-independent compare would leak the secret a byte
+  // at a time to a patient caller.
+  const a = Buffer.from(offered);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function requireScheduler(req, res, next) {
+  if (schedulerCredentialOk(req)) { req.schedulerAuth = 'secret'; return next(); }
+  // Fall back to a super admin session, which attachUser has already resolved.
+  if (req.user && !req.staleSession && !req.suspended && req.user.role === 'super_admin') {
+    req.schedulerAuth = 'super_admin';
+    return next();
+  }
+  /* Deliberately 401 with no hint about which credential was missing or
+     whether the job name exists. A caller without the secret learns nothing
+     about the scheduler beyond its presence. */
+  return res.status(401).json({ error: 'Scheduler credentials required' });
+}
+
+/* Runs one job, or every job when no name is given. Idempotent by design, so a
+   cron that fires twice, or an operator who retries, causes no harm.
+
+   GET as well as POST because platform schedulers differ: Vercel Cron issues a
+   GET, a crontab line using curl can issue either. Refusing one of them would
+   mean maintaining a second trigger path, which is how a system ends up with
+   two schedulers that drift. */
+const runJobsHandler = async (req, res) => {
+  const name = String(req.query.job || req.body?.job || '').trim();
+  const source = req.schedulerAuth === 'secret' ? 'cron' : 'manual';
+  const deps = { runReminderSweep: eventsModule?.runReminderSweep, writeAudit: _writeAudit };
+
+  try {
+    if (!name || name === 'all') {
+      const results = await jobs.runAllJobs(deps, source);
+      const failed = results.filter(r => r.status === 'failed');
+      return res.status(failed.length ? 500 : 200).json({ ran: results.length, failed: failed.length, results });
+    }
+    res.json(await jobs.runJob(name, deps, source));
+  } catch (e) {
+    console.error(`[scheduler] job "${name}" failed: ${e.message}`);
+    res.status(e.status || 500).json({ error: e.message, job: name, runId: e.runId || null });
+  }
+};
+
+app.post('/api/internal/jobs/run', requireScheduler, runJobsHandler);
+app.get('/api/internal/jobs/run', requireScheduler, runJobsHandler);
+
+/* What the admin portal's operations panel reads, and what an operator checks
+   after an incident. Administrator session required — this carries the mail
+   host, the last error text of a failed job and the backup state, none of
+   which belongs on a public endpoint. */
+app.get('/api/ops/status', requireRole(...ADMIN_ROLES), async (req, res) => {
+  try {
+    const runs = await db.query(`
+      SELECT DISTINCT ON (job) job, status, started_at, finished_at, duration_ms, items, detail, source
+        FROM ops_runs ORDER BY job, started_at DESC`);
+
+    const recentFailures = await db.query(`
+      SELECT COUNT(*)::int n FROM ops_runs
+       WHERE status='failed' AND started_at > NOW() - INTERVAL '7 days'`);
+
+    const pendingDeletions = await db.query(`
+      SELECT COUNT(*)::int n FROM deletion_requests
+       WHERE status='pending' AND user_id IS NOT NULL`);
+
+    const overdueDeletions = await db.query(`
+      SELECT COUNT(*)::int n FROM deletion_requests
+       WHERE status='pending' AND user_id IS NOT NULL AND purge_after <= NOW()`);
+
+    res.json({
+      jobs: jobs.JOB_NAMES.map(name => {
+        const r = runs.rows.find(x => x.job === name);
+        return r ? { name, ...r } : { name, status: 'never run' };
+      }),
+      recentFailures: recentFailures.rows[0].n,
+      deletions: { pending: pendingDeletions.rows[0].n, overdue: overdueDeletions.rows[0].n },
+      mail: mailer.status(),
+      scheduler: { configured: !!process.env.CRON_SECRET },
+      backup: readBackupState()
+    });
+  } catch (err) {
+    console.error('[ops] status failed: ' + err.message);
+    res.status(500).json({ error: 'Could not read operational status' });
+  }
+});
+
+/* The backup runs outside the application — it is a cron job calling
+   backup.js, which must keep working when Node is down. It leaves a small
+   receipt behind, and this reads it. An absent receipt is itself the signal an
+   operator needs. */
+function readBackupState() {
+  try {
+    const f = path.join(process.env.BACKUP_DIR || path.join(__dirname, 'backups'), 'last-backup.json');
+    if (!fs.existsSync(f)) return { known: false };
+    const raw = JSON.parse(fs.readFileSync(f, 'utf8'));
+    const ageHours = (Date.now() - new Date(raw.finishedAt).getTime()) / 3600000;
+    return {
+      known: true,
+      status: raw.status,
+      finishedAt: raw.finishedAt,
+      sizeBytes: raw.sizeBytes,
+      ageHours: Math.round(ageHours * 10) / 10,
+      // The operational question is not "is there a file" but "is it recent".
+      stale: ageHours > 36
+    };
+  } catch {
+    return { known: false };
+  }
+}
 
 // Unknown /api/* paths must 404 as JSON, not fall through to the SPA shell.
 app.use('/api', (req, res) => {

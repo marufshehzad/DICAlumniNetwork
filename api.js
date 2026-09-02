@@ -470,6 +470,10 @@ Object.assign(API, {
   // ─── BROADCASTS & AUDIT ───
   getBroadcasts:    ()              => apiRequest('GET',    '/api/broadcasts'),
   sendBroadcastApi: (d)             => apiRequest('POST',   '/api/broadcasts', d),
+  // Operations panel (Phase 4). ADMIN_ROLES for status; the run trigger is
+  // super-admin-only and the server enforces that, not this file.
+  getOpsStatus:     ()              => apiRequest('GET',    '/api/ops/status'),
+  runOpsJob:        (job)           => apiRequest('POST',   `/api/internal/jobs/run?job=${encodeURIComponent(job)}`),
   getAuditLogs:     ()              => apiRequest('GET',    '/api/audit-logs'),
 
   // ─── EVENT ADVANCED MODULES (staff only) ───

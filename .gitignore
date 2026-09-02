@@ -19,3 +19,8 @@ admin-credentials.local.txt
 # but still a credential while they are valid.
 reset-link.local.txt
 *reset-link*.local.txt
+
+# Database backups. Never committed, never served: backup.js writes here and
+# the web root allow-list in server.js does not include this directory.
+backups/
+*.sql.gz

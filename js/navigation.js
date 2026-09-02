@@ -34,7 +34,8 @@ const ADMIN_NAV = [
   { id: 'segmentation',   icon: 'target',        label: 'Segmentation',     roles: ['moderator', 'dept_admin', 'univ_admin', 'super_admin'] },
   { id: 'compliance',     icon: 'shield',        label: 'Compliance',       roles: ['univ_admin', 'super_admin'] },
   { id: 'administration', icon: 'users',         label: 'Administration',   isDivider: true, roles: ['super_admin'] },
-  { id: 'audit',          icon: 'scroll-text',   label: 'Audit Logs',       roles: ['univ_admin', 'super_admin'] }
+  { id: 'audit',          icon: 'scroll-text',   label: 'Audit Logs',       roles: ['univ_admin', 'super_admin'] },
+  { id: 'operations',     icon: 'activity',      label: 'Operations',       roles: ['univ_admin', 'super_admin'] }
 ];
 
 // ─── DYNAMIC SIDEBAR NAV PER ROLE ───────────────────────────
@@ -94,6 +95,7 @@ const PAGE_ROLES = {
   segmentation:   ['moderator', 'dept_admin', 'univ_admin', 'super_admin'],
   compliance:     ['univ_admin', 'super_admin'],
   audit:          ['univ_admin', 'super_admin'],
+  operations:     ['univ_admin', 'super_admin'],
 };
 
 function canOpenPage(page) {
@@ -182,6 +184,7 @@ function showPage(page) {
     broadcasts:     () => render(window.renderBroadcastHistory),
     segmentation:   () => render(window.renderSegmentationPanel),
     audit:          () => render(window.renderAuditLog, 'audit-log-page'),
+    operations:     () => render(window.renderOperationsPanel),
     administration: () => render(window.renderAdministrationPage),
     compliance:     () => {
       render(window.renderComplianceGrid);
