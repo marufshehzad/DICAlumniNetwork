@@ -16,7 +16,7 @@ on those seeded accounts. The rate-limit probe recorded five failed sign-ins for
 a non-existent address. Nothing else was written.
 
 
-> **Status update — Phase 5D (commit recorded in `PHASE_LOG.md`).**
+> **Status update — Phase 5D (commit `f142706`).**
 > Both P0 findings are **RESOLVED**, along with `P5C-003`, `P5C-005`, `P5C-006`,
 > `P5C-008`, `P5C-013` and `P5C-021`. `P5C-009` is **mitigated** (every write
 > site now carries a NOT-A-SOURCE-OF-TRUTH marker; the columns were deliberately

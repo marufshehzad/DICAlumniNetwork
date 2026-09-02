@@ -969,7 +969,7 @@ prioritised roadmap.
 
 **Status:** COMPLETE
 **Date:** 2026-09-02
-**Commit:** `PHASE_5D_COMMIT`
+**Commit:** `f142706` (`f1427060346cacd4244e66d8e2a31e085be913f2`) — recorded by the follow-up commit, since a commit cannot contain its own hash
 **Parent:** `01776c0`
 
 Implements the P0 and actionable P1 findings from
