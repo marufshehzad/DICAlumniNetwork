@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "createdAt": "2026-09-02T11:41:19.593Z",
+        "reason": "Pre-existing platform typography: Inter predates all remediation phases, is loaded via a deliberate async media=print swap with a noscript fallback, and is Daffodil International College's branding. Changing the institution's typeface is not mine to decide inside a location-system phase."
+      }
+    ]
+  }
+}

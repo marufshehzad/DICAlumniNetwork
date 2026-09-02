@@ -429,12 +429,13 @@ function render10SectionProfile(filterSection = 'all') {
           <span class="privacy-badge private"><i data-lucide="lock" class="ui-icon"></i> Address only you</span>
         </div>
         ${p.locationNeedsConfirmation ? `
-          <div class="ev-callout mb-16" style="border-left:3px solid var(--amber);padding:10px 12px">
-            <strong>Please confirm your location.</strong>
+          <div class="ev-banner warn mb-16">
+            <i data-lucide="triangle-alert" class="ui-icon"></i>
+            <div><strong>Please confirm your location.</strong>
             The city on this profile was filled in automatically by an earlier
             version of the platform, not by you, so it may well be wrong.
             Choose your city in <em>Edit Profile</em> and it will be used on the
-            alumni map. Until you do, it is not counted anywhere.
+            alumni map. Until you do, it is not counted anywhere.</div>
           </div>` : ''}
         <div class="field-grid-2 mb-16">
           <div class="profile-field-row"><div><div class="field-label">Current City</div><div class="field-val">${
@@ -846,10 +847,11 @@ async function showEditProfileV2() {
            the registration and import queries, and nobody could correct it. -->
       <div class="modal-section-title mt-16">Location</div>
       ${p.location_needs_confirmation ? `
-        <div class="ev-callout mb-16" style="border-left:3px solid var(--amber);padding:10px 12px;font-size:13px">
-          The city currently on your profile${p.city ? ` (<strong>${escapeHtml(p.city)}</strong>)` : ''}
+        <div class="ev-banner warn mb-16">
+          <i data-lucide="triangle-alert" class="ui-icon"></i>
+          <div>The city currently on your profile${p.city ? ` (<strong>${escapeHtml(p.city)}</strong>)` : ''}
           was filled in automatically by an earlier version of this platform,
-          not by you. Please choose your actual city below.
+          not by you. Please choose your actual city below.</div>
         </div>` : ''}
       <div class="input-group">
         <label class="input-label" for="pf-placeId">Current City</label>
