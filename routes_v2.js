@@ -7,6 +7,7 @@
 
 const crypto = require('crypto');
 const db = require('./db');
+const privacy = require('./privacy');   // location privacy is enforced in SQL below
 const auditChain = require('./audit_chain');
 
 // ─── FIELD-LEVEL ENCRYPTION (REQ-14, PDPA 2026) ───
@@ -73,9 +74,12 @@ async function writeAudit(action, meta, icon = '🛡', ctx = {}) {
 
 const ref = (prefix) => `${prefix}-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 
-module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, MODERATOR_ROLES }) {
+module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, MODERATOR_ROLES, serverError }) {
 
-  const ok = (res, fn) => fn().catch(err => res.status(500).json({ error: err.message }));
+  /* Phase 5F: the raw exception text used to be the response body, so any
+     signed-in caller could read PostgreSQL's own error strings. It is logged
+     against the correlation id instead. */
+  const ok = (res, fn) => fn().catch(err => serverError(res, err, 'v2'));
 
   /* Events, ticketing and check-in moved to routes_events.js in v5.
      They are one lifecycle and were previously split across three files. */
@@ -531,15 +535,22 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
     const rows = await db.query(`
       SELECT u.id, u.full_name AS name, u.initials,
              ap.current_company AS company, ap.job_title AS role, ap.batch, ap.color,
-             ap.department, ap.industry, ap.city,
+             ap.department, ap.industry,
+             /* Phase 5F: ap.city was returned raw here, so a member who set
+                location = 'private' had their city handed to any signed-in member
+                through the mentor suggestions. The same gate the directory uses
+                now applies. matched_city is gated too — a bare "matches your
+                city" boolean discloses the city exactly to a reader who knows
+                their own. */
+             CASE WHEN ${privacy.DIRECTORY_VISIBLE_SQL} THEN ap.city ELSE NULL END AS city,
              ($2::text IS NOT NULL AND ap.industry   IS NOT DISTINCT FROM $2) AS matched_industry,
              ($3::text IS NOT NULL AND ap.skills     ILIKE '%' || $3 || '%')  AS matched_skill,
-             ($4::text IS NOT NULL AND ap.city       IS NOT DISTINCT FROM $4) AS matched_city,
+             (${privacy.DIRECTORY_VISIBLE_SQL} AND $4::text IS NOT NULL AND ap.city IS NOT DISTINCT FROM $4) AS matched_city,
              ($5::text IS NOT NULL AND ap.department IS NOT DISTINCT FROM $5) AS matched_department,
              (
                  CASE WHEN $2::text IS NOT NULL AND ap.industry   IS NOT DISTINCT FROM $2 THEN 1 ELSE 0 END
                + CASE WHEN $3::text IS NOT NULL AND ap.skills     ILIKE '%' || $3 || '%'  THEN 1 ELSE 0 END
-               + CASE WHEN $4::text IS NOT NULL AND ap.city       IS NOT DISTINCT FROM $4 THEN 1 ELSE 0 END
+               + CASE WHEN ${privacy.DIRECTORY_VISIBLE_SQL} AND $4::text IS NOT NULL AND ap.city IS NOT DISTINCT FROM $4 THEN 1 ELSE 0 END
                + CASE WHEN $5::text IS NOT NULL AND ap.department IS NOT DISTINCT FROM $5 THEN 1 ELSE 0 END
              ) AS match_score
       FROM users u

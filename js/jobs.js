@@ -166,7 +166,7 @@ async function renderJobsEnhanced(filter = '') {
   container.innerHTML = jobs.map(j => {
     const tags = Array.isArray(j.tags) ? j.tags : [];
     const mine = j.posted_by_id === meId;
-    const safeTitle = escapeHtml(j.title).replace(/'/g, '&#39;');
+    const titleArg = jsArg(j.title);
     return `
     <div class="job-card">
       <div class="job-company-logo">${emojiIcon(j.emoji, 'briefcase')}</div>
@@ -186,11 +186,11 @@ async function renderJobsEnhanced(filter = '') {
         <span class="job-type-badge ${escapeHtml(j.type)}">${escapeHtml((j.type || '').charAt(0).toUpperCase() + (j.type || '').slice(1))}</span>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           ${mine || isAdmin
-            ? `<button class="apply-btn" onclick="showJobApplicants(${j.id}, '${safeTitle}')"><i data-lucide="users" class="ui-icon"></i> Applicants (${j.applicants})</button>
+            ? `<button class="apply-btn" onclick="showJobApplicants(${j.id}, ${titleArg})"><i data-lucide="users" class="ui-icon"></i> Applicants (${j.applicants})</button>
                <button class="referral-btn" onclick="editJobPrompt(${j.id})"><i data-lucide="pen-line" class="ui-icon"></i> Edit</button>
-               <button class="referral-btn" onclick="deleteJobPrompt(${j.id}, '${safeTitle}')"><i data-lucide="trash-2" class="ui-icon"></i> Delete</button>`
-            : `<button class="apply-btn" ${j.has_applied ? 'disabled' : ''} onclick="applyJob(${j.id}, '${safeTitle}')">${j.has_applied ? '<i data-lucide="check" class="ui-icon"></i> Applied' : 'Apply →'}</button>
-               <button class="referral-btn" onclick="showReferralModal(${j.id}, '${safeTitle}', '${escapeHtml(j.posted_by_name || '').replace(/'/g, '&#39;')}')"><i data-lucide="handshake" class="ui-icon"></i> Referral</button>`}
+               <button class="referral-btn" onclick="deleteJobPrompt(${j.id}, ${titleArg})"><i data-lucide="trash-2" class="ui-icon"></i> Delete</button>`
+            : `<button class="apply-btn" ${j.has_applied ? 'disabled' : ''} onclick="applyJob(${j.id}, ${titleArg})">${j.has_applied ? '<i data-lucide="check" class="ui-icon"></i> Applied' : 'Apply →'}</button>
+               <button class="referral-btn" onclick="showReferralModal(${j.id}, ${titleArg}, ${jsArg(j.posted_by_name)})"><i data-lucide="handshake" class="ui-icon"></i> Referral</button>`}
         </div>
       </div>
     </div>`;

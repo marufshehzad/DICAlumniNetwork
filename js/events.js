@@ -122,7 +122,7 @@ function showPlannerItemModal(kind) {
       <button type="button" class="modal-close" aria-label="Close">
         <i data-lucide="x" class="ui-icon" aria-hidden="true"></i></button>
     </div>
-    <form onsubmit="submitPlannerItem(event, '${kind}')">
+    <form onsubmit="submitPlannerItem(event, ${jsArg(kind)})">
       ${spec.fields.map(([key, label, type, required, options]) => {
         const id = `pf-${key}`;
         const req = required ? ' <span class="req">*</span>' : '';

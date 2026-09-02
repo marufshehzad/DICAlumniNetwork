@@ -47,8 +47,8 @@ const ASSIGNABLE_ROLES = {
 };
 
 module.exports = function mountAdminUsers(app, guards) {
-  const { requireRole, SUPER_ONLY, STAFF_ROLES, hashPassword, writeAudit, auditCtx, publicUser } = guards;
-  const ok = (res, fn) => fn().catch(err => res.status(500).json({ error: err.message }));
+  const { requireRole, SUPER_ONLY, STAFF_ROLES, hashPassword, writeAudit, auditCtx, publicUser , serverError} = guards;
+  const ok = (res, fn) => fn().catch(err => serverError(res, err, 'admin-users'));
 
   const SELECT_ADMIN = `
     SELECT u.id, u.full_name, u.initials, u.email, u.role, u.role_label, u.designation,

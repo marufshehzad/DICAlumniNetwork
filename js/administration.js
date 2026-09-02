@@ -293,7 +293,7 @@ async function setAdministratorStatus(id, status) {
     </p>
     <div style="display:flex;gap:8px">
       <button class="btn ${suspending ? 'btn-danger' : 'btn-primary'}"
-              onclick="confirmAdministratorStatus(${id}, '${status}')">
+              onclick="confirmAdministratorStatus(${id}, ${jsArg(status)})">
         ${suspending ? 'Suspend account' : 'Activate account'}
       </button>
       <button class="btn btn-outline" onclick="closeModal()">Cancel</button>

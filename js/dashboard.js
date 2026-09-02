@@ -706,7 +706,7 @@ function paintMap() {
     return `
       <button type="button" class="map-cluster ${mapBandFor(c.total, bands)}${active}${many ? ' is-group' : ''}"
               style="top:${top}%;left:${left}%"
-              onclick="selectMapMarker('${escapeHtml(c.key)}')"
+              onclick="selectMapMarker(${jsArg(c.key)})"
               aria-label="${escapeHtml(name)}, ${c.total} alumni. Show details."
               title="${escapeHtml(sub)}">${c.total}</button>
       <span class="map-city-label${c.x > MAP_VIEW.width * 0.8 ? ' flip' : ''}"
@@ -773,7 +773,7 @@ function renderMapRanking() {
     const key = mapMode === 'countries' ? r.country_code : String(r.place_id);
     return `
       <button type="button" class="map-rank-row ${mapSelected === key ? 'is-selected' : ''}"
-              onclick="selectMapMarker('${escapeHtml(key)}')">
+              onclick="selectMapMarker(${jsArg(key)})">
         <span class="map-rank-name">${escapeHtml(name)}<span class="map-rank-sub">${escapeHtml(sub)}</span></span>
         <span class="map-rank-bar"><span style="width:${Math.max(4, Math.round(r.n / max * 100))}%"></span></span>
         <span class="map-rank-n">${r.n}</span>
@@ -844,7 +844,7 @@ function renderMapDetail() {
       <div class="map-detail-list">
         ${sel.cluster.members.map(m => `
           <button type="button" class="map-detail-item"
-                  onclick="selectMapMarker('${escapeHtml(mapKeyOf(m))}')">
+                  onclick="selectMapMarker(${jsArg(mapKeyOf(m))})">
             <span>${escapeHtml(isCountry ? m.country : m.city)}</span><span>${m.n}</span>
           </button>`).join('')}
       </div>
@@ -1028,7 +1028,7 @@ async function generateGeoHeatmap() {
      country through the structured filter. */
   const max = Math.max(...countries.map(c => c.n));
   el.innerHTML = `<div class="geo-countries">${countries.map(c => `
-    <button type="button" class="geo-country-item" onclick="filterByCountry('${escapeHtml(c.country_code)}'); showPage('directory');"
+    <button type="button" class="geo-country-item" onclick="filterByCountry(${jsArg(c.country_code)}); showPage('directory');"
             title="Show alumni in ${escapeHtml(c.country)}">
       <div class="geo-country-name">${escapeHtml(c.country)}${
         c.cities ? `<span class="geo-country-sub">${c.cities} ${c.cities === 1 ? 'city' : 'cities'}</span>` : ''}</div>

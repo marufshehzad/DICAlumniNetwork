@@ -66,7 +66,7 @@ async function renderOperationsPanel() {
       </div>
       <div style="text-align:right;flex-shrink:0;display:flex;flex-direction:column;gap:6px;align-items:flex-end">
         ${opsPill(stale && j.status === 'ok' ? 'amber' : tone, stale && j.status === 'ok' ? 'stale' : text)}
-        ${isSuper ? `<button class="btn btn-ghost btn-sm" onclick="opsRunJob('${escapeHtml(j.name)}')">
+        ${isSuper ? `<button class="btn btn-ghost btn-sm" onclick="opsRunJob(${jsArg(j.name)})">
           <i data-lucide="play" class="ui-icon"></i> Run now</button>` : ''}
       </div>
     </div>`;

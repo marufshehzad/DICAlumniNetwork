@@ -67,7 +67,7 @@ async function renderNIDVaultPanel() {
                   ${escapeHtml(v.field_type.toUpperCase())} · <span style="font-family:monospace">•••• •••• ${escapeHtml(v.last_four || '••••')}</span>
                 </div>
               </div>
-              <button class="btn btn-sm btn-outline" onclick="decryptVaultField(${v.id}, '${escapeHtml(v.owner_name).replace(/'/g, '&#39;')}')"><i data-lucide="unlock" class="ui-icon"></i> Decrypt</button>
+              <button class="btn btn-sm btn-outline" onclick="decryptVaultField(${v.id}, ${jsArg(v.owner_name)})"><i data-lucide="unlock" class="ui-icon"></i> Decrypt</button>
             </div>`).join('')}
         </div>`}
   `;

@@ -16,11 +16,38 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
+/* Express advertises itself in X-Powered-By on every response. It tells an
+   attacker which framework's advisories to try and tells a legitimate caller
+   nothing. */
+app.disable('x-powered-by');
 const PORT = process.env.PORT || 8000;
 
-// Behind Vercel (and any reverse proxy) the socket address is the proxy's.
-// Trusting one hop makes req.ip the real client, which the login throttle needs.
-app.set('trust proxy', 1);
+/* How many reverse proxies sit in front of this process.
+
+   Behind Vercel or nginx the socket address is the proxy's, and trusting one
+   hop makes req.ip the real client — which the login throttle and the audit
+   trail both need. But a numeric trust-proxy value is a hop COUNT, not an
+   address allow-list: proxy-addr compiles `1` to "trust the peer,
+   unconditionally". With nothing actually in front, the peer IS the attacker,
+   so X-Forwarded-For becomes theirs to choose.
+
+   This was hardcoded to 1 until Phase 5F, and measured: 32 wrong passwords
+   against one account with a rotating forged X-Forwarded-For produced zero 429s
+   — the per-IP and per-account throttles were both evaded, and the forged value
+   is what the audit trail recorded. Behind the nginx configuration the runbook
+   specifies it is not exploitable, because $proxy_add_x_forwarded_for appends
+   the real peer last; with the port exposed directly, it is.
+
+   So the topology is now declared rather than assumed. Unset means no proxy,
+   which is the safe default: req.ip becomes the socket address, forgeable by
+   nobody. Set TRUST_PROXY to the number of hops you actually have. */
+const TRUST_PROXY = (() => {
+  const raw = String(process.env.TRUST_PROXY || '').trim();
+  if (!raw) return false;
+  if (/^\d+$/.test(raw)) return parseInt(raw, 10);
+  return raw;                       // an address or CIDR list, per Express
+})();
+app.set('trust proxy', TRUST_PROXY);
 
 /* CORS.
 
@@ -62,7 +89,16 @@ app.use((req, res, next) => {
     res.set('X-Frame-Options', 'DENY');
     res.set('Content-Security-Policy', "frame-ancestors 'none'");
   } else {
+    /* The alumni site is framed by nothing today but is allowed to frame itself.
+       The CSP equivalent is set alongside the legacy header so this portal is
+       not left with no Content-Security-Policy at all — which is what it had
+       until Phase 5F, on the portal every stored-XSS finding of that phase was
+       reachable from. A script-src directive is NOT possible yet: the
+       application uses inline event-handler attributes throughout, and moving
+       to delegated listeners is the prerequisite. Recorded in
+       FINAL_SECURITY_REVIEW_FOLLOWUPS.md rather than half-done here. */
     res.set('X-Frame-Options', 'SAMEORIGIN');
+    res.set('Content-Security-Policy', "frame-ancestors 'self'");
   }
   next();
 });
@@ -286,7 +322,8 @@ async function attachUser(req, res, next) {
 
   try {
     const r = await db.query(
-      'SELECT id, role, status, token_version FROM users WHERE id = $1', [payload.uid]);
+      'SELECT id, role, status, token_version, must_change_password FROM users WHERE id = $1',
+      [payload.uid]);
     // Account deleted since the token was issued — the token is now inert.
     if (r.rows.length === 0) { req.user = null; return next(); }
 
@@ -313,6 +350,7 @@ async function attachUser(req, res, next) {
       return next();
     }
     req.user = { ...payload, role: r.rows[0].role };
+    req.mustChangePassword = r.rows[0].must_change_password === true;
   } catch {
     // The database is unreachable. Fail closed rather than fall back to the
     // role asserted by the token.
@@ -330,10 +368,72 @@ const SUSPENDED = { error: 'This account is suspended. Contact an administrator.
 // again, which is exactly what api.js does with a 401.
 const STALE = { error: 'This session has ended. Please sign in again.' };
 
+/* Bulk import creates a whole batch of accounts sharing one initial password,
+   which the administrator distributes to the roster. Until Phase 5F the
+   must_change_password flag those accounts carry was advisory: the client
+   prompted, and the token worked on all 63 authenticated routes regardless. So
+   every recipient of that one password held a working credential for every
+   other account in the batch — and most bulk-imported alumni never sign in, so
+   the dormant ones stayed takeable indefinitely.
+
+   The flag is now load-bearing. A session in this state may do exactly three
+   things: read who it is, change the password, and sign out. That turns the
+   shared batch password back into what the UI already claims it is — a
+   one-time enrolment credential — without changing the operator's workflow. */
+const ENROLMENT_ALLOWED_PATHS = new Set([
+  '/api/auth/change-password', '/api/auth/me', '/api/auth/logout'
+]);
+const MUST_CHANGE = {
+  error: 'This account must set its own password before it can be used.',
+  mustChangePassword: true
+};
+
+function enrolmentBlocked(req) {
+  return req.mustChangePassword === true && !ENROLMENT_ALLOWED_PATHS.has(req.path);
+}
+
+/* One unhandled-failure reply for the whole API.
+
+   Every 500 used to return err.message verbatim, so any signed-in user could
+   read PostgreSQL's own words back — `invalid input syntax for type integer:
+   "NaN"`, column names, SQLSTATE. GET /api/alumni?batch=abc was enough to
+   produce one. The message is now logged next to the correlation id that
+   already goes out on X-Request-Id, so an operator can still find the exact
+   failure from a screenshot without the error text ever reaching the browser. */
+function serverError(res, err, tag) {
+  const req = res.req || {};
+  console.error(`[${tag}] ${req.correlationId || '-'} ${err && err.message}`);
+  if (res.headersSent) return;
+  res.status(500).json({
+    error: 'Something went wrong handling that request.',
+    requestId: req.correlationId || null
+  });
+}
+
+/* Numeric route parameters, rejected before they reach the database.
+
+   parseInt('abc') is NaN, node-pg sends it as the literal 'NaN', and PostgreSQL
+   raises a type error — a 500 for what is really a malformed request. These
+   names are integer primary keys everywhere they appear. `id` is the exception:
+   custom_fields.id is a varchar key, so that one route keeps its string ids. */
+function numericParam(name) {
+  return (req, res, next, value) => {
+    if (name === 'id' && req.path.startsWith('/api/custom-fields')) return next();
+    if (!/^\d+$/.test(String(value))) {
+      return res.status(400).json({ error: `Invalid ${name}` });
+    }
+    next();
+  };
+}
+for (const p of ['id', 'userId', 'taskId', 'personId', 'ttId', 'eventId', 'itemId', 'vaultId']) {
+  app.param(p, numericParam(p));
+}
+
 function requireAuth(req, res, next) {
   if (req.suspended) return res.status(403).json(SUSPENDED);
   if (req.staleSession) return res.status(401).json(STALE);
   if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+  if (enrolmentBlocked(req)) return res.status(403).json(MUST_CHANGE);
   next();
 }
 
@@ -342,6 +442,7 @@ function requireRole(...roles) {
     if (req.suspended) return res.status(403).json(SUSPENDED);
     if (req.staleSession) return res.status(401).json(STALE);
     if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    if (enrolmentBlocked(req)) return res.status(403).json(MUST_CHANGE);
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({ error: 'Insufficient permissions for this action' });
     }
@@ -472,7 +573,7 @@ app.post('/api/seed-db', requireRole(...SUPER_ONLY), async (req, res) => {
     await writeAuditSafe('Database Re-seeded', `by user ${req.user.uid}`, '⚠');
     res.json(result);
   } catch (err) {
-    res.status(500).json({ status: 'error', message: err.message });
+    serverError(res, err, 'seed-db');
   }
 });
 
@@ -581,6 +682,30 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const result = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
 
+    /* The durable lock is consulted BEFORE the password is compared.
+
+       Until Phase 5F this check sat below verifyPassword, which made it useless
+       in both directions. A guessing loop only ever produces wrong passwords,
+       so it never reached the check — failed_login_count climbed past 400 and
+       every attempt still got a full scrypt verification. Meanwhile the counter
+       never decayed, so once an account was locked, one wrong guess every
+       fifteen minutes re-armed the lock forever and the real owner could not
+       sign in with the correct password. It denied service to the victim and
+       throttled nobody.
+
+       Answering identically for a locked account and an unknown address keeps
+       the endpoint from confirming which addresses exist. */
+    const locked = result.rows.length && result.rows[0].locked_until
+                   && new Date(result.rows[0].locked_until) > new Date();
+    if (locked) {
+      loginRecordFailure(req, email);
+      const retryAfter = Math.ceil((new Date(result.rows[0].locked_until) - Date.now()) / 1000);
+      res.set('Retry-After', String(retryAfter));
+      return res.status(429).json({
+        error: 'Too many sign-in attempts. Please try again later.', retryAfter
+      });
+    }
+
     // One generic message for both unknown-email and wrong-password so the
     // endpoint cannot be used to enumerate accounts. The previous version
     // returned a super_admin session for any unrecognised address.
@@ -589,15 +714,42 @@ app.post('/api/auth/login', async (req, res) => {
       /* The in-process limiter above is lost on restart and, on a serverless
          deployment, is per-instance. Counting failures on the row as well gives
          a lock that survives both. Only for an account that exists — counting
-         against a missing address would leak which addresses are real. */
+         against a missing address would leak which addresses are real.
+
+         The lock is SET, never EXTENDED: once locked_until is in the future the
+         branch above has already returned, so a persistent attacker cannot
+         chain fifteen-minute windows into a permanent lockout. The window
+         lapses on its own and the owner gets back in. */
       if (result.rows.length) {
+        /* The counter restarts once a previous lock has lapsed. Left monotonic
+           it stayed at or above the threshold forever, so every later failure
+           immediately re-locked the account — which is the mechanism that made
+           an indefinite lockout possible from four requests an hour. Reaching
+           this line means no lock is live, so clearing locked_until in the ELSE
+           branch cannot cut one short. */
         await db.query(`
           UPDATE users
-             SET failed_login_count = failed_login_count + 1,
-                 locked_until = CASE WHEN failed_login_count + 1 >= $2
-                                     THEN NOW() + INTERVAL '15 minutes' ELSE locked_until END
-           WHERE id = $1`, [result.rows[0].id, RL_MAX_PER_ACCOUNT]);
+             SET failed_login_count = next.n,
+                 locked_until = CASE WHEN next.n >= $2
+                                     THEN NOW() + INTERVAL '15 minutes' ELSE NULL END
+            FROM (SELECT CASE WHEN u.locked_until IS NOT NULL AND u.locked_until <= NOW()
+                              THEN 1 ELSE u.failed_login_count + 1 END AS n
+                    FROM users u WHERE u.id = $1) AS next
+           WHERE users.id = $1`, [result.rows[0].id, RL_MAX_PER_ACCOUNT]);
       }
+      /* Sign-in was the one privileged action the hash-chained log did not
+         record. An institution investigating a compromised administrator
+         account could see what that account DID and not one attempt to reach
+         it — no failures, no successes, no source addresses. Recorded by user
+         id where the account exists, never by the address typed, so a failed
+         attempt against an unknown address cannot turn the audit log into the
+         account-enumeration oracle the 401 above is careful not to be. */
+      await writeAuditSafe('Sign-In Failed',
+        result.rows.length ? `user ${result.rows[0].id}` : 'unknown account', '🔒',
+        { actorId: result.rows.length ? result.rows[0].id : null,
+          targetType: 'user',
+          targetId: result.rows.length ? result.rows[0].id : null,
+          ip: clientIp(req) });
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
@@ -610,12 +762,9 @@ app.post('/api/auth/login', async (req, res) => {
     if (row.status === 'suspended') {
       return res.status(403).json({ error: 'This account is suspended. Contact an administrator.' });
     }
-    if (row.locked_until && new Date(row.locked_until) > new Date()) {
-      return res.status(429).json({
-        error: 'This account is temporarily locked. Please try again later.',
-        retryAfter: Math.ceil((new Date(row.locked_until) - Date.now()) / 1000)
-      });
-    }
+    /* The lock check that used to live here has moved above verifyPassword,
+       where it can actually stop a guess. Nothing is left to check: a live lock
+       has already returned 429 by this point. */
 
     // Transparently upgrade legacy plaintext rows on first successful login.
     if (!row.password_hash.startsWith('scrypt$')) {
@@ -629,6 +778,9 @@ app.post('/api/auth/login', async (req, res) => {
       'UPDATE users SET last_login_at = NOW(), failed_login_count = 0, locked_until = NULL WHERE id = $1',
       [row.id]);
 
+    await writeAuditSafe('Signed In', `user ${row.id} (${row.role})`, '🔑',
+      { actorId: row.id, targetType: 'user', targetId: row.id, ip: clientIp(req) });
+
     const user = publicUser(row);
     const token = signToken({
       uid: user.id, role: user.role,
@@ -640,7 +792,7 @@ app.post('/api/auth/login', async (req, res) => {
     // a change when this is set.
     res.json({ token, user, mustChangePassword: row.must_change_password === true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -654,6 +806,18 @@ app.post('/api/auth/register', async (req, res) => {
   if (!isValidEmail(email)) return res.status(400).json({ error: 'A valid email address is required' });
   if (!password || password.length < 8) {
     return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  }
+  /* alumni_profiles.batch and .passing_year are both NOT NULL, and this handler
+     passed `parseInt(undefined) || null` straight into them — so signing up
+     without an HSC year was a constraint violation surfacing as a 500. The form
+     did not mark the field required either, so it was reachable by anyone who
+     simply left it blank. Validated here rather than defaulted: a batch is the
+     one thing that places an alumnus in the institution's records, and a guessed
+     year is the same class of fabrication as the hardcoded 'Dhaka' Phase 5B
+     removed. */
+  const yearNum = parseInt(hscPassingYear, 10);
+  if (!Number.isInteger(yearNum) || yearNum < 1960 || yearNum > 2100) {
+    return res.status(400).json({ error: 'A valid HSC passing year is required (1960-2100)' });
   }
 
   const client = await db.pool.connect();
@@ -669,7 +833,7 @@ app.post('/api/auth/register', async (req, res) => {
     const clean = name.trim();
     const initials = clean.split(/\s+/).filter(Boolean).slice(0, 2)
       .map(w => w[0]).join('').toUpperCase().slice(0, 2) || 'AL';
-    const year = parseInt(hscPassingYear) || null;
+    const year = yearNum;
     const group = normalizeHscGroup(hscGroup) || 'General';
 
     // Self-registered accounts start unverified — an admin verifies them before
@@ -717,7 +881,7 @@ app.post('/api/auth/register', async (req, res) => {
     res.json({ token, user, mustChangePassword: false });
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   } finally {
     client.release();
   }
@@ -757,7 +921,7 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
       })
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -897,7 +1061,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
     res.json({ success: true, message: 'Password updated. Please sign in.' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -918,7 +1082,7 @@ app.post('/api/auth/logout', requireAuth, async (req, res) => {
       auditCtx(req, 'user', req.user.uid));
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -930,7 +1094,7 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
     if (result.rows.length === 0) return res.status(401).json({ error: 'Session user no longer exists' });
     res.json({ user: publicUser(result.rows[0]) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -969,7 +1133,13 @@ app.get('/api/alumni', requireAuth, async (req, res) => {
               OR CAST(ap.batch AS TEXT) LIKE ${p})`);
   }
   if (dept)   { params.push(`%${dept.toLowerCase()}%`); where.push(`LOWER(ap.department) LIKE $${params.length}`); }
-  if (batch)  { params.push(parseInt(batch));           where.push(`ap.batch = $${params.length}`); }
+  /* A non-numeric ?batch reached PostgreSQL as the literal 'NaN' and raised a
+     type error, so ?batch=abc was a 500. app.param() guards route parameters;
+     query parameters need their own check. */
+  if (batch) {
+    if (!/^\d+$/.test(String(batch))) return res.status(400).json({ error: 'Invalid batch' });
+    params.push(parseInt(batch, 10));                    where.push(`ap.batch = $${params.length}`);
+  }
   if (domain) { params.push(domain.toLowerCase());      where.push(`LOWER(ap.industry) = $${params.length}`); }
   if (mentor === 'true') where.push('ap.can_mentor = TRUE');
 
@@ -1055,7 +1225,7 @@ app.get('/api/alumni', requireAuth, async (req, res) => {
 
     res.json({ alumni, total: countRes.rows[0].total, limit, offset });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1147,7 +1317,7 @@ app.get('/api/alumni/:id', requireAuth, async (req, res) => {
       hasProfile: row.student_id !== null
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1172,7 +1342,7 @@ app.get('/api/profile/me', requireAuth, async (req, res) => {
     // OTHER people, never from the person it describes.
     res.json({ ...r.rows[0], privacy_settings: privacy.effective(r.rows[0].privacy_settings) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1287,7 +1457,7 @@ app.put('/api/profile/me', requireAuth, async (req, res) => {
       profile: { ...r.rows[0], privacy_settings: privacy.effective(r.rows[0].privacy_settings) }
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1320,7 +1490,7 @@ app.get('/api/locations/places', requireAuth, async (req, res) => {
     }
     res.json({ countries, total: rows.length });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1359,7 +1529,7 @@ app.get('/api/locations/filters', requireAuth, async (req, res) => {
     ]);
     res.json({ countries: countries.rows, cities: cities.rows });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1380,7 +1550,7 @@ app.get('/api/chapters', requireAuth, async (req, res) => {
     `, [req.user.uid]);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1426,7 +1596,7 @@ app.post('/api/chapters', requireAuth, async (req, res) => {
 
     res.json({ chapter: result.rows[0], status });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1461,7 +1631,7 @@ app.post('/api/chapters/:id/join', requireAuth, async (req, res) => {
     const updatedChapter = await db.query('SELECT * FROM chapters WHERE id = $1', [chapterId]);
     res.json({ joined, chapter: updatedChapter.rows[0] });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1493,7 +1663,7 @@ app.get('/api/chapters/:id/members', requireAuth, async (req, res) => {
 
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1520,7 +1690,7 @@ app.get('/api/stories', requireAuth, async (req, res) => {
         FROM stories WHERE status = $1 ORDER BY id DESC`, ['published']);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1558,7 +1728,7 @@ app.post('/api/stories', requireAuth, async (req, res) => {
 
     res.json({ story: result.rows[0], status: 'pending_review' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1578,7 +1748,7 @@ app.get('/api/moderation', requireRole(...MODERATOR_ROLES), async (req, res) => 
       pendingStories: pendingStories.rows
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1612,7 +1782,7 @@ app.post('/api/moderation/chapter/:id/:action', requireRole(...MODERATOR_ROLES),
 
     res.json({ success: true, chapter: result.rows[0] });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1642,7 +1812,7 @@ app.post('/api/moderation/story/:id/:action', requireRole(...MODERATOR_ROLES), a
 
     res.json({ success: true, story: result.rows[0] });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1670,7 +1840,7 @@ app.get('/api/notifications', requireAuth, async (req, res) => {
     `, [userId, role, limit]);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1687,7 +1857,7 @@ app.put('/api/notifications/:id/read', requireAuth, async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: 'Notification not found' });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1705,7 +1875,7 @@ app.put('/api/notifications/read-all', requireAuth, async (req, res) => {
     `, [userId || null, role || null]);
     res.json({ success: true, updated: result.rowCount });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -1805,7 +1975,9 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
     const rejectedRows = [];
     let withMissingOptional = 0;
     const missingFieldCounts = {};
-    const OPTIONAL_FIELDS = ["mobile","hscPassingYear","hscGroup","hscVersion","bloodGroup",
+    // hscPassingYear was listed here, but it is NOT optional — it is the batch,
+    // and the column is NOT NULL. A row without it is rejected above.
+    const OPTIONAL_FIELDS = ["mobile","hscGroup","hscVersion","bloodGroup",
                              "presentAddress","permanentAddress","hometown","postalCode",
                              "city","district","country",
                              "occupation","organization","designation",
@@ -1833,6 +2005,18 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
       // blank field is stored as NULL.
       if (!name) { rejected++; rejectedRows.push({ row: rowNo, name, email, error: "Missing name (cannot identify the person)" }); continue; }
       if (!isValidEmail(email)) { rejected++; rejectedRows.push({ row: rowNo, name, email: r.email, error: "Email could not be recovered (required as the unique login identifier)" }); continue; }
+      /* batch and passing_year are NOT NULL. A row without a usable year used to
+         reach the INSERT and abort the TRANSACTION, so one bad line in a
+         two-hundred-row roster failed the entire import with a 500 and no
+         indication of which line was at fault. It is now an ordinary per-row
+         rejection, reported by row number like every other one. */
+      const rowYear = parseInt(r.hscPassingYear, 10);
+      if (!Number.isInteger(rowYear) || rowYear < 1960 || rowYear > 2100) {
+        rejected++;
+        rejectedRows.push({ row: rowNo, name, email,
+          error: "HSC passing year is missing or not a year between 1960 and 2100 (required: it is the batch)" });
+        continue;
+      }
 
       // Record blanks for reporting; they never block the import.
       let missedAny = false;
@@ -1865,7 +2049,7 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
         [email, mobileKey]
       );
 
-      const year = parseInt(r.hscPassingYear) || null;
+      const year = rowYear;
 
       /* Location, resolved against the reference places. Four outcomes, and
          none of them is "assume Dhaka":
@@ -2016,7 +2200,7 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
     });
   } catch (err) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   } finally {
     client.release();
   }
@@ -2028,7 +2212,7 @@ app.get('/api/import-history', requireRole(...ADMIN_ROLES), async (req, res) => 
     const result = await db.query('SELECT * FROM import_history ORDER BY created_at DESC, id DESC LIMIT 25');
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -2134,7 +2318,7 @@ app.get('/api/stats/overview', requireAuth, async (req, res) => {
 
     res.json(out);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -2203,7 +2387,7 @@ app.get('/api/stats/analytics', requireRole(...MODERATOR_ROLES), async (req, res
       events: eventRoi.rows.map(e => ({ ...e, revenue: Number(e.revenue) }))
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -2281,7 +2465,7 @@ app.get('/api/stats/map', requireAuth, async (req, res) => {
         `SELECT COUNT(*)::int AS n FROM chapters WHERE status = 'approved'`)).rows[0].n
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -2338,7 +2522,7 @@ app.get('/api/sync-mutations', requireRole(...ADMIN_ROLES), async (req, res) => 
       FROM sync_mutations`);
     res.json({ mutations: rows.rows, ...counts.rows[0] });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -2364,7 +2548,7 @@ app.get('/api/job-referrals', requireAuth, async (req, res) => {
     `, [req.user.uid, isStaff]);
     res.json(rows.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -2403,7 +2587,7 @@ app.get('/api/segment/options', requireRole(...MODERATOR_ROLES), async (req, res
         `SELECT COUNT(DISTINCT donor_user_id)::int AS n FROM donations WHERE status = 'SUCCESS'`)).rows[0].n
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -2439,7 +2623,7 @@ app.get('/api/segment/count', requireRole(...MODERATOR_ROLES), async (req, res) 
       'SELECT COUNT(*)::int AS n FROM users u JOIN alumni_profiles ap ON ap.user_id = u.id')).rows[0].n;
     res.json({ matched: r.rows[0].matched, total, filters: { batchFrom, batchTo, department, industry, donor, mentor } });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -2460,7 +2644,7 @@ app.put('/api/users/:id/verify', requireRole(...MODERATOR_ROLES), async (req, re
       `user ${id} by user ${req.user.uid}`, '🛡', auditCtx(req, 'user', id));
     res.json(r.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
@@ -2479,11 +2663,11 @@ app.get('/api/verification-queue', requireRole(...MODERATOR_ROLES), async (req, 
     `);
     res.json(rows.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'api');
   }
 });
 
-const guards = { requireAuth, requireRole, ADMIN_ROLES, MODERATOR_ROLES };
+const guards = { requireAuth, requireRole, ADMIN_ROLES, MODERATOR_ROLES, serverError };
 
 // v2: events, ticketing, jobs, campaigns/donations, custom fields,
 // mentorship, connections, polls, broadcasts, audit log.

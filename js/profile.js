@@ -105,13 +105,13 @@ async function viewAlumniProfile(id) {
     <div class="onboarding-header">
       <div style="display:flex;align-items:center;gap:12px">
         <div class="alumni-avatar ${profile.verified ? 'verified-ring' : ''}" style="width:52px;height:52px;font-size:18px;background:var(--teal)">
-          <span>${profile.initials || profile.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase()}</span>
+          <span>${escapeHtml(profile.initials || profile.name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase())}</span>
           ${profile.verified ? '<div class="verified-badge-icon"><i data-lucide="check" class="ui-icon"></i></div>' : ''}
         </div>
         <div style="flex:1">
           <div class="onboarding-title" style="font-size:18px">${escapeHtml(profile.name)}</div>
-          <div class="onboarding-sub">${[profile.jobTitle, profile.company].filter(Boolean).join(" · ") || "Profile incomplete"}</div>
-          <div style="font-size:11px;color:var(--teal);margin-top:2px"><i data-lucide="graduation-cap" class="ui-icon"></i> ${val(profile.degree)}${profile.batch ? ` (Batch ${profile.batch})` : ""} · ${val(profile.department)}</div>
+          <div class="onboarding-sub">${escapeHtml([profile.jobTitle, profile.company].filter(Boolean).join(" · ") || "Profile incomplete")}</div>
+          <div style="font-size:11px;color:var(--teal);margin-top:2px"><i data-lucide="graduation-cap" class="ui-icon"></i> ${val(profile.degree)}${profile.batch ? ` (Batch ${escapeHtml(profile.batch)})` : ""} · ${val(profile.department)}</div>
         </div>
         <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
       </div>
@@ -181,7 +181,7 @@ async function viewAlumniProfile(id) {
       <!-- ACTION BUTTONS -->
       <div class="field-grid-2" style="margin-top:10px">
         <button class="btn btn-primary btn-full" onclick="closeModal(); connectAlumni(${profile.id})">+ Connect</button>
-        <button class="btn btn-outline btn-full" onclick="closeModal(); showMentorModal('${escapeHtml(profile.name).replace(/'/g, '&#39;')}', ${profile.id})"><i data-lucide="handshake" class="ui-icon"></i> Request Mentorship</button>
+        <button class="btn btn-outline btn-full" onclick="closeModal(); showMentorModal(${jsArg(profile.name)}, ${profile.id})"><i data-lucide="handshake" class="ui-icon"></i> Request Mentorship</button>
       </div>
     </div>
   `);
@@ -351,6 +351,12 @@ async function hydrateUserProfile() {
   return p;
 }
 
+/* Phase 5F: every field below is rendered into innerHTML (line ~545) and was
+   interpolated raw. It is the owner's own data, so the immediate risk is
+   self-XSS rather than a cross-user path — but bulk import writes these same
+   columns from an uploaded roster, and the three portfolio links accepted a
+   javascript: URL that ran on a single click. Escaped at every interpolation,
+   with the link targets restricted to http/https by safeUrl(). */
 function render10SectionProfile(filterSection = 'all') {
   const container = document.getElementById('profile-hub-content');
   if (!container) return;
@@ -377,14 +383,14 @@ function render10SectionProfile(filterSection = 'all') {
           <span class="privacy-badge public"><i data-lucide="globe" class="ui-icon"></i> Public</span>
         </div>
         <div class="field-grid-3 mb-16">
-          <div class="profile-field-row"><div><div class="field-label">Full Name</div><div class="field-val">${p.fullName}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Nickname</div><div class="field-val">${p.nickname}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Student ID</div><div class="field-val">${p.studentId}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Roll &amp; Reg No</div><div class="field-val">${p.rollNumber} / ${p.registrationNumber}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Batch &amp; Dept</div><div class="field-val">Batch ${p.batch} · ${p.department}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Status &amp; Gender</div><div class="field-val">${p.currentStatus} · ${p.gender} (${p.bloodGroup})</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Full Name</div><div class="field-val">${escapeHtml(p.fullName)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Nickname</div><div class="field-val">${escapeHtml(p.nickname)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Student ID</div><div class="field-val">${escapeHtml(p.studentId)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Roll &amp; Reg No</div><div class="field-val">${escapeHtml(p.rollNumber)} / ${escapeHtml(p.registrationNumber)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Batch &amp; Dept</div><div class="field-val">Batch ${escapeHtml(p.batch)} · ${escapeHtml(p.department)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Status &amp; Gender</div><div class="field-val">${escapeHtml(p.currentStatus)} · ${escapeHtml(p.gender)} (${escapeHtml(p.bloodGroup)})</div></div></div>
         </div>
-        <div class="profile-field-row"><div><div class="field-label">Biography</div><div class="field-val">${p.bio}</div></div></div>
+        <div class="profile-field-row"><div><div class="field-label">Biography</div><div class="field-val">${escapeHtml(p.bio)}</div></div></div>
       </div>
     `;
   }
@@ -398,10 +404,10 @@ function render10SectionProfile(filterSection = 'all') {
           <span class="privacy-badge ${priv.mobile}">${priv.mobile === 'private' ? '<i data-lucide="lock" class="ui-icon"></i> Private' : '<i data-lucide="globe" class="ui-icon"></i> Public'}</span>
         </div>
         <div class="field-grid-2 mb-16">
-          <div class="profile-field-row"><div><div class="field-label">Primary Email</div><div class="field-val">${p.primaryEmail}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Secondary Email</div><div class="field-val">${p.secondaryEmail}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Mobile Number</div><div class="field-val">${p.mobileNumber}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Emergency Contact</div><div class="field-val">${p.emergencyName} (${p.emergencyRelation}) — ${p.emergencyPhone}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Primary Email</div><div class="field-val">${escapeHtml(p.primaryEmail)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Secondary Email</div><div class="field-val">${escapeHtml(p.secondaryEmail)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Mobile Number</div><div class="field-val">${escapeHtml(p.mobileNumber)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Emergency Contact</div><div class="field-val">${escapeHtml(p.emergencyName)} (${escapeHtml(p.emergencyRelation)}) — ${escapeHtml(p.emergencyPhone)}</div></div></div>
         </div>
       </div>
     `;
@@ -442,10 +448,10 @@ function render10SectionProfile(filterSection = 'all') {
             p.placeCity ? escapeHtml([p.placeCity, p.placeCountry].filter(Boolean).join(', '))
                         : '<span style="color:var(--text-secondary)">Not set</span>'
           }</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Present Address</div><div class="field-val">${p.presentAddress}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Permanent Address</div><div class="field-val">${p.permanentAddress}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Hometown &amp; District</div><div class="field-val">${p.hometown}, ${p.district}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Country &amp; Zip</div><div class="field-val">${p.country} (${p.postalCode})</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Present Address</div><div class="field-val">${escapeHtml(p.presentAddress)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Permanent Address</div><div class="field-val">${escapeHtml(p.permanentAddress)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Hometown &amp; District</div><div class="field-val">${escapeHtml(p.hometown)}, ${escapeHtml(p.district)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Country &amp; Zip</div><div class="field-val">${escapeHtml(p.country)} (${escapeHtml(p.postalCode)})</div></div></div>
         </div>
       </div>
     `;
@@ -460,10 +466,10 @@ function render10SectionProfile(filterSection = 'all') {
           <span class="privacy-badge alumni"><i data-lucide="users" class="ui-icon"></i> Alumni Only</span>
         </div>
         <div class="field-grid-2 mb-16">
-          <div class="profile-field-row"><div><div class="field-label">Degree &amp; CGPA</div><div class="field-val">${p.degree} (CGPA: ${p.cgpa})</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Scholarship &amp; Awards</div><div class="field-val">${p.scholarship}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Clubs &amp; Societies</div><div class="field-val">${p.clubs}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Research Publications</div><div class="field-val">${p.publications}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Degree &amp; CGPA</div><div class="field-val">${escapeHtml(p.degree)} (CGPA: ${escapeHtml(p.cgpa)})</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Scholarship &amp; Awards</div><div class="field-val">${escapeHtml(p.scholarship)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Clubs &amp; Societies</div><div class="field-val">${escapeHtml(p.clubs)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Research Publications</div><div class="field-val">${escapeHtml(p.publications)}</div></div></div>
         </div>
       </div>
     `;
@@ -478,10 +484,10 @@ function render10SectionProfile(filterSection = 'all') {
           <span class="privacy-badge public"><i data-lucide="globe" class="ui-icon"></i> Public</span>
         </div>
         <div class="field-grid-2 mb-16">
-          <div class="profile-field-row"><div><div class="field-label">Current Company &amp; Role</div><div class="field-val">${p.currentCompany} — ${p.jobTitle}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Industry &amp; Experience</div><div class="field-val">${p.industry} (${p.yearsExperience})</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Technical Skills</div><div class="field-val">${p.skills}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Certifications</div><div class="field-val">${p.certifications}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Current Company &amp; Role</div><div class="field-val">${escapeHtml(p.currentCompany)} — ${escapeHtml(p.jobTitle)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Industry &amp; Experience</div><div class="field-val">${escapeHtml(p.industry)} (${escapeHtml(p.yearsExperience)})</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Technical Skills</div><div class="field-val">${escapeHtml(p.skills)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Certifications</div><div class="field-val">${escapeHtml(p.certifications)}</div></div></div>
         </div>
       </div>
     `;
@@ -513,9 +519,9 @@ function render10SectionProfile(filterSection = 'all') {
           <span class="privacy-badge public"><i data-lucide="globe" class="ui-icon"></i> Public</span>
         </div>
         <div class="field-grid-2 mb-16">
-          <div class="profile-field-row"><div><div class="field-label">LinkedIn</div><div class="field-val"><a href="${p.linkedin}" target="_blank" style="color:var(--teal)">${p.linkedin}</a></div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">GitHub</div><div class="field-val"><a href="${p.github}" target="_blank" style="color:var(--teal)">${p.github}</a></div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Personal Portfolio</div><div class="field-val"><a href="${p.website}" target="_blank" style="color:var(--teal)">${p.website}</a></div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">LinkedIn</div><div class="field-val">${p.linkedin && safeUrl(p.linkedin) ? `<a href="${escapeHtml(safeUrl(p.linkedin))}" target="_blank" rel="noopener noreferrer" style="color:var(--teal)">${escapeHtml(p.linkedin)}</a>` : escapeHtml(p.linkedin)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">GitHub</div><div class="field-val">${p.github && safeUrl(p.github) ? `<a href="${escapeHtml(safeUrl(p.github))}" target="_blank" rel="noopener noreferrer" style="color:var(--teal)">${escapeHtml(p.github)}</a>` : escapeHtml(p.github)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Personal Portfolio</div><div class="field-val">${p.website && safeUrl(p.website) ? `<a href="${escapeHtml(safeUrl(p.website))}" target="_blank" rel="noopener noreferrer" style="color:var(--teal)">${escapeHtml(p.website)}</a>` : escapeHtml(p.website)}</div></div></div>
         </div>
       </div>
     `;

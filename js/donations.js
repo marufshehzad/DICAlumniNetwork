@@ -54,7 +54,7 @@ function showDonateModal(campaignId, campaignName) {
     <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-secondary);margin:14px 0;cursor:pointer">
       <input type="checkbox" id="donate-anonymous" /> Keep my name off the public donor list
     </label>
-    <button class="btn btn-primary btn-full" onclick="processDonation(${campaignId}, '${escapeHtml(campaignName).replace(/'/g, '&#39;')}')">Record my pledge</button>
+    <button class="btn btn-primary btn-full" onclick="processDonation(${campaignId}, ${jsArg(campaignName)})">Record my pledge</button>
   `);
 }
 
@@ -125,7 +125,7 @@ async function renderCampaignsEnhanced() {
     const goal = Number(c.goal_amount) || 0;
     const pct = goal > 0 ? Math.min(100, Math.round((raised / goal) * 100)) : 0;
     const remaining = Math.max(0, goal - raised);
-    const safeName = escapeHtml(c.name).replace(/'/g, '&#39;');
+    const nameArg = jsArg(c.name);
     return `
     <div class="campaign-card">
       <div class="campaign-card-header">
@@ -151,8 +151,8 @@ async function renderCampaignsEnhanced() {
           <span class="gateway-pill">Pledge · paid offline</span>
         </div>
         <div style="display:flex;gap:6px">
-          ${canManage ? `<button class="btn btn-ghost btn-sm" onclick="deleteCampaignPrompt(${c.id}, '${safeName}')"><i data-lucide="trash-2" class="ui-icon"></i></button>` : ''}
-          <button class="donate-btn" onclick="showDonateModal(${c.id}, '${safeName}')">Pledge →</button>
+          ${canManage ? `<button class="btn btn-ghost btn-sm" onclick="deleteCampaignPrompt(${c.id}, ${nameArg})"><i data-lucide="trash-2" class="ui-icon"></i></button>` : ''}
+          <button class="donate-btn" onclick="showDonateModal(${c.id}, ${nameArg})">Pledge →</button>
         </div>
       </div>
     </div>`;

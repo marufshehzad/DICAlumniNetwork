@@ -163,7 +163,7 @@ async function renderMentorships() {
             <div style="font-size:11px;color:var(--text-secondary)">${escapeHtml([m.role, m.company].filter(Boolean).join(' · ') || 'DIC Alumni')}</div>
           </div>
           ${matchSummary(m)}
-          <button class="btn btn-sm btn-primary" onclick="showMentorModal('${escapeHtml(m.name).replace(/'/g, '&#39;')}', ${m.id})">Request</button>
+          <button class="btn btn-sm btn-primary" onclick="showMentorModal(${jsArg(m.name)}, ${m.id})">Request</button>
         </div>`).join('');
     }
   }

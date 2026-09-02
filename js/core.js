@@ -64,6 +64,45 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+/* A value that will be read back as a JAVASCRIPT STRING, inside an inline
+   event-handler attribute — onclick="fn(${jsArg(name)})".
+
+   escapeHtml is the wrong tool there and looks like the right one, which is why
+   this exists. An attribute value is HTML-decoded by the parser BEFORE the
+   handler body is compiled as JavaScript, so escapeHtml's &#39; turns back into
+   a plain apostrophe and closes the string literal it was supposed to be inside:
+
+     title    x');alert(1)//
+     escaped  x&#39;);alert(1)//
+     onclick  applyJob(5, 'x');alert(1)//')      ← two statements, both run
+
+   That was a real stored-XSS path from any alumnus into a super_admin session,
+   found in Phase 5F. Eight of those call sites also carried a trailing
+   .replace(/'/g,'&#39;') which did nothing at all — escapeHtml had already
+   replaced every apostrophe — so the code read as defended while it was not.
+
+   JSON.stringify produces a complete, correctly escaped JS literal INCLUDING
+   its own double quotes; escapeHtml then makes those quotes unable to close the
+   HTML attribute. After the parser decodes the attribute, JavaScript sees a
+   well-formed double-quoted string and nothing else. Note there are no quotes
+   around ${jsArg(x)} in the template — the function supplies them. */
+function jsArg(value) {
+  return escapeHtml(JSON.stringify(value === null || value === undefined ? '' : String(value)));
+}
+
+/* A user-supplied value used as a LINK TARGET. escapeHtml keeps it from breaking
+   out of the href attribute but does nothing about the scheme, and
+   href="javascript:…" needs no quote at all to run. Only http and https are
+   allowed through; anything else renders as inert text with no link. */
+function safeUrl(value) {
+  const raw = String(value === null || value === undefined ? '' : value).trim();
+  if (!raw) return '';
+  try {
+    const u = new URL(raw, window.location.origin);
+    return (u.protocol === 'http:' || u.protocol === 'https:') ? u.href : '';
+  } catch { return ''; }
+}
+
 // Legacy data (nav items, chapters, jobs, notifications…) still stores a single
 // emoji character per icon field. This maps that character to a Lucide icon
 // name so those fields can render as real icons without ever reflecting

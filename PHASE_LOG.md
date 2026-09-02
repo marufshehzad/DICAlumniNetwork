@@ -1376,5 +1376,248 @@ not against it.
 
 ### Next phase
 
-None is defined. The next action is DIC's: the eight inputs above, and the
-security review.
+**Phase 5F — independent security review preparation — followed this entry.**
+It found and closed two P0 stored-XSS vulnerabilities that this phase, and the
+three audits before it, had passed over.
+
+---
+
+## Phase 5F — Independent security review preparation and final hardening
+
+**Status:** COMPLETE
+**Date:** 2026-09-02
+**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Parent:** `146c3aa`
+
+Phase 5E ended with one genuine RED: every security property this project claims
+had been verified by the party that implemented it. This phase prepared the
+system for somebody else to look — and, in doing so, found that the party who
+implemented it had missed two P0s.
+
+### The headline
+
+**Two stored cross-site-scripting vulnerabilities, both confirmed executing in a
+live `super_admin` session, both invisible to four previous audits.**
+
+**P0-1 — `escapeHtml` is the wrong escaping inside an inline event handler.**
+24 call sites across 11 files interpolated user text into a quoted JavaScript
+string inside an `onclick` attribute. `escapeHtml` turns `'` into `&#39;`, and
+an HTML attribute is decoded by the parser BEFORE the handler body is compiled
+as JavaScript — so the entity became a live apostrophe and closed the string it
+was supposed to be inside.
+
+Eight of those sites also carried `.replace(/'/g, '&#39;')`, which did nothing
+whatsoever: `escapeHtml` had already replaced every apostrophe. The code read as
+though it had been thought about twice.
+
+Proved end to end. An ordinary alumnus posted a job titled
+`x');window.__P5F_ONCLICK=true;//` through the public API. The staff portal
+rendered:
+
+```
+onclick="showJobApplicants(5, 'x');window.__P5F_ONCLICK=true;//')"
+```
+
+Two statements. Clicking Applicants ran the second one in the reviewing
+administrator's session — the session that provisions administrators, reads the
+audit log and reveals identity-vault records.
+
+**P0-2 — the staff moderation queue rendered alumni-authored text raw.** Eight
+fields (chapter name, type, description; story emoji, title, category, author
+name, excerpt) went into `innerHTML` with no escaping at all, in the one function
+in `js/admin.js` that never called `escapeHtml` while ~70 sites around it did.
+
+**Submitting to the queue was the delivery mechanism.** No click, no
+interaction: a moderator opening the queue to review the submission executed it.
+Verified live in a `super_admin` session — four injected `<img onerror>`
+elements, handler fired. After the fix, the same payloads: zero injected
+elements, zero live handlers, the text rendered as text.
+
+Phase 5D escaped the bulk-import preview because an uploaded file is obviously
+untrusted. This table is fed by the API instead, and the trust level is
+identical. That is the lesson worth carrying: the sink was missed because of
+where the data *arrived*, not what it *was*.
+
+### Method
+
+Ten security dimensions audited in parallel against the real code, then every
+finding that claimed real risk handed to an independent reviewer instructed to
+refute it. **30 candidate findings, 18 refuted.** The refutations mattered as
+much as the confirmations: the unkeyed audit chain, `dept_admin`'s
+institution-wide scope, the register-returns-409 oracle and the missing SRI were
+all correctly identified as documented, accepted positions rather than new
+holes, and are recorded as such rather than padding a findings count.
+
+### Fixed — twelve findings and one bug
+
+| | Finding | Fix |
+|---|---|---|
+| P0-1 | `escapeHtml` in JS-string-in-attribute position, 24 sites | new `jsArg()` = `escapeHtml(JSON.stringify(String(v)))`, which supplies its own quotes |
+| P0-2 | Moderation queue renders alumni text raw, 8 sinks | `escapeHtml` on all eight; emoji through `emojiIcon()` |
+| P1-3 | Profile modal renders another member's job title and company raw | `escapeHtml` |
+| P1-4 | Bulk import's shared batch password worked as a full credential | `must_change_password` made load-bearing server-side |
+| P2-5 | Account lock checked after the password comparison | moved before it; counter restarts when a lock lapses |
+| P3-6 | Profile hub: ~34 fields raw, three `href` accepting `javascript:` | `escapeHtml` throughout; new `safeUrl()` restricts the scheme |
+| P3-7 | 41 sites returned raw PostgreSQL error text (CWE-209) | one `serverError()`; `app.param` numeric guards; `?batch` validated |
+| P3-8 | Mentor suggestions leaked a private city | gated on `privacy.DIRECTORY_VISIBLE_SQL`, match flag included |
+| P3-9 | Task assignees' mobile and WhatsApp numbers sent to non-staff | `TASK_SELECT` → `taskSelect(staff)`, so no call site can forget |
+| P3-10 | `trust proxy` hardcoded to 1 | `TRUST_PROXY`, defaulting to off |
+| P3-11 | Authentication events were not audited at all | `Signed In` / `Sign-In Failed` in the hash chain, by user id |
+| P3-12 | `X-Powered-By: Express` | `app.disable('x-powered-by')` |
+| BUG-13 | `renderNewsFeed()` called unconditionally from the staff portal | guarded |
+
+Two more were found while writing the review documents, both verified by
+execution rather than by reading, and both fixed:
+
+**Public sign-up returned 500 without an HSC year.** `alumni_profiles.batch` and
+`.passing_year` are `NOT NULL`; the handler passed `parseInt(undefined) || null`
+into them, and the form did not mark the field required. Absent, blank and
+non-numeric all produced a constraint violation surfacing as a server error. Now
+a 400 with a usable message — and the year is validated, never defaulted,
+because a guessed batch is the same class of fabrication as the hardcoded
+`'Dhaka'` that Phase 5B removed.
+
+**One bad row failed an entire bulk import.** The same `NOT NULL` violation
+aborted the transaction, so one line without a year lost a 200-row roster with a
+500 and no indication of which line. Now an ordinary per-row rejection: verified
+with a three-row roster — 2 created, 1 rejected by row number with the reason,
+HTTP 200.
+
+### The measurement that changed a fix
+
+`app.set('trust proxy', 1)` was hardcoded. A numeric trust-proxy value is a hop
+*count*, not an address allow-list, so with nothing in front the peer is trusted
+and `X-Forwarded-For` is the caller's to choose. Measured before the fix:
+
+```
+same forged IP, 8 attempts     401 401 401 401 401 429 429 429   (throttle works)
+rotating forged IP, 12 attempts 401 401 401 401 401 401 401 401 401 401 401 401
+after 20 more, real client      401                              (never counted)
+```
+
+**32 wrong passwords against one account, zero refusals** — both throttles
+evaded, and the forged address is what the audit trail recorded. After the fix,
+every rotated attempt returns 429.
+
+It is documented in both directions, because it is wrong both ways: set with no
+proxy, the header is forgeable; left unset behind one, every request looks like
+the proxy and a handful of failed sign-ins locks out everybody.
+
+### What the enrolment gate actually changed
+
+Making `must_change_password` load-bearing was the fix with the widest blast
+radius, and it behaved exactly as designed the moment it shipped: **43 test
+failures**, because twelve seeded accounts had been provisioned with generated
+passwords and had never completed enrolment. They were correctly locked out.
+
+The temptation was to narrow the gate. Instead each account completed enrolment
+through the real endpoint — signing in and setting a password, as a human would
+— which is what the credentials file had claimed was true all along. No test
+expectation was weakened; the data was made true. Bulk-imported accounts keep
+the flag, which is the population the fix protects.
+
+### A test that had gone quiet
+
+`tests/crossref.js` reported both portals self-contained while `js/admin.js`
+called `renderNewsFeed()`, a function `admin.html` does not load — so approving
+a story in the staff portal threw `ReferenceError`. It had been invisible
+because the checker stripped quoted strings across the *whole file* at once: one
+unbalanced apostrophe shifted every pair after it, and a single "string" spanned
+hundreds of lines, blanking the call.
+
+Editing an unrelated line elsewhere in `admin.js` shifted the pairing and
+revealed it. The stripper now works one line at a time. **A test that goes
+quiet when the source moves is worse than no test**, and it is worth asking
+where else that shape exists.
+
+### Deliverables
+
+- **`SECURITY_REVIEW_PACKAGE.md`** — architecture, trust boundaries, sensitive
+  data, controls, secrets. Says plainly what each control does *not* cover.
+- **`SECURITY_THREAT_MODEL.md`** — fourteen actors, each with assets, attack
+  surface, abuse, mitigation, residual risk and recommended control.
+- **`SECURITY_AUTHORIZATION_MATRIX.md`** — all 138 routes, generated from source
+  and then **verified by calling every one as all five roles and anonymously**:
+  774 authorisation checks, **0 unexplained mismatches**, with the one
+  environment-tightened exception named rather than tolerated.
+- **`INDEPENDENT_SECURITY_REVIEW_CHECKLIST.md`** — scope, environment, test
+  accounts (placeholders only, never real credentials), 40 attack scenarios with
+  expected results, evidence requirements, severity definitions drawn from what
+  this phase actually found, and retest procedure.
+- **`FINAL_SECURITY_REVIEW_FOLLOWUPS.md`** — what was deliberately not fixed,
+  with rationale, including four entries struck through because they were closed
+  after the document was drafted.
+- **`tests/security_smoke.js`** — 109 checks across 14 sections, self-contained:
+  it registers its own accounts, promotes throwaway ones, deletes everything, and
+  hands the login throttle back so it is safe in any position in the batch.
+  Section A parses the route table **from source**, so a new unguarded route
+  fails it without anyone remembering to add a case.
+
+No real password and no cryptographic secret appears in any of the 17 markdown
+files in this repository — checked mechanically against `.env` and the
+credentials file, not by eye.
+
+### Verification
+
+```
+21 suites                        1,520 passed, 0 failed
+tests/security_smoke.js            109 passed, 0 failed
+authorization matrix               774 checks, 0 mismatches
+npm run verify-audit-chain       PASS, 3,112 entries, exit 0
+browser                150 page-renders (10 alumni + 15 staff pages
+                       × 360/390/430/768/1024/1280), zero console
+                       errors, zero horizontal overflow
+```
+
+No test expectation was weakened to pass. Two suites (`phase3`, `phase4`) had
+already been widened in Phase 5E for a contract change; nothing was relaxed here.
+
+Sign-out was verified as genuinely ending the session rather than clearing local
+storage: the old token returns 401 from the server afterwards.
+
+### Data integrity
+
+Users **18**, profiles **14**, reference places **99**, and the privacy and
+location fingerprints **byte-identical** to the pre-phase snapshot. The only
+deltas are append-only audit growth — which now includes the sign-in events this
+phase added — and `QA2 <hex>` event fixtures the qa2 suite has always left
+behind. No business record was created, altered or destroyed.
+
+Every XSS probe payload was seeded through the real API and removed afterwards.
+
+### Intentional non-changes
+
+- No feature added, no UI redesigned, no payment gateway, no map provider.
+- No schema change, no migration, no column dropped.
+- No historical audit entry rewritten.
+- The 18 refuted findings were not written up as defects to inflate the count.
+- The deferred items in `FINAL_SECURITY_REVIEW_FOLLOWUPS.md` were left alone —
+  including the async-scrypt conversion, vendoring the three CDN scripts, and the
+  delegated-listener refactor a `script-src` policy depends on.
+
+### Readiness — three different questions
+
+**ENGINEERING VERIFIED — yes.** 1,520 automated checks, 774 authorisation
+probes, 150 browser renders, a verified audit chain, and two P0s found and
+closed by this phase's own adversarial pass.
+
+**INDEPENDENTLY REVIEWED — no. Still no.** That was the point of the phase and
+it remains open. What changed is that a reviewer can now start on day one
+instead of spending a week orienting: they get an architecture document, a
+threat model, a verified authorisation matrix, 40 scenarios with expected
+results, and an honest list of what the team already believes is wrong.
+
+**PRODUCTION OPERATIONALLY READY — no**, and not for engineering reasons. The
+eight external inputs from Phase 5E are unchanged: a domain, a server, TLS,
+three generated secrets and their escrow, an SMTP account or a documented
+decision to do without, a cron entry, an off-site backup destination, and a
+named person who owns the super-admin account.
+
+**The strongest argument for the external review is this phase's own result.**
+Four prior audits had passed over both P0s. One found them in a day. Whatever
+this phase missed, somebody else will have to find.
+
+### Next phase
+
+None defined. The next actions are DIC's: commission the review, and supply the
+eight inputs.

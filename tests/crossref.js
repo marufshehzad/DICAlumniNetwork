@@ -35,11 +35,22 @@ const AMBIENT = new Set(['API', 'apiFailed', 'lucide', 'Chart', 'QRCode', 'windo
 const ALL_FILES = require('fs').readdirSync(D + 'js').filter(f => f.endsWith('.js')).map(f => f.slice(0, -3));
 const ALL_DECLS = declsOf(ALL_FILES);
 
+/* Quote removal is per LINE, not across the whole file.
+
+   It used to run the single-quote regex over the entire source at once, which
+   pairs apostrophes globally: one unbalanced apostrophe anywhere shifts every
+   pair after it, and a "string" can then span hundreds of lines and blank out
+   real code. That is not hypothetical. Until Phase 5F this suite reported both
+   portals self-contained while js/admin.js called renderNewsFeed() — a function
+   admin.html does not load — because an odd apostrophe count earlier in the
+   file had swallowed the call. Editing an unrelated line elsewhere in admin.js
+   is what revealed it. A test that goes quiet when the source shifts is worse
+   than no test, so the pairing is confined to one line at a time. */
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ' ')
-  .split('\n').map(l => l.replace(/(^|[^:"'`\\])\/\/.*$/, '$1')).join('\n')
-  .replace(/`(?:\\.|[^`\\])*`/g, m => m)   // keep templates: they contain onclick= handlers
-  .replace(/'(?:\\.|[^'\\])*'/g, ' ')
-  .replace(/"(?:\\.|[^"\\])*"/g, ' ');
+  .split('\n')
+  .map(l => l.replace(/(^|[^:"'`\\])\/\/.*$/, '$1'))
+  .map(l => l.replace(/'(?:\\.|[^'\\])*'/g, ' ').replace(/"(?:\\.|[^"\\])*"/g, ' '))
+  .join('\n');
 
 let bad = 0;
 for (const [portal, html] of [['alumni', 'index.html'], ['staff', 'admin.html']]) {

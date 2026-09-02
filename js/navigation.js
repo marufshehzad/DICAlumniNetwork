@@ -68,7 +68,7 @@ function renderSidebarNav(role) {
 
   container.innerHTML = allowed.map(item => `
     ${item.isDivider ? '<div class="nav-divider"></div>' : ''}
-    <a class="nav-item ${item.id === state.currentPage ? 'active' : ''}" onclick="showPage('${item.id}')" id="nav-${item.id}">
+    <a class="nav-item ${item.id === state.currentPage ? 'active' : ''}" onclick="showPage(${jsArg(item.id)})" id="nav-${item.id}">
       <span class="nav-icon">${emojiIcon(item.icon, 'circle')}</span>
       <span class="nav-label">${item.label}</span>
       ${item.badge ? `<span class="nav-badge ${item.badgeNew ? 'new' : ''}" ${item.badgeTeal ? 'style="background:var(--teal);color:var(--bg-deep)"' : ''}>${item.badge}</span>` : ''}

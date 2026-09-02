@@ -971,7 +971,7 @@ async function renderCustomFieldManager() {
             <div style="font-weight:700;font-size:13px">${escapeHtml(f.label)}${f.is_required ? ' <span style="color:var(--red)">*</span>' : ''}</div>
             <div style="font-size:12px;color:var(--text-secondary)">${escapeHtml(f.section)} · ${escapeHtml(f.field_type)} · <span style="font-family:monospace;font-size:11px">${escapeHtml(f.id)}</span></div>
           </div>
-          <button class="btn btn-sm btn-ghost" onclick="deleteCustomField('${escapeHtml(f.id)}', '${escapeHtml(f.label).replace(/'/g, '&#39;')}')"><i data-lucide="trash-2" class="ui-icon"></i></button>
+          <button class="btn btn-sm btn-ghost" onclick="deleteCustomField(${jsArg(f.id)}, ${jsArg(f.label)})"><i data-lucide="trash-2" class="ui-icon"></i></button>
         </div>`).join('')
       : renderEmptyState('<i data-lucide="puzzle" class="ui-icon"></i>', 'No custom fields yet', 'Add schema fields without a code change.')}
     </div>`;
@@ -1127,6 +1127,12 @@ async function updateSegmentCount() {
 
 
 // ─── 9. MODERATION QUEUE & APPROVAL WORKFLOW ─────────────────
+/* Every value below is alumni-authored and rendered into an ADMIN session.
+   Phase 5F found this whole function rendering it raw: a story or chapter
+   submitted for review executed script in the reviewing moderator's session,
+   and submitting to the queue WAS the delivery mechanism. Phase 5D escaped the
+   bulk-import preview and this table was missed because it is fed by the API
+   rather than by an uploaded file — the trust level is identical. */
 async function renderModerationPanel() {
   const el = document.getElementById('moderation-panel');
   if (!el) return;
@@ -1160,9 +1166,9 @@ async function renderModerationPanel() {
               ${pendingChapters.map(c => `
                 <tr>
                   <td style="font-size:20px">${emojiIcon(c.icon, 'hexagon')}</td>
-                  <td><strong>${c.name}</strong></td>
-                  <td><span class="card-badge teal">${c.type}</span></td>
-                  <td style="font-size:12px;color:var(--text-secondary)">${c.description || 'No description provided'}</td>
+                  <td><strong>${escapeHtml(c.name)}</strong></td>
+                  <td><span class="card-badge teal">${escapeHtml(c.type)}</span></td>
+                  <td style="font-size:12px;color:var(--text-secondary)">${escapeHtml(c.description || 'No description provided')}</td>
                   <td>
                     <div style="display:flex;gap:6px">
                       <button class="btn btn-sm btn-primary" onclick="handleModerateChapter(${c.id}, 'approve')">Approve <i data-lucide="check" class="ui-icon"></i></button>
@@ -1193,11 +1199,11 @@ async function renderModerationPanel() {
             <tbody>
               ${pendingStories.map(s => `
                 <tr>
-                  <td style="font-size:20px">${s.emoji || '<i data-lucide="sparkle" class="ui-icon"></i>'}</td>
-                  <td><strong>${s.title}</strong></td>
-                  <td><span class="card-badge indigo">${s.category}</span></td>
-                  <td>${s.author_name}</td>
-                  <td style="font-size:12px;color:var(--text-secondary)">${s.excerpt}</td>
+                  <td style="font-size:20px">${emojiIcon(s.emoji, 'sparkle')}</td>
+                  <td><strong>${escapeHtml(s.title)}</strong></td>
+                  <td><span class="card-badge indigo">${escapeHtml(s.category)}</span></td>
+                  <td>${escapeHtml(s.author_name)}</td>
+                  <td style="font-size:12px;color:var(--text-secondary)">${escapeHtml(s.excerpt)}</td>
                   <td>
                     <div style="display:flex;gap:6px">
                       <button class="btn btn-sm btn-primary" onclick="handleModerateStory(${s.id}, 'approve')">Approve <i data-lucide="check" class="ui-icon"></i></button>
@@ -1220,7 +1226,12 @@ async function handleModerateStory(id, action) {
   }
   showToast(`✅ Story ${action === 'approve' ? 'Approved & Published to News Feed' : 'Rejected'}`);
   renderModerationPanel();
-  renderNewsFeed();
+  /* The news feed lives on the alumni site; admin.html does not load news.js,
+     so this threw ReferenceError in the staff portal every time a moderator
+     approved or rejected a story. Phase 5F found it only because the
+     cross-portal test that exists to catch exactly this had been silently
+     skipping the call — see tests/crossref.js. */
+  if (typeof renderNewsFeed === 'function') renderNewsFeed();
 }
 
 // ─── ADMIN SWITCHER UPDATE ───────────────────────────────────

@@ -32,7 +32,7 @@ async function renderNotifications() {
   el.innerHTML = items.map(n => `
     <div class="notif-item${n.is_unread ? ' unread' : ''}${n.link_entity ? ' linked' : ''}"
          ${n.link_entity ? 'role="button" tabindex="0"' : ''}
-         onclick="openNotification(${n.id}, '${n.link_entity || ''}', ${n.link_id || 'null'})"
+         onclick="openNotification(${n.id}, ${jsArg(n.link_entity)}, ${Number(n.link_id) || 'null'})"
          ${n.link_entity ? `onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}"` : ''}>
       <div class="notif-item-icon">${emojiIcon(n.icon, 'bell')}</div>
       <div class="notif-item-body">

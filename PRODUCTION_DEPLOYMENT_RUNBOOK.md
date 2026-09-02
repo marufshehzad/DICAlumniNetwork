@@ -315,10 +315,21 @@ send `Strict-Transport-Security` — that belongs to whatever terminates TLS.
 It does set `X-Content-Type-Options: nosniff`, `Referrer-Policy`,
 `X-Frame-Options` and a `frame-ancestors` CSP itself.
 
-`app.set('trust proxy', 1)` is already configured, so exactly **one** proxy hop
-is expected. The rate limiter and the audit trail both record `req.ip`; with
-the wrong hop count every request appears to come from the proxy and per-IP
-rate limiting stops working.
+**Set `TRUST_PROXY` in `.env` to the number of proxy hops you actually have —
+`1` for the configuration below.** It defaults to unset, meaning no proxy, and
+it is wrong in both directions:
+
+- Left unset behind a proxy, every request appears to come from the proxy, so
+  the per-IP login throttle treats the whole internet as one client and a
+  handful of failed sign-ins locks everybody out.
+- Set with no proxy in front, the value is a hop *count* rather than an address
+  allow-list, so the peer is trusted unconditionally and `X-Forwarded-For`
+  becomes the caller's to choose. Measured: 32 wrong passwords against one
+  account with a rotating forged header produced zero refusals, and the forged
+  address is what the audit trail recorded.
+
+The rate limiter and the audit trail both read `req.ip`, so this one variable
+decides whether either of them means anything.
 
 ```nginx
 server {

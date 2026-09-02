@@ -72,12 +72,12 @@ const STANDARD_CHECKLIST = [
 ];
 
 module.exports = function mountEvents(app, guards) {
-  const { requireAuth, requireRole, ADMIN_ROLES, MODERATOR_ROLES, writeAudit } = guards;
+  const { requireAuth, requireRole, ADMIN_ROLES, MODERATOR_ROLES, writeAudit , serverError} = guards;
 
-  const ok = (res, fn) => fn().catch(err => {
-    console.error('[events]', err.message);
-    if (!res.headersSent) res.status(500).json({ error: err.message });
-  });
+  /* Phase 5F: this returned err.message to the caller. GET /api/events/:id with
+     a non-numeric id was enough to read PostgreSQL's own type error back. The
+     message stays in the log; the caller gets a fixed string and the request id. */
+  const ok = (res, fn) => fn().catch(err => serverError(res, err, 'events'));
 
   const isStaff = (u) => !!u && MODERATOR_ROLES.includes(u.role);
   const isAdmin = (u) => !!u && ADMIN_ROLES.includes(u.role);
@@ -812,7 +812,15 @@ module.exports = function mountEvents(app, guards) {
      TASKS
      ══════════════════════════════════════════════════════════ */
 
-  const TASK_SELECT = `
+  /* A task's assignee list carries each assignee's mobile and WhatsApp number.
+     Until Phase 5F it carried them to every caller: GET /api/events/:id/tasks
+     and GET /api/events/tasks/:taskId are requireAuth, so any alumnus assigned
+     to a task read their co-assignees' contact numbers regardless of what
+     those people set. privacy.js gives `mobile` a staff bypass, not an
+     everyone bypass. Making the fragment a function of the caller's tier means
+     the redaction cannot be forgotten at a future call site — every consumer
+     has to say which tier it is building for. */
+  const taskSelect = (staff) => `
     t.*,
     cu.full_name AS created_by_name,
     uu.full_name AS updated_by_name,
@@ -829,8 +837,10 @@ module.exports = function mountEvents(app, guards) {
             'user_id', u.id, 'event_person_id', NULL,
             'name', u.full_name, 'initials', u.initials,
             'role_label', u.role_label, 'dept', ap.department, 'section', ap.section_code,
-            'student_id', ap.student_id, 'phone', ap.mobile_number,
-            'whatsapp', ap.whatsapp_number, 'photo_url', ap.photo_url,
+            'student_id', ap.student_id,
+            'phone', ${staff ? 'ap.mobile_number' : 'NULL'},
+            'whatsapp', ${staff ? 'ap.whatsapp_number' : 'NULL'},
+            'photo_url', ap.photo_url,
             'organization', NULL, 'notifiable', TRUE
           ) AS x
             FROM event_task_assignees a
@@ -875,7 +885,7 @@ module.exports = function mountEvents(app, guards) {
     if (!isStaff(req.user)) {
       // A non-staff user sees only the tasks they are assigned to.
       const r = await db.query(`
-        SELECT ${TASK_SELECT} ${TASK_JOINS}
+        SELECT ${taskSelect(isStaff(req.user))} ${TASK_JOINS}
          WHERE t.event_id = $1
            AND EXISTS (SELECT 1 FROM event_task_assignees a
                         WHERE a.task_id = t.id AND a.user_id = $2)
@@ -883,7 +893,7 @@ module.exports = function mountEvents(app, guards) {
       return res.json(r.rows);
     }
     const r = await db.query(
-      `SELECT ${TASK_SELECT} ${TASK_JOINS} WHERE t.event_id = $1
+      `SELECT ${taskSelect(isStaff(req.user))} ${TASK_JOINS} WHERE t.event_id = $1
         ORDER BY t.due_on NULLS LAST, t.id`, [eventId]);
     res.json(r.rows);
   }));
@@ -895,7 +905,7 @@ module.exports = function mountEvents(app, guards) {
     if (!access.canUpdate) return res.status(403).json({ error: 'You do not have access to this task' });
 
     const [task, notes, checklist] = await Promise.all([
-      db.query(`SELECT ${TASK_SELECT} ${TASK_JOINS} WHERE t.id = $1`, [taskId]),
+      db.query(`SELECT ${taskSelect(isStaff(req.user))} ${TASK_JOINS} WHERE t.id = $1`, [taskId]),
       db.query(`SELECT n.*, u.full_name AS author, u.initials
                   FROM event_task_notes n LEFT JOIN users u ON u.id = n.user_id
                  WHERE n.task_id = $1 ORDER BY n.created_at`, [taskId]),
@@ -938,7 +948,7 @@ module.exports = function mountEvents(app, guards) {
       });
 
       await client.query('COMMIT');
-      const full = await db.query(`SELECT ${TASK_SELECT} ${TASK_JOINS} WHERE t.id=$1`, [task.id]);
+      const full = await db.query(`SELECT ${taskSelect(isStaff(req.user))} ${TASK_JOINS} WHERE t.id=$1`, [task.id]);
       res.json(full.rows[0]);
     } catch (e) {
       await client.query('ROLLBACK');
@@ -1069,7 +1079,7 @@ module.exports = function mountEvents(app, guards) {
       }
     }
 
-    const full = await db.query(`SELECT ${TASK_SELECT} ${TASK_JOINS} WHERE t.id=$1`, [taskId]);
+    const full = await db.query(`SELECT ${taskSelect(isStaff(req.user))} ${TASK_JOINS} WHERE t.id=$1`, [taskId]);
     res.json(full.rows[0]);
   }));
 
@@ -1092,7 +1102,7 @@ module.exports = function mountEvents(app, guards) {
       entity: 'task', entityId: taskId
     });
 
-    const full = await db.query(`SELECT ${TASK_SELECT} ${TASK_JOINS} WHERE t.id=$1`, [taskId]);
+    const full = await db.query(`SELECT ${taskSelect(isStaff(req.user))} ${TASK_JOINS} WHERE t.id=$1`, [taskId]);
     res.json(full.rows[0]);
   }));
 
@@ -1151,7 +1161,7 @@ module.exports = function mountEvents(app, guards) {
       entity: 'task', entityId: taskId
     });
 
-    const full = await db.query(`SELECT ${TASK_SELECT} ${TASK_JOINS} WHERE t.id=$1`, [taskId]);
+    const full = await db.query(`SELECT ${taskSelect(isStaff(req.user))} ${TASK_JOINS} WHERE t.id=$1`, [taskId]);
     res.json({
       added: addedUsers.length + addedExternal,
       notified: addedUsers.length,
@@ -1163,14 +1173,14 @@ module.exports = function mountEvents(app, guards) {
   app.delete('/api/events/tasks/:taskId/assignees/:userId', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
     await db.query('DELETE FROM event_task_assignees WHERE task_id=$1 AND user_id=$2',
       [num(req.params.taskId), num(req.params.userId)]);
-    const full = await db.query(`SELECT ${TASK_SELECT} ${TASK_JOINS} WHERE t.id=$1`, [num(req.params.taskId)]);
+    const full = await db.query(`SELECT ${taskSelect(isStaff(req.user))} ${TASK_JOINS} WHERE t.id=$1`, [num(req.params.taskId)]);
     res.json(full.rows[0]);
   }));
 
   app.delete('/api/events/tasks/:taskId/assignees/person/:personId', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
     await db.query('DELETE FROM event_task_assignees WHERE task_id=$1 AND event_person_id=$2',
       [num(req.params.taskId), num(req.params.personId)]);
-    const full = await db.query(`SELECT ${TASK_SELECT} ${TASK_JOINS} WHERE t.id=$1`, [num(req.params.taskId)]);
+    const full = await db.query(`SELECT ${taskSelect(isStaff(req.user))} ${TASK_JOINS} WHERE t.id=$1`, [num(req.params.taskId)]);
     res.json(full.rows[0]);
   }));
 

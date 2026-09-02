@@ -129,12 +129,12 @@ async function renderLocationFilters() {
   el.innerHTML =
     countries.map(c => `
       <button class="chip ${country === String(c.code).toLowerCase() ? 'active' : ''}"
-              onclick="filterByCountry('${escapeHtml(c.code)}')">
+              onclick="filterByCountry(${jsArg(c.code)})">
         <i data-lucide="flag" class="ui-icon"></i> ${escapeHtml(c.country)} (${c.n})
       </button>`).join('') +
     cities.slice(0, 8).map(c => `
       <button class="chip ${city === String(c.city).toLowerCase() ? 'active' : ''}"
-              onclick="filterByCity('${escapeHtml(c.city)}')">
+              onclick="filterByCity(${jsArg(c.city)})">
         <i data-lucide="map-pin" class="ui-icon"></i> ${escapeHtml(c.city)} (${c.n})
       </button>`).join('');
 
@@ -242,7 +242,7 @@ function renderAlumniCard(a) {
   const connStatus = CONNECTION_STATE[a.id];
   const isConn = !!connStatus;
   const color = a.color || '#00A859';
-  const nameAttr = escapeHtml(a.name).replace(/'/g, '&#39;');
+  const nameArg = jsArg(a.name);
   const subtitle = [a.role, a.company].filter(Boolean).join(' · ') || 'Profile incomplete';
 
   return `
@@ -273,7 +273,7 @@ function renderAlumniCard(a) {
         <button class="connect-btn ${isConn ? 'connected' : ''}"
                 onclick="event.stopPropagation(); connectAlumni(${a.id}, this)"
                 ${isConn ? 'disabled' : ''}>${connectionLabel(connStatus)}</button>
-        ${a.mentor ? `<button class="mentor-req-btn" onclick="event.stopPropagation(); showMentorModal('${nameAttr}', ${a.id})"><i data-lucide="handshake" class="ui-icon"></i> Request Mentorship</button>` : ''}
+        ${a.mentor ? `<button class="mentor-req-btn" onclick="event.stopPropagation(); showMentorModal(${nameArg}, ${a.id})"><i data-lucide="handshake" class="ui-icon"></i> Request Mentorship</button>` : ''}
       </div>
     </div>`;
 }

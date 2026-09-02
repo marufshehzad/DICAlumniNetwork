@@ -28,7 +28,7 @@ const SUITES = [
   'phase0_sec', 'phase0_role', 'acceptance', 'qa1', 'qa2', 'qa3', 'portal',
   'phase2b', 'phase2c', 'phase3', 'phase4', 'phase5a',
   'phase5a_security', 'phase5b_location', 'phase5d_hardening',
-  'phase5e_production', 'tamper',
+  'phase5e_production', 'security_smoke', 'tamper',
   'sourcetruth', 'sourcetruth15', 'crossref'
 ];
 

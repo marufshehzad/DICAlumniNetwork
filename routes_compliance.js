@@ -13,10 +13,10 @@ const auditChain = require('./audit_chain');
 
 module.exports = function mountCompliance(app, {
   requireAuth, requireRole, ADMIN_ROLES,
-  encryptField, decryptField, encryptionReady, writeAudit
+  encryptField, decryptField, encryptionReady, writeAudit, serverError
 }) {
 
-  const ok = (res, fn) => fn().catch(err => res.status(500).json({ error: err.message }));
+  const ok = (res, fn) => fn().catch(err => serverError(res, err, 'compliance'));
 
   const clientIp = (req) =>
     (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
