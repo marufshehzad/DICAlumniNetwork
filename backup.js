@@ -25,12 +25,17 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 
+/* .env FIRST. These constants read process.env, and until Phase 6 the require
+   below sat underneath them — so BACKUP_DIR, BACKUP_RETENTION_DAYS and
+   DOCKER_PG_CONTAINER were read before .env had been loaded and every value in
+   that file was ignored. An operator following .env.example set BACKUP_DIR,
+   saw no error, and kept writing dumps into the application directory.
+   restore.js had the ordering right; this file did not. */
+require('./db');   // loads .env exactly as the app does — must come first
+
 const DIR = process.env.BACKUP_DIR || path.join(__dirname, 'backups');
 const RETENTION_DAYS = parseInt(process.env.BACKUP_RETENTION_DAYS || '14', 10);
 const CONTAINER = process.env.DOCKER_PG_CONTAINER || '';
-
-// Loaded the same way the app loads it, so one .env drives both.
-require('./db');
 
 const PG = {
   host: process.env.PGHOST || 'localhost',
@@ -104,7 +109,7 @@ function backup() {
     writeReceipt({ status: 'failed', startedAt: started.toISOString(),
                    finishedAt: new Date().toISOString(), error: why.slice(0, 300) });
     console.error('[backup] FAILED: ' + why);
-    console.error('[backup] a failed backup is an incident — see OPERATIONS_RUNBOOK.md §5');
+    console.error('[backup] a failed backup is an incident — see OPERATIONS_RUNBOOK.md section D');
     process.exitCode = 1;
     return null;
   }

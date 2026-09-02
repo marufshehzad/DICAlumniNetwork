@@ -364,7 +364,6 @@ async function renderEventsPage() {
 
   EV.publicView = false;
   renderEventListChrome();
-  evRunMaintenanceSweep();
   await loadEventList();
 }
 
@@ -396,28 +395,22 @@ async function evEnsureIdentity() {
   return false;
 }
 
-/* There is no scheduler in this deployment (single Express app, also deployed
-   serverless), so the calendar-driven event status roll-forward and the task
-   deadline/overdue reminders run once per session when a staff member opens
-   the Events page. Nothing else performs this maintenance.
+/* The maintenance sweep used to run here, once per session, when a staff
+   member opened the Events page. Its comment said "there is no scheduler in
+   this deployment", which was true when it was written and has not been true
+   since jobs.js and the nightly cron entries were added.
 
-   Fire-and-forget: a failure here must never block the page. The definition
-   was lost in an earlier edit while its call site survived, which threw a
-   ReferenceError that aborted renderEventsPage() before the list loaded. */
-let _evSweptThisSession = false;
+   Phase 6 removed it. Scheduled work that only happens when somebody looks is
+   not scheduled: event statuses rolled forward on the days staff opened the
+   page and not on the days they did not, task reminders went out at whatever
+   hour the first administrator signed in, and none of it appeared in ops_runs —
+   so the run log could not distinguish a working timer from an attentive
+   colleague.
 
-function evRunMaintenanceSweep() {
-  if (_evSweptThisSession || !evCanManage()) return;
-  _evSweptThisSession = true;
-  Promise.resolve()
-    .then(() => API.runReminderSweep())
-    .then(res => {
-      if (!apiFailed(res) && res.sent > 0 && typeof renderNotifications === 'function') {
-        renderNotifications();
-      }
-    })
-    .catch(() => { /* best effort — never surfaces to the user */ });
-}
+   The sweep now has exactly one trigger: the 'event-maintenance' job in
+   jobs.js, invoked by the deployment's scheduler. POST
+   /api/events/tasks/reminder-sweep still exists for an operator who needs to
+   run it by hand, and is still staff-only. */
 
 function renderEventListChrome() {
   const manage = evCanManage() && !EV.publicView;

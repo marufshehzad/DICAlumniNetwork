@@ -24,9 +24,32 @@ async function run() {
     WHERE t.campaign_id = c.id
   `);
 
-  // One live poll for the news feed (was a hardcoded client-side array).
+  /* ─── DEMONSTRATION DATA — OFF BY DEFAULT ───────────────────
+     Everything below invents content: a poll question, four catering and
+     security vendors with made-up Bangladeshi names and phone numbers, a
+     project timeline, marketing campaigns and meetings. It was written to stop
+     the new planner tabs opening empty during development.
+
+     It ran unconditionally on any database where those tables were empty —
+     which is exactly a fresh PRODUCTION database. PRODUCTION_DEPLOYMENT_RUNBOOK
+     step 4 tells the operator not to run seed.sql precisely to avoid demo data,
+     and this happened anyway: Phase 6 installed from scratch and found a live
+     poll on the public news feed and 'Dhaka Grand Caterers / +880 1711-220011'
+     in the vendor list of a database nobody had seeded.
+
+     It also caused the install to FAIL. These rows are written with event_id=1,
+     and on a fresh database no event 1 exists — so they became the orphaned
+     child rows that migrate_v5 then aborted on.
+
+     Now opt-in. Set DIC_SEED_DEMO=1 to populate a demonstration environment.
+     Production never sets it, so production gets nothing invented. */
+  const SEED_DEMO = process.env.DIC_SEED_DEMO === '1';
+  if (!SEED_DEMO) {
+    console.log('🌱 Demonstration data skipped (set DIC_SEED_DEMO=1 to populate a demo environment).');
+  }
+
   const poll = await db.query('SELECT COUNT(*)::int n FROM polls');
-  if (poll.rows[0].n === 0) {
+  if (SEED_DEMO && poll.rows[0].n === 0) {
     await db.query(`
       INSERT INTO polls (question, options, is_active, closes_at)
       VALUES ($1, $2, TRUE, CURRENT_TIMESTAMP + INTERVAL '14 days')
@@ -38,6 +61,7 @@ async function run() {
   // Event planner: seed the modules that had no rows at all so the new tabs
   // open with realistic content rather than empty states everywhere.
   const seedIf = async (table, sql, params) => {
+    if (!SEED_DEMO) return;
     const c = await db.query(`SELECT COUNT(*)::int n FROM ${table}`);
     if (c.rows[0].n === 0) { await db.query(sql, params); console.log(`🌱 Seeded ${table}.`); }
   };

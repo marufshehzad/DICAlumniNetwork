@@ -234,6 +234,27 @@ if (IS_PRODUCTION) {
      portal, so a production deployment needs them regardless. */
   if (!process.env.PUBLIC_ORIGIN) missing.push('PUBLIC_ORIGIN');
   if (!process.env.ADMIN_ORIGIN) missing.push('ADMIN_ORIGIN');
+
+  /* Where the nightly dumps go. Backups are not an optional feature of a
+     production deployment, so this is required rather than defaulted — and the
+     default is the reason: it puts a full pg_dump of every alumnus's personal
+     data inside the repository directory, which is also the web root. The
+     static allow-list refuses to serve it, so this was never an exposure, but a
+     dump belongs outside the application directory where a redeploy, a git
+     clean or a future change to that allow-list cannot reach it.
+
+     Rejected outright if it points inside the application directory, because
+     the point is that it should not. */
+  const backupDir = process.env.BACKUP_DIR;
+  if (!backupDir) {
+    missing.push('BACKUP_DIR (an absolute path outside the application directory)');
+  } else {
+    const resolved = path.resolve(backupDir);
+    const appDir = path.resolve(__dirname);
+    if (resolved === appDir || resolved.startsWith(appDir + path.sep)) {
+      missing.push('BACKUP_DIR (it must not be inside the application directory)');
+    }
+  }
   if (missing.length) {
     // The names only — never the values, and never a partial value.
     throw new Error(
@@ -2817,10 +2838,144 @@ app.get('/api/ops/status', requireRole(...ADMIN_ROLES), async (req, res) => {
   }
 });
 
+/* ─── MACHINE-READABLE OPERATIONAL HEALTH ───────────────────
+   The endpoint an external monitor polls.
+
+   GET /api/health is the liveness probe and stays deliberately thin: it says
+   whether the process is up and whether the database answers, and nothing else,
+   because it is unauthenticated. The three states a monitor distinguishes are:
+
+     200  {"status":"ok"}         healthy
+     503  {"status":"degraded"}   the application is up, a dependency is not
+     no answer at all             the application is down — which by definition
+                                  only something outside it can observe
+
+   But "the site responds" is not the same as "the platform is working". The
+   deletion purge could have been failing for a fortnight, or the nightly backup
+   could have stopped, and /api/health would report 200 throughout. Those are
+   exactly the failures nobody notices until they matter.
+
+   /api/ops/status already gathers that, and requires an administrator session —
+   which an uptime service cannot hold. This endpoint reports the same facts to
+   the scheduler credential instead: a server-side secret the monitor can carry
+   and the browser never sees. It returns 200 when everything is within its
+   freshness window and 503 when it is not, so a monitor needs no JSON parsing
+   to raise an alert, and carries the reasons for a human who then looks.
+
+   No dashboard is built. This is a status line for something else to watch. */
+const MONITOR_JOB_MAX_HOURS = parseInt(process.env.MONITOR_JOB_MAX_HOURS || '36', 10);
+const MONITOR_BACKUP_MAX_HOURS = parseInt(process.env.MONITOR_BACKUP_MAX_HOURS || '36', 10);
+
+app.get('/api/internal/monitor', requireScheduler, async (req, res) => {
+  /* Two lists, because they mean different things to whoever is on call.
+     A PROBLEM is something that has gone wrong and returns 503, so a monitor
+     raises it. An ADVISORY is something worth knowing that nobody should be
+     woken for — most often a capability that was never configured. Collapsing
+     them would either page somebody nightly or hide the fact that this
+     deployment keeps one copy of its data. */
+  const problems = [], advisories = [];
+  const out = { status: 'ok', checkedAt: new Date().toISOString() };
+
+  // 1. The database.
+  const t0 = Date.now();
+  try {
+    await db.query('SELECT 1');
+    out.database = { ok: true, latencyMs: Date.now() - t0 };
+  } catch (err) {
+    console.error('[monitor] database unreachable: ' + err.message);
+    out.database = { ok: false };
+    problems.push('database unreachable');
+    // Nothing below can be read without it.
+    out.status = 'failing';
+    out.problems = problems;
+    return res.status(503).json(out);
+  }
+
+  // 2. Every scheduled job: has it run, did it succeed, and was it recent?
+  try {
+    const runs = await db.query(`
+      SELECT DISTINCT ON (job) job, status, started_at, finished_at, items, detail
+        FROM ops_runs ORDER BY job, started_at DESC`);
+    out.jobs = jobs.JOB_NAMES.map(name => {
+      const r = runs.rows.find(x => x.job === name);
+      if (!r) { problems.push(`job ${name} has never run`); return { name, state: 'never-run' }; }
+      const ageHours = (Date.now() - new Date(r.started_at).getTime()) / 3600000;
+      const stale = ageHours > MONITOR_JOB_MAX_HOURS;
+      if (r.status === 'failed') problems.push(`job ${name} last run FAILED`);
+      else if (stale) problems.push(`job ${name} last ran ${Math.round(ageHours)}h ago`);
+      return {
+        name, state: r.status, ageHours: Math.round(ageHours * 10) / 10,
+        items: r.items, stale
+      };
+    });
+  } catch (err) {
+    console.error('[monitor] job state unreadable: ' + err.message);
+    problems.push('job run log unreadable');
+  }
+
+  // 3. The nightly backup, from the receipt backup.js leaves behind.
+  const b = readBackupState();
+  out.backup = b;
+  if (!b.known) problems.push('no backup has ever been recorded');
+  else if (b.status !== 'ok') problems.push('the last backup FAILED');
+  else if (b.ageHours > MONITOR_BACKUP_MAX_HOURS) {
+    problems.push(`the last backup is ${Math.round(b.ageHours)}h old`);
+  }
+
+  // 4. The off-site copy, from its own receipt.
+  const off = readOffsiteState();
+  out.offsite = off;
+  if (!off.configured) {
+    advisories.push('no off-site backup destination is configured — this deployment keeps one copy of its data');
+  } else if (!off.known) {
+    problems.push('off-site copying is configured but has never run');
+  } else if (off.status !== 'ok') {
+    problems.push('the last off-site copy FAILED');
+  } else if (off.ageHours > MONITOR_BACKUP_MAX_HOURS) {
+    problems.push(`the last off-site copy is ${Math.round(off.ageHours)}h old`);
+  }
+
+  // 5. Deletion promises that are past their deadline and still unkept.
+  try {
+    const overdue = await db.query(`
+      SELECT COUNT(*)::int n FROM deletion_requests
+       WHERE status='pending' AND user_id IS NOT NULL AND purge_after <= NOW()`);
+    out.overdueDeletions = overdue.rows[0].n;
+    if (overdue.rows[0].n > 0) {
+      problems.push(`${overdue.rows[0].n} account deletion(s) past their deadline and not yet purged`);
+    }
+  } catch { /* covered by the database check above */ }
+
+  // 6. Mail, only when the deployment says it should be sending.
+  out.mail = mailer.status();
+  if (out.mail && out.mail.mode === 'smtp' && out.mail.configured === false) {
+    problems.push('SMTP is selected but not fully configured');
+  }
+
+  if (out.mail && out.mail.mode === 'console') {
+    advisories.push('MAIL_TRANSPORT=console — reset links are written to the log, not sent');
+  } else if (out.mail && out.mail.mode === 'none') {
+    advisories.push('MAIL_TRANSPORT=none — password reset is operator-only by deliberate choice');
+  }
+
+  out.problems = problems;
+  out.advisories = advisories;
+  out.status = problems.length ? 'degraded' : 'ok';
+  res.status(problems.length ? 503 : 200).json(out);
+});
+
 /* The backup runs outside the application — it is a cron job calling
    backup.js, which must keep working when Node is down. It leaves a small
    receipt behind, and this reads it. An absent receipt is itself the signal an
    operator needs. */
+/* The off-site copy leaves its own receipt, for the same reason the backup
+   does: the copy runs outside the application and must be observable when the
+   application is not the thing that failed. */
+function readOffsiteState() {
+  try { return require('./offsite').status(); }
+  catch (e) { return { configured: false, known: false, error: e.message }; }
+}
+
 function readBackupState() {
   try {
     const f = path.join(process.env.BACKUP_DIR || path.join(__dirname, 'backups'), 'last-backup.json');

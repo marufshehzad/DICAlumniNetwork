@@ -85,6 +85,7 @@ const front = () => ['index.html', 'admin.html', 'api.js']
        phase5e_production.js cover them directly. */
     boot({ ...PG, NODE_ENV: 'production', SESSION_SECRET: 'x'.repeat(64), ENCRYPTION_KEY: 'a'.repeat(64),
            CRON_SECRET: 'c'.repeat(48), MAIL_TRANSPORT: 'none',
+           BACKUP_DIR: require('os').tmpdir(),   // Phase 6: required, and outside the app dir
            PUBLIC_ORIGIN: 'https://alumni.example.edu',
            ADMIN_ORIGIN: 'https://admin.alumni.example.edu' }, false,
       'production with every required secret starts');

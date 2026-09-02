@@ -62,16 +62,40 @@ const log = (...a) => console.log(...a);
        ───────────────────────────────────────────────────────── */
     log('[1/4] Checking event child tables for orphans…');
 
-    const fallback = await client.query('SELECT MIN(id)::int AS id FROM events');
-    const fallbackId = fallback.rows[0].id;
-    if (!fallbackId) throw new Error('No events exist — cannot anchor orphaned child rows.');
+    /* Count first, and only then insist on an anchor.
 
+       This used to read MIN(id) FROM events and throw unconditionally when the
+       table was empty — so the documented production install sequence aborted
+       here on EVERY fresh database, which is the one case where there are no
+       orphans to anchor at all. Phase 6 found it by running the sequence in
+       PRODUCTION_DEPLOYMENT_RUNBOOK.md step 4 against a scratch database: the
+       install stopped at v5 with 39 of the 47 tables present.
+
+       An anchor is needed only if something actually needs anchoring. */
+    const orphanCounts = {};
+    let totalOrphans = 0;
     for (const t of CHILD_TABLES) {
       const orphans = await client.query(
         `SELECT COUNT(*)::int n FROM ${t} c
           WHERE c.event_id IS NULL
              OR NOT EXISTS (SELECT 1 FROM events e WHERE e.id = c.event_id)`);
-      const n = orphans.rows[0].n;
+      orphanCounts[t] = orphans.rows[0].n;
+      totalOrphans += orphans.rows[0].n;
+    }
+
+    let fallbackId = null;
+    if (totalOrphans > 0) {
+      const fallback = await client.query('SELECT MIN(id)::int AS id FROM events');
+      fallbackId = fallback.rows[0].id;
+      if (!fallbackId) {
+        throw new Error(
+          `${totalOrphans} orphaned event child row(s) exist but there is no event to anchor them to. ` +
+          'Create one event, or delete the orphaned rows, then re-run this migration.');
+      }
+    }
+
+    for (const t of CHILD_TABLES) {
+      const n = orphanCounts[t];
       if (n > 0) {
         // Re-point rather than delete: this is real planning data.
         await client.query(

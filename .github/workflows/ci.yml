@@ -1,0 +1,146 @@
+# ============================================================
+# DIC ALUMNI PLATFORM — continuous integration
+#
+# Runs the same verification a human runs before a deploy, on a database built
+# the same way production is built: schema.sql, then every migration in order.
+# That is deliberate. Phase 6 discovered the documented install sequence had
+# never once been executed from nothing and aborted at migrate_v5 on every
+# fresh database, because the only databases anyone tested against had been
+# created long ago and migrated forward. A CI job that installs from scratch on
+# every push is what stops that happening again.
+#
+# GitHub Actions is used because the repository already lives on GitHub. No
+# third-party service, no paid platform, and nothing here needs a secret: the
+# job generates its own throwaway values.
+# ============================================================
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dicadmin
+          POSTGRES_PASSWORD: ci-throwaway-password
+          POSTGRES_DB: dic_alumni_db
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U dicadmin"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGDATABASE: dic_alumni_db
+      PGUSER: dicadmin
+      PGPASSWORD: ci-throwaway-password
+      # Throwaway, generated per run below for the secrets that need entropy.
+      MAIL_TRANSPORT: none
+      PUBLIC_ORIGIN: http://localhost:8123
+      ADMIN_ORIGIN: http://localhost:8123
+      BACKUP_DIR: /tmp/dic-ci-backups
+      TEST_BASE: http://localhost:8123
+      DOCKER_PG_CONTAINER: ''
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies from the lockfile
+        run: npm ci
+
+      - name: Generate throwaway secrets for this run
+        run: |
+          {
+            echo "SESSION_SECRET=$(openssl rand -hex 32)"
+            echo "ENCRYPTION_KEY=$(openssl rand -hex 32)"
+            echo "CRON_SECRET=$(openssl rand -hex 32)"
+          } >> "$GITHUB_ENV"
+          mkdir -p /tmp/dic-ci-backups
+
+      # The production install sequence, from nothing. This is the step that
+      # would have caught the migrate_v5 abort.
+      - name: Install the schema the way production installs it
+        run: |
+          psql -h 127.0.0.1 -U dicadmin -d dic_alumni_db -v ON_ERROR_STOP=1 -q -f schema.sql
+          for v in 2 3 4 5 6 7 8 9 10 11 12 13; do
+            echo "--- migrate_v$v ---"
+            node "migrate_v$v.js" || exit 1
+          done
+        env:
+          PGPASSWORD: ci-throwaway-password
+
+      - name: Confirm the installed schema is complete
+        run: |
+          n=$(psql -h 127.0.0.1 -U dicadmin -d dic_alumni_db -tAc \
+              "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'")
+          echo "tables: $n"
+          test "$n" -eq 47 || { echo "expected 47 tables, got $n"; exit 1; }
+        env:
+          PGPASSWORD: ci-throwaway-password
+
+      # A fresh install has no accounts at all; the suites need data to work
+      # against, so seed the demonstration set here — and only here.
+      - name: Seed the demonstration data (CI only)
+        run: |
+          psql -h 127.0.0.1 -U dicadmin -d dic_alumni_db -v ON_ERROR_STOP=1 -q -f seed.sql
+          node rotate_credentials.js --all
+        env:
+          PGPASSWORD: ci-throwaway-password
+          DIC_SEED_DEMO: '1'
+
+      - name: Start the application
+        run: |
+          NODE_ENV=production node server.js > /tmp/server.log 2>&1 &
+          for i in $(seq 1 40); do
+            curl -sf http://localhost:8123/api/health >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://localhost:8123/api/health || { cat /tmp/server.log; exit 1; }
+
+      - name: Full test suite
+        run: npm test
+
+      - name: Audit chain verification
+        run: npm run verify-audit-chain
+
+      # The heavy drills build their own disposable databases.
+      - name: Fresh install drill
+        run: node tests/install_drill.js
+
+      - name: Operations drill — deletion purge, backup, restore
+        run: node tests/ops_drill.js
+
+      - name: Password reset delivery drill
+        run: node tests/mail_drill.js
+
+      - name: No secret reached the log
+        if: always()
+        run: |
+          for s in "$SESSION_SECRET" "$ENCRYPTION_KEY" "$CRON_SECRET" "$PGPASSWORD"; do
+            if grep -qF "$s" /tmp/server.log; then
+              echo "a secret appeared in the server log"
+              exit 1
+            fi
+          done
+          echo "clean"
+
+      - name: Server log on failure
+        if: failure()
+        run: tail -120 /tmp/server.log || true

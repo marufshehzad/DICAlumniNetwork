@@ -12,6 +12,10 @@
      node rotate_credentials.js --check      report which accounts still accept a weak password
      node rotate_credentials.js --lock       lock an account instead of setting a password
 
+     node rotate_credentials.js --create-super-admin <email> [--name "Full Name"]
+                                             create the FIRST administrator on a
+                                             new deployment. Refuses if one exists.
+
    Supplying your own passwords (preferred for production) — set any of:
      ADMIN_PW_SUPER_ADMIN, ADMIN_PW_UNIV_ADMIN,
      ADMIN_PW_DEPT_ADMIN,  ADMIN_PW_MODERATOR
@@ -32,6 +36,27 @@ const db = require('./db');
 const ROTATE_ALL = process.argv.includes('--all');
 const CHECK_ONLY = process.argv.includes('--check');
 const LOCK_MODE = process.argv.includes('--lock');
+
+/* --create-super-admin <email> — the first administrator on a fresh database.
+
+   Phase 6 installed the platform from scratch and found there was no way to get
+   one. A production install is told not to run seed.sql, so the users table is
+   empty; this script only ever SELECTed existing rows, so it reported
+   "accounts: 0, nothing to rotate"; and every provisioning route is
+   requireRole(SUPER_ONLY), so the portal cannot create the account that would be
+   needed to use the portal. The platform could be installed and then not signed
+   into by anybody.
+
+   Deliberately narrow: it refuses when a super_admin already exists, so it
+   cannot quietly mint a second one on a running deployment. */
+const CREATE_SUPER = process.argv.includes('--create-super-admin');
+const argAfter = (flag) => {
+  const i = process.argv.indexOf(flag);
+  const v = i >= 0 ? process.argv[i + 1] : null;
+  return v && !v.startsWith('--') ? v.trim() : null;
+};
+const argEmail = (argAfter('--create-super-admin') || '').toLowerCase() || null;
+const argName = argAfter('--name');
 
 const OUT_FILE = path.join(__dirname, 'admin-credentials.local.txt');
 const WEAK_PASSWORDS = ['12345678', 'password', 'admin', '123456', 'changeme'];
@@ -83,8 +108,86 @@ const mask = (e) => {
   return (u.length <= 2 ? u[0] + '*' : u.slice(0, 2) + '*'.repeat(u.length - 2)) + '@' + d;
 };
 
+async function createFirstSuperAdmin() {
+  if (!argEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(argEmail)) {
+    console.error('\n  Usage: node rotate_credentials.js --create-super-admin <email> [--name "Full Name"]\n');
+    process.exitCode = 2;
+    return;
+  }
+
+  const existing = await db.query("SELECT id FROM users WHERE role = 'super_admin'");
+  if (existing.rows.length) {
+    console.error(`\n  Refused: a super_admin already exists (id ${existing.rows[0].id}).`);
+    console.error('  This command is for the first administrator on a new deployment only.');
+    console.error('  To add another, sign in and use the staff portal.\n');
+    process.exitCode = 1;
+    return;
+  }
+
+  const dup = await db.query('SELECT id FROM users WHERE LOWER(email) = $1', [argEmail]);
+  if (dup.rows.length) {
+    console.error(`\n  Refused: that address already has an account (id ${dup.rows[0].id}).\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const supplied = process.env.ADMIN_PW_SUPER_ADMIN;
+  if (supplied && supplied.length < 12) {
+    console.error('\n  Refused: ADMIN_PW_SUPER_ADMIN must be at least 12 characters.\n');
+    process.exitCode = 2;
+    return;
+  }
+
+  const password = supplied || generatePassword();
+  const name = argName || 'DIC Super Administrator';
+  const initials = name.split(/\s+/).filter(Boolean).slice(0, 2)
+    .map(w => w[0]).join('').toUpperCase().slice(0, 2) || 'SA';
+
+  /* must_change_password is TRUE whether the password was generated or supplied:
+     in both cases somebody other than the account holder has seen it. The
+     enrolment gate then restricts the first session to changing it. */
+  const r = await db.query(
+    `INSERT INTO users (email, password_hash, full_name, initials, role, role_label,
+                        department, is_verified, must_change_password, created_via)
+     VALUES ($1,$2,$3,$4,'super_admin','Super Admin','Administration',TRUE,TRUE,'bootstrap')
+     RETURNING id`,
+    [argEmail, hashPassword(password), name, initials]);
+  const uid = r.rows[0].id;
+
+  await db.query(
+    `INSERT INTO alumni_profiles (user_id, student_id, batch, passing_year, department, primary_email)
+     VALUES ($1,$2,$3,$3,'Administration',$4) ON CONFLICT DO NOTHING`,
+    [uid, `DIC-ADMIN-${uid}`, new Date().getFullYear(), argEmail]);
+
+  if (!supplied) {
+    fs.writeFileSync(OUT_FILE,
+      'DIC Alumni Platform \u2014 first administrator\n' +
+      'Written ' + new Date().toISOString() + '\n' +
+      'This account must set its own password at first sign-in.\n' +
+      'Store this in the institution password manager, then DELETE this file.\n' +
+      'This file is gitignored and must never be committed.\n\n' +
+      `super_admin  ${argEmail}  ${password}\n`, { mode: 0o600 });
+    try { fs.chmodSync(OUT_FILE, 0o600); } catch { /* not supported on this filesystem */ }
+  }
+
+  console.log('\n=== FIRST ADMINISTRATOR CREATED ===');
+  console.log(`  id     ${uid}`);
+  console.log(`  email  ${mask(argEmail)}`);
+  console.log('  role   super_admin');
+  console.log(supplied
+    ? '  password: the value supplied in ADMIN_PW_SUPER_ADMIN'
+    : `  password: written once to ${path.basename(OUT_FILE)} \u2014 move it to the password manager, then delete that file`);
+  console.log('  It must change that password before the account can do anything else.\n');
+}
+
 (async () => {
   try {
+    if (CREATE_SUPER) {
+      await createFirstSuperAdmin();
+      await db.pool.end();
+      return;
+    }
+
     const users = (await db.query(
       'SELECT id, email, role, full_name, password_hash FROM users ORDER BY id')).rows;
 

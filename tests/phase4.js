@@ -312,12 +312,17 @@ const src = f => fs.readFileSync(path.join(REPO, f), 'utf8').replace(/\r\n/g, '\
     }
     return out;
   };
-  /* Phase 5E widened the production contract: PUBLIC_ORIGIN and ADMIN_ORIGIN
+  /* Phase 6 widened it once more: BACKUP_DIR is required in production and
+     must sit outside the application directory, because its default put a full
+     dump of every alumnus's personal data inside the web root.
+
+     Phase 5E widened the production contract: PUBLIC_ORIGIN and ADMIN_ORIGIN
      are now required too, because leaving them unset handed the CORS
      middleware `undefined` and a production deployment answered every origin
      with a wildcard. A complete set has to include them. */
   const GOOD = { SESSION_SECRET: 'x'.repeat(64), ENCRYPTION_KEY: 'a'.repeat(64),
                  CRON_SECRET: 'c'.repeat(48), MAIL_TRANSPORT: 'none',
+                 BACKUP_DIR: require('os').tmpdir(),
                  PUBLIC_ORIGIN: 'https://alumni.example.edu',
                  ADMIN_ORIGIN: 'https://admin.alumni.example.edu' };
   fs.renameSync(ENV, BAK);
@@ -360,29 +365,68 @@ const src = f => fs.readFileSync(path.join(REPO, f), 'utf8').replace(/\r\n/g, '\
 
   console.log('\n=== O. documentation ===');
   const rb = src('OPERATIONS_RUNBOOK.md');
+
+  /* Phase 6 re-specified this document. It now carries the eighteen sections a
+     college IT administrator needs rather than the fifteen that had grown up
+     ad hoc, so the letters moved: stop/restart, account lockout, administrator
+     suspension, DNS, monitoring and a first-administrator bootstrap are all new,
+     and several older sections were merged or renamed. The list below is the
+     new contract, and it is longer than the one it replaces. */
   for (const [label, re] of [
-    ['start the service', /## A\. Start the service/],
-    ['check health', /## B\. Check health/],
-    ['check the scheduler', /## C\. Check the scheduler/],
-    ['check the latest backup', /## D\. Check the latest backup/],
-    ['restore', /## E\. Restore/],
-    ['backup policy with retention', /## F\. Backup policy/],
-    ['rotate credentials', /## G\. Rotate credentials/],
-    ['administrator password recovery', /## H\. Administrator password recovery/],
-    ['emergency super admin recovery', /## I\. Emergency super admin recovery/],
-    ['database unavailable', /## J\. The database is unavailable/],
-    ['ENCRYPTION_KEY is lost', /## K\. `ENCRYPTION_KEY` is lost/],
-    ['the site is down', /## L\. The site is down/],
-    ['rollback', /## M\. Rollback/],
-    ['migration procedure', /## N\. Migration procedure/],
-    ['contacts and escalation', /## O\. Contacts and escalation/],
+    ['A start the system', /## A\. Start the system/],
+    ['B stop and restart', /## B\. Stop and restart/],
+    ['C database migration', /## C\. Database migration/],
+    ['D backup', /## D\. Backup/],
+    ['E restore', /## E\. Restore/],
+    ['F scheduler', /## F\. Scheduler/],
+    ['G SMTP and email', /## G\. SMTP and email/],
+    ['H secret rotation', /## H\. Secret rotation/],
+    ['I encryption-key recovery', /## I\. Encryption-key recovery/],
+    ['J password-reset emergency', /## J\. Password-reset emergency/],
+    ['K account lockout recovery', /## K\. Account lockout recovery/],
+    ['L administrator suspension', /## L\. Administrator suspension/],
+    ['M incident response', /## M\. Incident response/],
+    ['N rollback', /## N\. Rollback/],
+    ['O DNS and subdomains', /## O\. DNS and subdomains/],
+    ['P health check', /## P\. Health check/],
+    ['Q monitoring', /## Q\. Monitoring/],
+    ['R where the logs are', /## R\. Where the logs are/],
+    ['S escalation contacts', /## S\. Escalation contacts/],
+    ['T first administrator', /## T\. Provisioning the first administrator/],
   ]) ok(`the runbook covers ${label}`, re.test(rb));
-  ok('the runbook states the retention period', /14 days/.test(rb));
-  ok('the runbook documents secret escrow', /escrow/i.test(rb) && /password manager/i.test(rb));
-  ok('the runbook says backups must not sit in a web root', /web root/i.test(rb));
-  ok('the runbook requires a backup before migrating', /Verify a current backup exists/i.test(rb));
-  ok('the runbook contains no actual secret',
-    !rb.includes(CRON) && !new RegExp((process.env.ENCRYPTION_KEY || 'zzzz').slice(0, 32)).test(rb));
+
+  ok('the runbook states the retention period', /14/.test(rb) && /retention/i.test(rb));
+  ok('the runbook documents secret escrow',
+    /escrow/i.test(rb + src('KEY_MANAGEMENT.md')) &&
+    /password manager/i.test(rb + src('KEY_MANAGEMENT.md')));
+  ok('the runbook says backups must not sit in a web root',
+    /outside the application directory|web root/i.test(rb));
+  ok('the runbook requires a backup before migrating',
+    /take a backup \(section D\)|backup.*before you run|Before you run any of it/i.test(rb));
+
+  /* Phase 6 additions, each of them something an operator was previously left
+     to work out alone. */
+  ok('the runbook explains TRUST_PROXY in both directions',
+    /TRUST_PROXY/.test(rb) && /Behind a proxy and left unset/i.test(rb));
+  ok('the runbook gives the health HTTP status codes', /\b503\b/.test(rb) && /\b200\b/.test(rb));
+  ok('the runbook documents the enrolment gate',
+    /must set its own password/i.test(rb));
+  ok('the runbook documents the first-administrator bootstrap',
+    /--create-super-admin/.test(rb));
+  ok('the runbook lists the other log tags',
+    /\[mail\]/.test(rb) && /\[scheduler\]/.test(rb) && /LOG_REQUESTS/.test(rb));
+  ok('the runbook is honest about what has never been executed',
+    /never run anywhere|has ever run on a DIC server/i.test(rb));
+  ok('there is a separate key-management document',
+    fs.existsSync(REPO + '/KEY_MANAGEMENT.md'));
+  ok('it states the encryption key cannot be rotated in place',
+    /no key id and no key version|carries no key id/i.test(src('KEY_MANAGEMENT.md')));
+  ok('it states a backup does not recover a lost encryption key',
+    /same ciphertext/i.test(src('KEY_MANAGEMENT.md')));
+  const bothDocs = rb + src('KEY_MANAGEMENT.md');
+  ok('neither operations document contains an actual secret',
+    !bothDocs.includes(CRON) &&
+    !new RegExp((process.env.ENCRYPTION_KEY || 'zzzz').slice(0, 32)).test(bothDocs));
   ok('.env.example documents the new variables',
     ['CRON_SECRET', 'SMTP_HOST', 'MAIL_TRANSPORT', 'BACKUP_DIR', 'BACKUP_RETENTION_DAYS']
       .every(v => src('.env.example').includes(v)));

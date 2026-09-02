@@ -482,17 +482,23 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
      ══════════════════════════════════════════════════════════ */
 
   // Expire unanswered requests past their 5-day window before every read.
-  async function expireStaleMentorships() {
-    await db.query(`
-      UPDATE mentorships SET status='expired'
-      WHERE status='pending' AND expires_at < CURRENT_TIMESTAMP
-    `);
-  }
+  /* The UPDATE that used to live here was a verbatim second copy of
+     expireStaleMentorships() in jobs.js, run on every GET of this list by any
+     signed-in member. Two consequences, both bad: the same business rule
+     existed in two places and could drift, and scheduled work happened as a
+     side effect of somebody opening a page — so ops_runs could not distinguish
+     "the timer works" from "a member happened to look".
+
+     Phase 6 made jobs.js the single writer. This route now DISPLAYS the
+     expiry instead of performing it: a request past its expiry reads as
+     expired immediately, and the row is written by the nightly job. A read
+     endpoint should not mutate. */
 
   app.get('/api/mentorships', requireAuth, (req, res) => ok(res, async () => {
-    await expireStaleMentorships();
     const rows = await db.query(`
       SELECT m.*,
+             CASE WHEN m.status = 'pending' AND m.expires_at < CURRENT_TIMESTAMP
+                  THEN 'expired' ELSE m.status END AS status,
              mentor.full_name AS mentor_name, mentor.initials AS mentor_initials,
              mentee.full_name AS mentee_name, mentee.initials AS mentee_initials,
              mp.current_company AS mentor_company, mp.job_title AS mentor_role, mp.batch AS mentor_batch

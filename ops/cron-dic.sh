@@ -37,28 +37,42 @@ log "backup: starting"
 if node backup.js; then
   log "backup: ok"
 else
-  log "backup: FAILED — this is an incident, see OPERATIONS_RUNBOOK.md section 5"
+  log "backup: FAILED — this is an incident, see OPERATIONS_RUNBOOK.md section D"
   fail=1
 fi
 
-# ── 2. SCHEDULED JOBS ───────────────────────────────────────
-# Each is idempotent, so a retry after a transient failure is safe.
-for job in event-maintenance deletion-purge mentorship-expiry; do
-  log "job $job: starting"
-  code=$(curl -sS -o /tmp/dic-job-$job.json -w '%{http_code}' \
-              -X POST "$APP_URL/api/internal/jobs/run?job=$job" \
-              -H "X-Cron-Key: ${CRON_SECRET:-}" \
-              --max-time 300) || code=000
-  if [ "$code" = "200" ]; then
-    log "job $job: ok $(head -c 300 /tmp/dic-job-$job.json)"
-  else
-    log "job $job: FAILED http=$code $(head -c 300 /tmp/dic-job-$job.json 2>/dev/null)"
-    fail=1
-  fi
-  rm -f /tmp/dic-job-$job.json
-done
+# ── 2. OFF-SITE COPY ─────────────────────────────────
+# Immediately after the backup, so the window in which the only copy of the
+# institution's data lives on this one machine is as short as possible. A no-op
+# when OFFSITE_CMD is unset, which it records rather than passing over in
+# silence.
+log "offsite: starting"
+if node offsite.js; then
+  log "offsite: ok"
+else
+  log "offsite: FAILED — the only copy is on this machine, see OPERATIONS_RUNBOOK.md section D"
+  fail=1
+fi
 
-# ── 3. WEEKLY RESTORE DRILL (Sundays) ───────────────────────
+# ── 3. SCHEDULED JOBS ────────────────────────────────
+# Through scheduler.js rather than over HTTP. It talks to the database
+# directly, so the nightly purge still runs when the web process is down —
+# which is exactly when nobody is watching. Each job is idempotent, so a retry
+# after a transient failure is safe.
+#
+# On Vercel this file is not used at all: vercel.json's crons call the HTTP
+# endpoint instead. Exactly one of the two is ever enabled — see
+# OPERATIONS_RUNBOOK.md section F.
+log "jobs: starting"
+if node scheduler.js; then
+  log "jobs: ok"
+else
+  log "jobs: FAILED — see OPERATIONS_RUNBOOK.md section F"
+  fail=1
+fi
+
+
+# ── 4. WEEKLY RESTORE DRILL (Sundays) ───────────────────────
 # A backup nobody has restored is a hypothesis. Once a week it gets tested
 # against a disposable database.
 if [ "$(date +%u)" = "7" ]; then

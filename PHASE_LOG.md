@@ -1644,3 +1644,408 @@ this phase missed, somebody else will have to find.
 
 None defined. The next actions are DIC's: commission the review, and supply the
 eight inputs.
+
+---
+
+## Phase 6 — Operations and production readiness
+
+**Status:** COMPLETE
+**Date:** 2026-09-03
+**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Parent:** `797f254`
+
+### Scope, and why
+
+Phase 5F left the software hardened and the *operation* untested. This phase was
+meant to provision and prove the operational layer: scheduler, purge, backups,
+off-site copy, restore, SMTP, monitoring, secrets, runbook.
+
+It found something larger first.
+
+### The platform had never been installed
+
+Every previous phase worked against a development database created months ago
+and migrated forward. Nobody had run `PRODUCTION_DEPLOYMENT_RUNBOOK.md` step 4
+from an empty database. Phase 6 did, and it did not work — three independent
+faults, each fatal on its own:
+
+**1. The install aborted at `migrate_v5.js`.** It read `MIN(id) FROM events` and
+threw *"No events exist — cannot anchor orphaned child rows"* unconditionally
+when the table was empty — which is precisely every fresh database, and
+precisely the case with no orphans to anchor. The documented sequence stopped
+with **39 of 47 tables**. It now counts orphans first and only demands an anchor
+when something needs anchoring.
+
+**2. A "clean" install was not clean.** `migrate_v2.js` seeded invented content
+into any database whose planner tables were empty — so, a fresh production
+database. A live poll appeared on the public news feed, and the vendor list held
+four fabricated firms with made-up Bangladeshi names and phone numbers
+(*"Dhaka Grand Caterers / Mizanur Rahman / +880 1711-220011"*). The deployment
+runbook tells the operator not to run `seed.sql` precisely to avoid demo data;
+not running it did not help. Now behind `DIC_SEED_DEMO=1`, off by default.
+
+Those two were the same bug twice over: the fabricated rows are written with
+`event_id=1`, no event 1 exists on a fresh database, so they *became* the
+orphans `migrate_v5` then aborted on.
+
+**3. There was no way to create the first administrator.** A fresh install has
+zero users. `rotate_credentials.js` only ever rotated rows that already existed
+— it reported *"accounts: 0, nothing to rotate"*. Every provisioning route is
+`requireRole(SUPER_ONLY)`. **The platform could be installed and then never
+signed into by anybody.** New:
+`node rotate_credentials.js --create-super-admin <email> [--name "..."]`, which
+refuses when a super admin already exists, and creates the account with
+`must_change_password` so the enrolment gate limits its first session to
+changing that password.
+
+`tests/install_drill.js` pins all three and goes further: it installs from
+nothing, starts the application against the result, signs in as the new
+administrator, confirms the enrolment gate blocks everything else, changes the
+password and confirms full authority. **30 checks, passing.**
+
+### Scheduler
+
+Three jobs — `event-maintenance`, `deletion-purge`, `mentorship-expiry` — with
+one registry in `jobs.js`. Four faults fixed:
+
+**Two duplicate triggers, both firing on a page load.** `GET /api/mentorships`
+carried a verbatim second copy of the expiry `UPDATE` and ran it for any member
+who opened their list. The Events page ran the reminder sweep once per session
+on render, under a comment reading *"There is no scheduler in this deployment"*
+— true when written, untrue since `jobs.js` existed. Scheduled work that only
+happens when somebody looks is not scheduled: statuses rolled forward on the
+days staff opened the page and not on the days they did not, and none of it
+appeared in `ops_runs`, so the run log could not distinguish a working timer
+from an attentive colleague. Both removed. The mentorship list now *reports*
+expiry as a projection and writes nothing; verified live — an expired request
+reads as expired, a live one still reads pending, the database is untouched by
+the read, and the nightly job is what writes it.
+
+**A timezone bug that made the roll-forward a day late, every time.** Nothing
+pinned the session timezone, so `CURRENT_DATE` was the database host's date —
+UTC on a managed provider. Bangladesh is UTC+6, and `vercel.json` fires the jobs
+at 20:10 UTC = **02:10 in Dhaka**, squarely inside the window where UTC is still
+yesterday. `db.js` now pins `DB_TIMEZONE`, default `Asia/Dhaka`.
+
+**Runs that died stayed "running" for ever.** One row had been stuck since
+06:46 that morning with a NULL `finished_at`, indistinguishable from a run in
+flight, and nothing reaped it. `reapStaleRuns()` now marks anything running
+longer than `JOB_STALE_MINUTES` as failed, on the next run of the same job. The
+Operations panel immediately began reporting *"1 job run(s) failed in the last 7
+days"* — a failure that had been invisible.
+
+**One entry point.** New `scheduler.js`: `node scheduler.js` runs every job,
+`--list` shows the last run of each, `--status` exits non-zero when something
+needs attention. It talks to the database directly, so jobs still run when the
+web process is down — which is when the purge matters most. `ops/cron-dic.sh`
+now calls it instead of the HTTP endpoint, and does backup → off-site → jobs →
+Sunday restore drill in one entry. Vercel keeps using `vercel.json`'s crons.
+Exactly one is enabled; `ops_runs.source` shows which fired, and
+`scheduler.js --list` warns when it sees more than one.
+
+### Deletion purge
+
+The executor already existed and is better than expected: row-locked with
+`FOR UPDATE`, predicate re-checked inside the transaction, `super_admin`
+refused, donations anonymised before the delete, audited outside the transaction
+so the entry survives the account. What was missing was proof.
+
+`tests/ops_drill.js` builds a disposable database and drills the three outcomes
+Phase 6 requires — **an expired request purges, an unexpired one does not, a
+cancelled one does not** — plus a `super_admin` refused, cascade behaviour
+observed, and a second run purging nothing more. **35 checks, passing.**
+
+The classification, read from the schema's 38 foreign keys rather than from
+intent:
+
+| | |
+|---|---|
+| **PURGED** (`CASCADE`) | profile, chapter memberships, connections, consent logs, event people, registrations, task assignments, identity-vault rows, job applications and referrals, job posts, mentorships, notifications, poll votes, stories |
+| **RETAINED, de-linked** (`SET NULL`) | audit entries, broadcasts, chapters created, the deletion request itself, donations, events created/updated/approved, tasks and notes, vault access logs |
+| **ANONYMISED** | `donations.donor_name` — rewritten to *"Erased at the donor's request"* before the delete |
+
+Two of those deserve a DIC policy decision rather than an engineering one:
+`consent_logs` cascades, so proof that a person consented is destroyed with
+them; and `stories` cascades, so published content disappears. Both are recorded
+rather than changed.
+
+### Backups and the off-site copy
+
+**A real bug first.** `backup.js` computed `BACKUP_DIR` *before* `require('./db')`
+loaded `.env`. Setting `BACKUP_DIR` in `.env` — exactly as `.env.example`
+documents — had no effect whatsoever, and dumps kept landing in the application
+directory. `restore.js` had the ordering right; this file did not.
+
+Production now **refuses to boot** without `BACKUP_DIR`, and refuses one that
+points inside the application directory. A full dump of every alumnus's personal
+data belongs somewhere a redeploy, a `git clean` or a future change to the
+static allow-list cannot reach.
+
+New `offsite.js` ships the newest dump elsewhere. Provider-agnostic by design:
+it runs `OFFSITE_CMD` with `{file}` and `{name}` substituted, so there is no
+vendor SDK, no bucket name and no credential in the repository — worked
+examples for S3-compatible storage, ssh and rclone are in `.env.example`.
+Optional `OFFSITE_ENCRYPT_CMD` encrypts before sending. It writes a receipt the
+monitor reads.
+
+Proved end to end against a genuinely separate destination: **byte-identical
+arrival (md5 matched), and a failing command recorded as failed rather than
+swallowed.**
+
+### Restore
+
+`tests/ops_drill.js` backs up a disposable database, restores it into a second
+one, and verifies what a lossy restore would ruin: table count, users, profiles,
+deletion requests, events, registrations, ticket types, donations, audit
+entries, and — the one that matters most — that the identity vault's
+ciphertext, IV and auth tag are **byte-identical**, because a vault record that
+loses a byte is permanently unreadable even with the right key. The restored
+copy's audit chain verifies. The live database is confirmed untouched.
+
+### SMTP
+
+The mailer was already complete: real nodemailer, implicit TLS on 465 and
+STARTTLS otherwise, auth, timeouts, masked logging, a plain-text template. What
+was missing was proof.
+
+`tests/mail_drill.js` stands up a real SMTP server — a few dozen lines of `net`
+rather than a sixth dependency — points the application at it, and reads the
+message that arrives. **26 checks:** the message is delivered, addressed
+correctly, from the configured sender, with a subject identifying the platform
+and a link on `PUBLIC_ORIGIN`; the token is stored hashed, expires in 30
+minutes, resets the password, and **cannot be used twice**; it never appears in
+a log; and the endpoint answers identically for a known and an unknown address.
+
+One thing the drill taught, which is worth recording because it looked like a
+product bug for twenty minutes: the template contains an em-dash, so nodemailer
+encodes as quoted-printable, in which `?reset=` arrives as `?reset=3D` and the
+long URL is soft-wrapped with a trailing `=`. A mail client undoes both. A test
+reading the raw SMTP stream has to undo them itself, or it extracts a token
+beginning `3D` and concludes the platform is broken when it is not.
+
+### Monitoring
+
+`/api/health` stays the thin unauthenticated liveness probe: **200** healthy,
+**503** degraded, no answer at all means the application is down — which by
+definition only something outside it can observe.
+
+But `/api/health` returns 200 while the purge has been failing for a fortnight
+and the backups stopped a week ago. New `GET /api/internal/monitor` answers
+that. It is guarded by the **scheduler credential**, not an admin session, so an
+uptime service can carry it in a header and the browser never sees it. It
+reports the database, every job with age and outcome, the backup receipt, the
+off-site receipt, overdue deletions and the mail mode, and returns 200 or 503 so
+a monitor needs no JSON parsing.
+
+It separates **problems** (503, wake someone) from **advisories** (200, worth
+knowing). That distinction earns its place immediately: this deployment's
+advisories are *"no off-site backup destination is configured — this deployment
+keeps one copy of its data"* and *"MAIL_TRANSPORT=console — reset links are
+written to the log, not sent"*. Both true, neither worth a 3am call.
+
+Verified returning 503 for each failure mode independently: database
+unreachable, jobs stale, no backup recorded.
+
+### Secrets and logging
+
+Production now requires seven variables: `SESSION_SECRET`, `ENCRYPTION_KEY`,
+`CRON_SECRET`, `MAIL_TRANSPORT`, `PUBLIC_ORIGIN`, `ADMIN_ORIGIN` and
+`BACKUP_DIR` — the last new in this phase — plus `SMTP_HOST` and `SMTP_FROM`
+conditionally, only when `MAIL_TRANSPORT=smtp`. The rule the brief set is kept:
+a value is required only when the feature that needs it is enabled, and
+development is unaffected.
+
+New `KEY_MANAGEMENT.md` documents all four secrets, and `ENCRYPTION_KEY` in the
+detail it deserves: AES-256-GCM, a fresh 12-byte IV per record, the auth tag
+verified on decryption — and **no key id or key version column on
+`identity_vault`**, so there is no zero-downtime rotation path. The point most
+often misunderstood is stated plainly: **a backup does not save you**, because
+the backup holds the same ciphertext. Also: the two-person escrow procedure,
+per-secret rotation with the consequence stated first, what to do when each is
+exposed, and an annual recovery drill that verifies the escrow matches
+production by comparing fingerprints rather than values.
+
+Logging was already disciplined and is now asserted: no `console` line prints
+any secret, the request logger excludes the `Authorization` header, bodies and
+query strings, and a reset link never reaches a log. Checked mechanically
+against the real values, not by eye.
+
+### Runbook
+
+`OPERATIONS_RUNBOOK.md` rewritten to the eighteen sections the brief specifies,
+plus escalation contacts and a first-administrator bootstrap. The Phase 6 audit
+found **70 defects** in the previous version; the ones worth naming:
+
+- section M claimed migrations *"do not drop or rewrite"* and each *"runs in a
+  single transaction"*. Both false — `schema_v12` rewrites `audit_logs` and
+  resets the audit-chain head, and `v2`–`v4` have no transaction and **ignore
+  `--dry-run` entirely**;
+- section N listed migrations only to v10, so a new deployment following it
+  would stop three versions short and never install the location system;
+- section I offered `rotate_credentials.js --check` to *"seal the printed
+  password"* — it prints none — and `reset_link.js` to *create* an account,
+  which it cannot;
+- `backup.js` and `ops/cron-dic.sh` both pointed operators at *"section 5"* of a
+  document lettered A–O, at the exact moment the pointer fires;
+- the first table an operator reads during an incident said *"Who to call — see
+  section N"*, which is Migration;
+- stop/restart, account lockout, administrator suspension, DNS and monitoring
+  were **absent entirely**.
+
+Every claim in the new document was checked against the code before it was
+written: the 47-table count, the lockout thresholds and the 15-minute lapse, the
+AES parameters, the health status codes, the `token_version` bump on suspension,
+`reset_link.js`'s two refusals, and the `LOG_REQUESTS` gate on 2xx logging.
+
+### CI
+
+`.github/workflows/ci.yml` — GitHub Actions, because the repository is already
+on GitHub and nothing here needs a paid platform or a stored secret. It installs
+the schema **the way production installs it**, from `schema.sql` plus every
+migration, asserts 47 tables, then runs the suites, the audit chain, all three
+drills, and greps the server log for the throwaway secrets it generated. That
+first step is the one that would have caught the `migrate_v5` abort.
+
+### Files changed
+
+25 files, +3,092 / −396. New: `scheduler.js`, `offsite.js`, `KEY_MANAGEMENT.md`,
+`.github/workflows/ci.yml`, and four test files — `tests/install_drill.js`,
+`tests/ops_drill.js`, `tests/mail_drill.js`, `tests/phase6_operations.js`.
+Rewritten: `OPERATIONS_RUNBOOK.md`. Modified: `server.js`, `db.js`, `jobs.js`,
+`backup.js`, `routes_v2.js`, `js/events.js`, `migrate_v2.js`, `migrate_v5.js`,
+`rotate_credentials.js`, `ops/cron-dic.sh`, `.env.example`, `package.json`, and
+four test files.
+
+**Database changes: none.** No migration was added, no column altered, no data
+rewritten. The timezone is a session setting, not a schema change.
+
+**API changes: one addition.** `GET /api/internal/monitor`, guarded by
+`requireScheduler`. Nothing was removed or altered.
+
+### Tests
+
+```
+22 suites                     1,609 passed, 0 failed
+  of which phase6_operations     68
+  and phase4 rose 147 -> 161 (the runbook contract was re-specified, and the
+  new assertion set is longer than the one it replaced)
+drills                           91 passed, 0 failed
+  install_drill 30 · ops_drill 35 · mail_drill 26
+npm run verify-audit-chain    PASS, 4,235 entries, exit 0
+```
+
+No test expectation was weakened. `phase3`, `phase4` and `phase5e_production`
+had their production boot environments widened because `BACKUP_DIR` genuinely
+became required; `phase4`'s runbook assertions were re-specified because the
+brief re-specified the runbook, and grew from 15 sections to 20 plus nine new
+content checks.
+
+### Browser verification
+
+Both portals at 1280 — 10 alumni pages and 15 staff pages — **zero console
+errors, zero horizontal overflow**. The two modules this phase touched were
+checked specifically: the Events page no longer fires the sweep on render
+(`evRunMaintenanceSweep` is gone and the network call never happens), and the
+mentorship projection was exercised with a real expired request. The Operations
+panel renders correctly and now surfaces the reaped run as a failure.
+
+### Data integrity
+
+Users **18**, profiles **14**, reference places **99**, and the privacy and
+location fingerprints **byte-identical** to the Phase 5F baseline
+(`c24e9a0a…`, `db6e2fc2…`). Every drill built and dropped its own disposable
+database; none remained. Every probe account was removed. The live database was
+never the target of a destructive operation.
+
+### Incidents and regressions found during the phase
+
+Three, all self-inflicted and all recorded because the reason matters:
+
+- the first `ops_drill` run failed on `users.department NOT NULL` and a
+  `requested_at` column that does not exist — my fixtures, not the product;
+- the mail drill reported the reset link broken for twenty minutes before
+  quoted-printable turned out to be the explanation;
+- rewriting the runbook broke 17 `phase4` assertions pinned to the old section
+  letters. The content was all still present; the contract had changed.
+
+### Remaining limitations — stated plainly
+
+**What is proven:** the code paths. Install from nothing, purge, backup,
+off-site mechanism, restore, SMTP delivery, monitoring detection, boot
+enforcement, scheduler authorisation and idempotency. All executed, all
+repeatable, all in CI.
+
+**What is not, and cannot be from here:**
+
+| | |
+|---|---|
+| The hosting decision | Vercel and VPS are both shipped and DIC has chosen neither. Every runbook command is marked with which it applies to, and section F records that exactly one trigger is enabled — but the choice is not made. |
+| A production scheduler that has actually fired | No deployment exists. The jobs have run thousands of times against the development database; no cron has ever triggered them on a server. |
+| An off-site destination | The mechanism is proven against a separate local destination. `OFFSITE_CMD` is unset, so **this deployment keeps one copy of its data**, and the monitor says so. |
+| Deliverability | A message leaves over SMTP and arrives. Whether a real provider accepts it — SPF, DKIM, DMARC, reputation — needs DIC's domain and mail account. |
+| An external monitor | The endpoint works and returns 503 for every failure mode tested. Nothing is watching it. |
+| Backups encrypted at rest | `OFFSITE_ENCRYPT_CMD` exists and is unset. The local dumps are unencrypted, mode 0600. |
+| Vercel-specific limits | A serverless filesystem is ephemeral and has no `pg_dump`, so `backup.js` and `restore.js` cannot run there. A Vercel deployment must use the database provider's own backups. Recorded in the runbook; not solved, because it cannot be solved in application code. |
+
+Deferred deliberately, not forgotten: `consent_logs` and `stories` cascading on
+account deletion (a DIC policy decision), and `restore.js` ignoring
+`DATABASE_URL` so it does not work against a connection-string deployment.
+
+---
+
+## CURRENT STATE SNAPSHOT — end of Phase 6
+
+| Area | State |
+|---|---|
+| Core alumni system, events, tickets, admin portal | Working, 22 suites |
+| Authentication, authorisation, session revocation | Working, adversarially reviewed in 5F |
+| Privacy model | Working, server-enforced, single source of truth |
+| Audit trail | Hash-chained, verifiable, **unkeyed** — not tamper-proof, and documented as such |
+| Data honesty | No fabricated values anywhere; the last two were removed this phase |
+| Fresh install | **Works** — 47 tables from nothing, first administrator creatable, drilled |
+| Scheduler | One registry, one entry point, idempotent, timezone-correct, observable |
+| Deletion purge | Correct and drilled against the three outcomes |
+| Backup / restore | Working and drilled; **one copy, on one machine** |
+| Off-site copy | Mechanism proven; **no destination configured** |
+| SMTP | Delivery proven over real SMTP; **no provider account** |
+| Monitoring | Endpoint working and proven to detect failures; **nothing watching it** |
+| Secrets | Seven enforced at boot; escrow procedure written, **not performed** |
+| Runbook | Rewritten, 18+ sections, every claim checked |
+| CI | Configured; installs from scratch on every push |
+
+## PRODUCTION READINESS SNAPSHOT — end of Phase 6
+
+**GREEN** — done and verified. **YELLOW** — the code is done, an input is
+missing. **RED** — blocks go-live and nothing has been done about it.
+
+| Area | Status | Owner |
+|---|---|---|
+| Application code | GREEN | — |
+| Fresh install and migrations | GREEN | — |
+| Scheduler and jobs | GREEN in code | — |
+| Deletion purge | GREEN | — |
+| Backup and restore tooling | GREEN | — |
+| Monitoring endpoint | GREEN | — |
+| Secret enforcement | GREEN | — |
+| Documentation | GREEN | — |
+| Tests and CI | GREEN | — |
+| **Hosting decision** | YELLOW | **DIC** |
+| Domain, DNS, TLS | YELLOW | DIC + hosting |
+| Production secrets and escrow | YELLOW | DIC + hosting |
+| Off-site backup destination | YELLOW | hosting |
+| SMTP account | YELLOW | third-party + DIC |
+| Production cron actually firing | YELLOW | hosting |
+| External uptime monitor | YELLOW | hosting |
+| Named super-admin owner | YELLOW | DIC |
+| **Independent security review** | RED | **DIC** |
+
+The engineering is finished. **Nine items block go-live and eight of them are
+inputs nobody in this repository can supply.** The ninth is unchanged from
+Phase 5F: no independent security review has been performed.
+
+### Next phase
+
+None defined. The next actions are DIC's: choose the host, supply the eight
+inputs, and commission the review. The one piece of engineering worth queueing
+is a Vercel-compatible backup path, if Vercel is the answer to the first
+question.

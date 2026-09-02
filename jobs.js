@@ -26,7 +26,32 @@ const db = require('./db');
    run?" is answerable from the admin portal without shell access — and a
    monitor has something to alert on when a job stops reporting. */
 
+/* How long a run may stay 'running' before it is presumed dead. A job that is
+   killed mid-flight — a serverless invocation timing out, a VPS rebooting, an
+   operator pressing Ctrl-C — never reaches closeRun, so its row stays 'running'
+   for ever. A monitor then cannot tell a job that is working from one that died
+   months ago, and the failure is invisible precisely when it matters.
+
+   Reaped on the next run of the same job rather than by a separate sweeper, so
+   there is nothing extra to schedule and nothing extra to fail. */
+const RUN_STALE_MINUTES = parseInt(process.env.JOB_STALE_MINUTES || '30', 10);
+
+async function reapStaleRuns(job) {
+  const r = await db.query(
+    `UPDATE ops_runs
+        SET status='failed',
+            finished_at=CURRENT_TIMESTAMP,
+            detail=COALESCE(detail,'') ||
+                   'abandoned: still marked running after ' || $2 || ' minutes, presumed killed mid-run'
+      WHERE job=$1 AND status='running'
+        AND started_at < CURRENT_TIMESTAMP - ($2 || ' minutes')::interval
+      RETURNING id`, [job, RUN_STALE_MINUTES]);
+  return r.rowCount;
+}
+
 async function openRun(job, source) {
+  const reaped = await reapStaleRuns(job);
+  if (reaped) console.warn(`[scheduler] ${job}: marked ${reaped} abandoned run(s) as failed`);
   const r = await db.query(
     `INSERT INTO ops_runs (job, status, source) VALUES ($1, 'running', $2) RETURNING id, started_at`,
     [job, source || 'cron']);
@@ -251,7 +276,7 @@ async function runAllJobs(deps, source) {
 }
 
 module.exports = {
-  buildJobs, runJob, runAllJobs,
+  buildJobs, runJob, runAllJobs, reapStaleRuns,
   purgeDueDeletions, expireStaleMentorships,
   JOB_NAMES: Object.keys(buildJobs({}))
 };

@@ -4,499 +4,879 @@
 assumes you can open a terminal on the server and follow instructions. It does
 not assume you can read the code.
 
-**Before an incident, know these three things:**
-
-| | |
-|---|---|
-| Where the application runs | _fill in: hostname, or the Vercel project name_ |
-| Where the backups are | _fill in: `BACKUP_DIR`, and the off-site copy_ |
-| Who to call | _fill in: see section N_ |
-
-Every command below is run from the application directory (`/srv/dic-alumni` in
-these examples). Anything that could destroy data says so before the command.
+This is the **day-2** guide: incidents, backups, jobs, accounts. The first
+deployment is [`PRODUCTION_DEPLOYMENT_RUNBOOK.md`](PRODUCTION_DEPLOYMENT_RUNBOOK.md).
+Secrets and the encryption key have their own document,
+[`KEY_MANAGEMENT.md`](KEY_MANAGEMENT.md).
 
 ---
 
-## A. Start the service
+## Read this first
 
-**Standalone server (VPS):**
+| | |
+|---|---|
+| **Hosting** | _DIC to record: **Vercel** or **VPS**. Both are shipped and exactly one is enabled. Every command below is marked with the one it applies to._ |
+| Where the application runs | _fill in: hostname, or the Vercel project name_ |
+| Where backups are written | _fill in: the `BACKUP_DIR` path_ |
+| Where the off-site copy goes | _fill in, or record that there is none — see section D_ |
+| Who to call | _fill in: see **section S**_ |
+
+Those blanks are tracked as owned items in
+[`PRODUCTION_HANDOVER_CHECKLIST.md`](PRODUCTION_HANDOVER_CHECKLIST.md). A blank
+here is a decision nobody has made yet, not an oversight in this document.
+
+### What has and has not been executed
+
+Be clear about this before you rely on anything below.
+
+- **Run on a developer machine, repeatedly, and passing:** the full test suite,
+  the fresh-install drill, the deletion-purge drill, the backup/restore drill,
+  and the password-reset delivery drill.
+- **Never run anywhere:** the systemd unit, the nginx configuration, the crontab
+  entries, `ops/healthcheck.sh` against a real monitor, and any off-site backup
+  destination. Nothing in this repository has ever run on a DIC server.
+
+Every command below is written to be run for the first time.
+
+---
+
+## A. Start the system
+
+**VPS:**
 
 ```bash
-cd /srv/dic-alumni && node server.js
-```
-
-Under a process manager, which is what a real deployment should use so the app
-restarts after a crash or reboot:
-
-```bash
-sudo systemctl start dic-alumni
-sudo systemctl status dic-alumni
+sudo systemctl start dic-alumni && sudo systemctl status dic-alumni
 ```
 
 **Vercel:** the application starts on demand. There is nothing to start; a
 deploy is the only "restart".
 
 **If it refuses to start**, read the error. In production it deliberately
-refuses to boot when a required secret is missing, and it names which one:
+refuses to boot when a required variable is missing, and it names which:
 
 ```
 Refusing to start in production: required secret(s) missing or malformed:
-SESSION_SECRET, CRON_SECRET (32+ characters)
+CRON_SECRET (32+ characters), BACKUP_DIR (an absolute path outside the application directory)
 ```
 
-That is the application working correctly, not a bug. Set the named variables
-(section G) and start again. Required in production:
+That is the application working correctly. Set the named variables and start
+again. **Required in production:**
 
 | Variable | Why it must be set |
 |---|---|
 | `SESSION_SECRET` | Signs session tokens. Missing ⇒ every user is signed out on each restart. |
-| `ENCRYPTION_KEY` | Encrypts NID/BRC records and signs ticket QR codes. Missing ⇒ the identity vault and ticketing both refuse to operate. |
-| `CRON_SECRET` | The scheduler's credential. Missing ⇒ nightly jobs cannot run, including the account-deletion purge. |
-| `SMTP_HOST`, `SMTP_FROM` | Password-reset email. Not required if `MAIL_TRANSPORT=none`, which is a deliberate choice to keep section H as the only recovery route. |
+| `ENCRYPTION_KEY` | 64 hex characters. Encrypts identity-vault records and signs ticket QR codes. **Cannot be recovered if lost** — see [`KEY_MANAGEMENT.md`](KEY_MANAGEMENT.md). |
+| `CRON_SECRET` | 32+ characters. The scheduler's credential. Missing ⇒ the nightly jobs cannot run, including the deletion purge. |
+| `MAIL_TRANSPORT` | `smtp`, `console` or `none`. **No default** — the deployment has to say which. |
+| `PUBLIC_ORIGIN` | The alumni site's origin, and half the CORS allow-list. |
+| `ADMIN_ORIGIN` | The staff portal's origin. Set it to the same value for a single-host deployment. |
+| `BACKUP_DIR` | An absolute path **outside** the application directory. Refused if it points inside. |
+| `SMTP_HOST`, `SMTP_FROM` | Only when `MAIL_TRANSPORT=smtp`. |
+
+`TRUST_PROXY` is not required but is easy to get wrong in both directions, and
+it decides whether the rate limiter and the audit trail mean anything:
+
+- **Behind a proxy and left unset** — every request appears to come from the
+  proxy, so the per-IP login throttle treats the whole internet as one client
+  and a handful of failed sign-ins locks out everybody.
+- **Set with no proxy in front** — the value is a hop *count*, not an address
+  allow-list, so `X-Forwarded-For` becomes the caller's to choose. Measured: 32
+  wrong passwords with a rotating forged header produced zero refusals, and the
+  forged address is what the audit trail recorded.
+
+Set it to the number of hops you actually have, usually `1`, or leave it unset
+when the application is reached directly.
 
 ---
 
-## B. Check health
+## B. Stop and restart
+
+Stop before a restore (section E) and before a database migration (section C).
+Nothing else requires it.
+
+**VPS:**
+
+```bash
+sudo systemctl stop dic-alumni       # stop
+sudo systemctl restart dic-alumni    # restart, picking up .env changes
+sudo systemctl status dic-alumni     # confirm
+```
+
+A change to `.env` needs a **restart**, not a reload: the file is read once at
+boot.
+
+If you started it by hand rather than under systemd:
+
+```bash
+pkill -f "node server.js"            # then start it again as in section A
+```
+
+**Vercel:** you cannot stop it, and you do not need to. Redeploy to pick up a
+code change; change an environment variable in the project settings and
+redeploy to pick that up.
+
+**Confirm it came back:**
 
 ```bash
 curl -s https://alumni.<domain>/api/health
 ```
 
-| Response | Meaning | Do |
-|---|---|---|
-| `{"status":"ok","database":"ok",...}` | Healthy | Nothing |
-| `{"status":"degraded","database":"unreachable"}` | App up, database down | Section J |
-| No response / timeout / 502 | Application down | Section L |
-
-This endpoint is public and intentionally says nothing else — no version, no
-host, no user count. The detail you need during an incident is in the admin
-portal under **Operations**, which requires an administrator sign-in.
+Expect `{"status":"ok","database":"ok","latencyMs":n}` with HTTP 200.
 
 ---
 
-## C. Check the scheduler
+## C. Database migration
 
-**In the browser:** sign in to the staff portal → **Operations**. Each job
-shows when it last ran and whether it succeeded. A job marked **stale** has not
-run in over 36 hours, which usually means the scheduler stopped, not that the
-job failed.
-
-**From the terminal:**
+The schema is a base file plus numbered migrations. A new deployment applies
+`schema.sql` **first**, then `migrate_v2.js` through `migrate_v13.js` in order.
 
 ```bash
-# Last run of each job
-psql "$DATABASE_URL" -c \
-  "SELECT DISTINCT ON (job) job, status, started_at, items, detail
-     FROM ops_runs ORDER BY job, started_at DESC;"
+cd /srv/dic-alumni
+psql "$DATABASE_URL" -f schema.sql          # new deployments only
+for v in 2 3 4 5 6 7 8 9 10 11 12 13; do
+  node "migrate_v$v.js" || { echo "v$v FAILED — stop and read the error"; break; }
+done
 ```
 
-**To run a job by hand** (safe — every job is idempotent, so running one twice
-does nothing the first run did not already do):
+**Before you run any of it: stop the application (section B) and take a backup
+(section D).**
+
+What is true of these migrations, precisely — the previous version of this
+section overstated it:
+
+- They are **additive**: they add columns and tables. None drops a column that
+  holds data.
+- Some do **rewrite data**. `schema_v12.sql` updates `audit_logs` and resets the
+  audit-chain head; `schema_v5.sql` sets a column `NOT NULL` and adds foreign
+  keys; `schema_v13.sql` updates `alumni_profiles`. They are not purely
+  structural.
+- **`migrate_v2.js`, `migrate_v3.js` and `migrate_v4.js` have no transaction and
+  ignore `--dry-run` entirely.** For those three the flag is silently accepted
+  and does nothing, and a failure part-way leaves a partial result. `v5` onward
+  are transactional and `--dry-run` genuinely applies, verifies and rolls back.
+
+Verify afterwards:
 
 ```bash
-curl -X POST "https://alumni.<domain>/api/internal/jobs/run?job=deletion-purge" \
-     -H "X-Cron-Key: $CRON_SECRET"
+psql "$DATABASE_URL" -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'"
 ```
 
-Job names: `event-maintenance`, `deletion-purge`, `mentorship-expiry`. Omit
-`?job=` to run all three.
+A complete v13 database has **47 tables**. Anything less means a migration
+stopped; read its output.
 
-**Where the schedule lives — exactly one of these is active:**
-
-- **Vercel:** the `crons` block in `vercel.json`. Vercel calls the endpoint with
-  the `CRON_SECRET` as a bearer token. Check the Cron tab in the Vercel
-  dashboard for run history.
-- **VPS:** `ops/cron-dic.sh`, installed in the deploy user's crontab. It also
-  takes the nightly backup and runs a weekly restore drill.
-
-  ```bash
-  crontab -l                       # confirm the entry exists
-  tail -50 /var/log/dic-alumni-cron.log
-  ```
-
-**Never enable both.** Two schedulers pointed at the same jobs is how nobody
-can say which one ran.
+**Demonstration data is off by default.** `migrate_v2.js` can seed a poll,
+vendors and a planning timeline so a demo environment does not open on empty
+screens. It only does so when `DIC_SEED_DEMO=1`. Never set that in production —
+until Phase 6 it ran unconditionally, and fresh production databases were
+getting invented vendors with made-up phone numbers and a live poll on the
+public news feed.
 
 ---
 
-## D. Check the latest backup
+## D. Backup
 
-```bash
-node backup.js --list
-cat "$BACKUP_DIR/last-backup.json"
+### What runs, and when
+
+**VPS:** `ops/cron-dic.sh` is the single nightly entry. In order: backup →
+off-site copy → scheduled jobs → a restore drill on Sundays.
+
+```cron
+15 2 * * *  cd /srv/dic-alumni && ./ops/cron-dic.sh >> /var/log/dic-alumni-cron.log 2>&1
 ```
 
-`last-backup.json` says `"status": "ok"` and when it finished. The admin
-portal's Operations page shows the same thing. A backup older than 36 hours is
-flagged as stale — treat that as an incident, not a warning: it means the
-nightly job stopped and nobody noticed.
+**Vercel:** the serverless filesystem is ephemeral and has no `pg_dump`, so the
+application cannot back itself up. Use the database provider's own automated
+backups, and record here what their retention window is. This is not optional —
+without it a Vercel deployment has no backup at all.
 
-**Take one right now:**
+### By hand
 
 ```bash
-node backup.js
+cd /srv/dic-alumni
+node backup.js              # dump + prune to BACKUP_RETENTION_DAYS
+node offsite.js             # ship the newest dump off this machine
+node offsite.js --check     # report configuration and last result
 ```
+
+`backup.js` writes `dic_alumni_<timestamp>.sql` into `BACKUP_DIR` with mode
+`0600`, checks the dump ends with PostgreSQL's completion marker before trusting
+it, prunes past `BACKUP_RETENTION_DAYS` (default 14, and it never deletes the
+newest file whatever its age), and leaves `last-backup.json` as a receipt.
+
+### The off-site copy
+
+**A backup that lives only on the machine it was taken from does not survive the
+failure it exists for.** `offsite.js` runs whatever `OFFSITE_CMD` says, with
+`{file}` and `{name}` substituted. No vendor SDK and no credential is in the
+repository.
+
+```bash
+# S3-compatible (AWS, Backblaze B2, Wasabi, MinIO)
+OFFSITE_CMD='aws s3 cp {file} s3://dic-alumni-backups/{name} --sse AES256'
+# any host reachable over ssh
+OFFSITE_CMD='scp -q {file} backups@offsite.example:/srv/dic/{name}'
+# rclone, which speaks most institutional cloud storage
+OFFSITE_CMD='rclone copyto {file} dic-remote:alumni-backups/{name}'
+```
+
+A dump holds every alumnus's personal data in plaintext, plus the identity
+vault's ciphertext. Prefer encryption at the destination; where the destination
+cannot provide it, set `OFFSITE_ENCRYPT_CMD` and the encrypted file is what
+gets shipped.
+
+**Retention.** 14 daily copies locally by default. Agree a longer off-site
+retention with DIC and record it here — a weekly kept for a month and a monthly
+kept for a year is a reasonable shape. _DIC to confirm._
+
+### When a backup fails
+
+A failed backup is an incident. The log line says so:
+
+```
+[backup] FAILED: <reason>
+[backup] a failed backup is an incident — see OPERATIONS_RUNBOOK.md section D
+```
+
+1. Read the reason. The usual causes are a full disk, `pg_dump` missing from
+   `PATH` (set `PG_DUMP` to its full path), or the database being unreachable.
+2. Fix it and run `node backup.js` by hand. Do not wait for tomorrow night.
+3. Check `last-backup.json` now says `"status": "ok"`.
+4. If it failed for more than one night, say so in the incident record: the
+   recovery point is now as old as the last good dump.
 
 ---
 
 ## E. Restore
 
-> **Read this whole section before typing anything.** Restoring is how data gets
-> lost, not how it gets saved. There is no "restore over production" command,
-> deliberately.
+**Restoring overwrites everything written since the dump was taken.** Do it
+because the data is wrong, not because a deploy went wrong — for a bad deploy,
+roll the code back instead (section N).
 
-**E1. Prove the backup is good — do this first, always:**
+### Rehearse it — weekly, automatically
 
 ```bash
 node restore.js --drill
 ```
 
-This restores the newest backup into a throwaway database, checks that users,
-events, tickets, registrations, donations, audit logs and the identity vault
-all came back, then drops the throwaway. It never touches the live database.
+Restores the newest dump into a **disposable** database, verifies it, and drops
+it. It never touches the live database. `ops/cron-dic.sh` runs it every Sunday.
 
-**E2. Restore for real.** The safe order is: restore beside production, verify,
-then repoint the application. Never overwrite the live database in place.
+The deeper drill, which also exercises the deletion purge:
 
 ```bash
-# 1. Back up what is there now, however broken — you may need it.
-node backup.js
-
-# 2. Create a new, empty database.
-createdb dic_alumni_restored
-
-# 3. Load the backup into it.
-node restore.js --into dic_alumni_restored --file "$BACKUP_DIR/<chosen-file>.sql"
-
-# 4. Look at it before trusting it.
-psql -d dic_alumni_restored -c "SELECT COUNT(*) FROM users;"
-psql -d dic_alumni_restored -c "SELECT COUNT(*) FROM audit_logs;"
-
-# 5. Point the application at it: change PGDATABASE (or DATABASE_URL) in .env
-#    and restart. Keep the old database until you are certain.
+node tests/ops_drill.js
 ```
 
-**What a restore costs you:** everything written between the backup and now.
-Logical backups run nightly, so the worst case is roughly 24 hours of new
-registrations, pledges and profile edits. If the institution cannot accept that,
-it needs a managed database with point-in-time recovery — see section F.
+### A real restore
+
+```bash
+# 1. Stop the application.
+sudo systemctl stop dic-alumni
+
+# 2. Capture the CURRENT bad state first. You will want it even though it is bad.
+cd /srv/dic-alumni && node backup.js
+
+# 3. Restore into a NEW database and inspect it before switching.
+node restore.js --into dic_alumni_restore --file "$BACKUP_DIR/<dump>"
+node verify_audit.js --database dic_alumni_restore
+psql -d dic_alumni_restore -c "SELECT count(*) FROM users"
+psql -d dic_alumni_restore -c "SELECT count(*) FROM identity_vault"
+
+# 4. Only when that copy is verified, point PGDATABASE at it and start.
+```
+
+**Keep the damaged database.** Do not drop it until somebody has decided nothing
+in it was needed.
+
+A verified restore means: the table count matches, the critical row counts
+match, the audit chain verifies, and the identity vault's ciphertext, IV and
+auth tag survived byte for byte. `tests/ops_drill.js` checks all four.
+
+**Known limitation:** `restore.js` reads the `PG*` variables and **ignores
+`DATABASE_URL` entirely**, so it does not work on a deployment that uses a
+connection string. Set the `PG*` variables for the restore, or use the
+provider's own restore tooling.
 
 ---
 
-## F. Backup policy
+## F. Scheduler
+
+Three jobs run on a timer rather than when somebody opens a page:
+
+| Job | What it does |
+|---|---|
+| `event-maintenance` | Rolls event statuses forward by the calendar and sends task deadline reminders |
+| `deletion-purge` | Erases accounts whose 30-day grace period has expired |
+| `mentorship-expiry` | Expires mentorship requests older than five days |
+
+**`deletion-purge` is a promise made to every user who asks to be erased.** If
+nothing triggers it, that promise is silently broken and nothing in the UI says so.
+
+### Exactly one trigger is enabled
 
 | | |
 |---|---|
-| **Method** | `pg_dump` logical backup, full schema + data |
-| **Schedule** | Nightly, before the scheduled jobs run |
-| **Retention** | 14 days of dailies (`BACKUP_RETENTION_DAYS`) |
-| **Location** | `BACKUP_DIR` — must be outside the application directory and outside any web root |
-| **Permissions** | Directory `0700`, files `0600`, owned by the deploy user |
-| **Encryption at rest** | Provided by the disk/volume. A dump contains every alumnus's personal data — if the volume is not encrypted, this is not adequate. |
-| **Off-site copy** | _fill in._ A backup on the same server as the database does not survive losing that server. |
-| **Verification** | Weekly automated restore drill (`ops/cron-dic.sh`, Sundays) |
+| **Vercel** | `vercel.json`'s `crons` block calls `/api/internal/jobs/run?job=<name>` with `CRON_SECRET` as a bearer token. `scheduler.js` is unused. |
+| **VPS** | `ops/cron-dic.sh` runs `node scheduler.js`. It talks to the database directly, so jobs still run when the web process is down — which is when the purge matters most. |
 
-The newest backup is never pruned, whatever its age — a stale backup is still
-better than none.
+_DIC to record which one this deployment uses._ **Never enable both.** They are
+idempotent so nothing breaks, but the run log becomes unreadable.
 
-**If the provider offers managed point-in-time recovery** (Neon, RDS, Supabase),
-document it here and treat `pg_dump` as the second line rather than the first.
-They are not equivalent: PITR recovers to a moment, `pg_dump` recovers to last
-night.
+**How to tell if both are firing:** `ops_runs.source` records which trigger ran
+each job. `node scheduler.js --list` prints a warning when recent runs came from
+more than one source.
 
-_Provider PITR status: **fill in** — enabled/not enabled, retention window._
+### Inspecting and running by hand
+
+```bash
+node scheduler.js --list       # last run of each job, with age and outcome
+node scheduler.js --status     # same, but exits non-zero if anything needs attention
+node scheduler.js              # run every job now
+node scheduler.js deletion-purge
+```
+
+Every job is idempotent: running one twice is indistinguishable from running it
+once. Retries are safe.
+
+### When a job fails
+
+```
+[scheduler] deletion-purge: FAILED — <reason>
+```
+
+1. `node scheduler.js --list` — how long has it been failing?
+2. Run the one job by hand and read the error.
+3. The Operations panel in the staff portal shows the same information without
+   shell access.
+
+A job killed mid-run used to stay marked `running` for ever, indistinguishable
+from one in flight. The next run of the same job now marks anything older than
+`JOB_STALE_MINUTES` (default 30) as failed.
+
+**Nothing triggers scheduled work as a side effect of a page load.** Two such
+triggers existed and were removed; if you find another, it is a bug.
 
 ---
 
-## G. Rotate credentials
+## G. SMTP and email
 
-**Seeded staff account passwords:**
+Email is used for exactly one thing: password-reset links. There is no
+broadcast email, no SMS, no push.
+
+`MAIL_TRANSPORT` has **no default** and production will not boot without it:
+
+| Value | Behaviour |
+|---|---|
+| `smtp` | Send. Requires `SMTP_HOST` and `SMTP_FROM`; `SMTP_PORT` (default 587), `SMTP_USER`, `SMTP_PASSWORD` as the provider requires. Port 465 uses implicit TLS; anything else negotiates STARTTLS. |
+| `none` | Accept and drop. A deliberate choice to keep section J as the only recovery route. Users cannot reset their own passwords. |
+| `console` | **Development only.** Writes reset links into the log in plaintext. |
+
+### Checking it
+
+The Operations panel reports mail state. From a shell:
 
 ```bash
-node rotate_credentials.js --all      # generate new ones
-node rotate_credentials.js --check    # find accounts still on a weak password
+curl -s -H "X-Cron-Key: $CRON_SECRET" https://alumni.<domain>/api/internal/monitor | grep -o '"mail":{[^}]*}'
 ```
 
-New passwords are written once to `admin-credentials.local.txt`, which is
-gitignored and is **not** served by the web server. Move them into the password
-manager and delete the file.
+A failed send is logged and deliberately never surfaced to the user, because
+telling them would reveal whether the address is registered:
 
-**`SESSION_SECRET`** — changing it signs everybody out immediately. Do it during
-a quiet hour, and only if you believe it has leaked.
+```
+[mail] FAILED "Reset your DIC Alumni Network password" to ab***@example.com: <reason>
+```
 
-**`ENCRYPTION_KEY`** — see section K first. Rotating it without re-encrypting
-makes every existing vault record permanently unreadable.
+The address is masked in the log on purpose — a mail log should not become a
+member directory.
 
-**`CRON_SECRET`** — change it in the application environment and in whichever
-scheduler is active, in that order. The jobs simply fail to authenticate in
-between; nothing is lost.
+### If reset emails are not arriving
+
+1. Confirm `MAIL_TRANSPORT=smtp` and the SMTP variables are set. `console` and
+   `none` both look like success from the outside.
+2. Look for `[mail] FAILED` in the log.
+3. Check the provider's own dashboard for rejections, and check SPF/DKIM/DMARC
+   for the sending domain. Delivery to a third party has never been tested from
+   this repository — the drill proves the message leaves, not that a provider
+   accepts it.
+4. Meanwhile, use section J.
 
 ---
 
-## H. Administrator password recovery
+## H. Secret rotation
 
-**Normal route:** the person clicks "Forgot your password?" on the sign-in
-screen and receives a link by email. It works once and expires in 30 minutes.
+Full procedures, consequences and escrow are in
+[`KEY_MANAGEMENT.md`](KEY_MANAGEMENT.md). In brief:
 
-**If email is not configured or is broken** (emergency only — needs server
-access):
-
-```bash
-node reset_link.js --email someone@dic.edu.bd
-```
-
-The link is written to `reset-link.local.txt` (gitignored, mode 0600) and
-deliberately **not** printed to the terminal, so it cannot end up in a shell
-history or a screen recording. Send it to the person over a channel you trust,
-and delete the file afterwards.
-
-**A super admin can also reset any staff account** from the staff portal:
-Administration → the person → Reset password. They are given a temporary
-password and must change it at next sign-in.
+| Secret | Safe to rotate? | Consequence |
+|---|---|---|
+| `SESSION_SECRET` | Yes | Everybody is signed out. |
+| `CRON_SECRET` | Yes | Update the trigger too — the Vercel environment variable or the crontab. |
+| Database password | Yes | Update `.env` and restart. |
+| `ENCRYPTION_KEY` | **No** | Every identity-vault record becomes permanently unreadable. Restoring a backup does not help — the backup holds the same ciphertext. |
 
 ---
 
-## I. Emergency super admin recovery
+## I. Encryption-key recovery
 
-There is **one** super admin account. If it is lost, nobody can provision
-administrators, change roles, or reach the audit log.
+See [`KEY_MANAGEMENT.md`](KEY_MANAGEMENT.md) sections 2 and 4. The short
+version, because it is the thing most likely to be got wrong:
 
-**Prepare for this before it happens** — the institution should do exactly one
-of the following, and record which:
+- `ENCRYPTION_KEY` is the only secret whose loss destroys data.
+- `identity_vault` stores **no key id and no key version**, so there is no
+  zero-downtime rotation path.
+- The key must exist in two places before the first record is written: the
+  hosting platform's environment store, and the institution's password manager
+  or sealed escrow. Two named people must be able to reach the escrow.
+- Production refuses to boot without it — a missing key is a startup failure,
+  not a quiet degradation. (An earlier version of this document said the vault
+  merely "refuses to operate"; that is only true in development.)
 
-**Option 1 — sealed backup credential (recommended).**
-Create a second `super_admin` whose password is generated, written down once,
-sealed in an envelope, and stored wherever the institution keeps its
-constitutional documents. It is never used for daily work and its sign-ins are
-audited like any other. Review the audit log for its use at every term end.
+---
+
+## J. Password-reset emergency procedure — **break-glass only**
+
+Normal recovery is self-service: the user clicks "Forgot your password?". This
+is for when SMTP is down, or `MAIL_TRANSPORT=none`, or the account in question
+is the super admin and nobody can sign in.
 
 ```bash
-# One-time, run by a super admin, then seal the printed password:
-node rotate_credentials.js --check     # confirm the account exists and is strong
+cd /srv/dic-alumni
+node reset_link.js --email person@dic.edu.bd
 ```
 
-**Option 2 — documented offline recovery.**
-Accept a single super admin, and record here the exact procedure for creating a
-replacement with database access:
+It prints a single-use link valid for 30 minutes. Read it to the person over a
+channel you trust; do not paste it into a shared chat.
 
-```bash
-# Requires database credentials. Every use must be reported to the
-# institution's IT authority and recorded below.
-node reset_link.js --email <the super admin's address>
-```
+**It refuses in two cases, and says so:**
 
-_Which option is in force, and where the sealed record is kept: **fill in**._
+- **No account with that address** — it exits 1. It does not create accounts.
+  To create the *first* administrator on a new deployment, see section T.
+- **The account is not `active`** — a suspended or pending account is refused.
+  Reactivate it first (section L).
 
-**Every use of an emergency credential is audited.** After any use, check:
+**Watch the hostname.** Self-service reset builds its link from
+`PUBLIC_ORIGIN` — the alumni site. `reset_link.js` builds it from
+`ADMIN_ORIGIN` and points at `/admin`. On a two-hostname deployment a staff
+member who uses "Forgot your password?" on the staff portal is sent to the
+*alumni* site to complete it. That works, but it surprises people.
+
+**Never** email a reset link from your own account, and never read one out of
+the application log.
+
+---
+
+## K. Account lockout recovery
+
+A member or administrator says they cannot sign in and are being told to try
+again later.
+
+### What is happening
+
+Two independent limiters:
+
+| | Threshold | Where it lives | Survives a restart? |
+|---|---|---|---|
+| Durable account lock | 5 failures ⇒ `users.locked_until` set 15 minutes ahead | The `users` row | Yes |
+| In-process throttle | 5 per account and 20 per IP per 15 minutes | Memory | No |
+
+Both answer with **HTTP 429** and the same message, deliberately, so neither
+reveals which one tripped or whether the address exists.
+
+The durable lock is checked **before** the password is compared, so it actually
+throttles guessing. The counter restarts once a lapsed lock is seen, so windows
+cannot be chained into an indefinite lockout: **the lock lapses on its own after
+15 minutes**, and a successful sign-in clears it.
+
+### What to do
+
+1. **Wait 15 minutes.** This resolves most cases and is the right answer for an
+   ordinary member.
+2. **A password reset also clears it** — section J, or self-service.
+3. **For a member of staff**, a super admin can clear it immediately by
+   resetting their password from the staff portal
+   (`POST /api/admin/administrators/:id/reset-password`). That route matches on
+   staff roles only, so **it cannot unlock an ordinary alumnus.**
+4. **Everybody locked out at once** is a different problem: check `TRUST_PROXY`
+   (section A). Behind a proxy with it unset, every request looks like the
+   proxy's address and the per-IP limiter counts the whole internet as one
+   client.
+
+To confirm a lock rather than a wrong password:
 
 ```bash
 psql "$DATABASE_URL" -c \
-  "SELECT created_at, action, meta, actor_id FROM audit_logs
-    ORDER BY id DESC LIMIT 40;"
+  "SELECT email, failed_login_count, locked_until FROM users WHERE email='person@dic.edu.bd'"
 ```
 
 ---
 
-## J. The database is unavailable
+## L. Administrator suspension
 
-Symptom: `/api/health` returns `{"status":"degraded","database":"unreachable"}`.
+**This is the correct immediate response to a compromised staff account** —
+faster and more complete than changing the password, because it ends every
+session at once.
 
-1. **Is the database running?**
-   ```bash
-   sudo systemctl status postgresql        # or: docker ps
-   ```
-2. **Can this machine reach it?**
-   ```bash
-   psql "$DATABASE_URL" -c "SELECT 1;"
-   ```
-3. **Is it out of disk?** This is the most common cause.
-   ```bash
-   df -h
-   ```
-4. **Is it out of connections?** The application uses a pool; a leak elsewhere
-   can exhaust the server's limit.
-   ```bash
-   psql "$DATABASE_URL" -c "SELECT count(*) FROM pg_stat_activity;"
-   ```
-
-The application does not need restarting once the database returns — the pool
-reconnects. Restart it only if health stays degraded after the database is
-confirmed up.
-
-**Do not restore from backup** because the database is unreachable. It is
-almost never the answer, and it discards everything since last night. Fix the
-connection first.
-
----
-
-## K. `ENCRYPTION_KEY` is lost
-
-**Read this before doing anything.**
-
-`ENCRYPTION_KEY` encrypts the identity vault — the NID, BRC and passport
-records — with AES-256-GCM. **If it is lost, those records cannot be recovered
-by anyone, including us.** They are not recoverable from a backup either: the
-backup contains ciphertext, and the key is not in the backup.
-
-It also signs event ticket QR codes. A changed key invalidates every ticket
-already issued.
-
-**If the key is lost:**
-
-1. Do not rotate anything else yet.
-2. The application will refuse to start in production. That is correct — it
-   protects you from silently writing new records under a new key while old
-   ones become unreadable.
-3. Decide, with the institution's data-protection owner:
-   - Generate a new key, accept that existing vault records are gone, and clear
-     them so the vault does not appear to hold data it cannot read.
-   - Restore the key from escrow (below) if a copy exists.
-4. Re-issue any outstanding event tickets.
-
-**Escrow — do this now if it has not been done.** Both `ENCRYPTION_KEY` and
-`SESSION_SECRET` must exist in exactly two places:
-
-1. The deployment environment (Vercel environment variables, or `.env` on the
-   server with mode `0600`).
-2. The institution's approved password manager, or a sealed offline record held
-   with the institution's other critical credentials.
-
-They must **never** be in: git, this runbook, the README, any frontend file,
-any public file, the database, a support ticket, or a chat message. The
-application never prints them — the startup error names a missing variable, not
-its value.
-
-_Where escrow is held: **fill in**. Last verified readable: **fill in**._
-
----
-
-## L. The site is down
-
-1. **Confirm it is not just you.**
-   ```bash
-   curl -sS -o /dev/null -w '%{http_code}\n' https://alumni.<domain>/api/health
-   ```
-2. **Is the process running?**
-   ```bash
-   sudo systemctl status dic-alumni
-   sudo journalctl -u dic-alumni -n 100 --no-pager
-   ```
-   On Vercel: check the deployment's function logs.
-3. **Did a deploy just happen?** If so, section M.
-4. **Did it fail to start on a missing secret?** The log says which one; see
-   section A.
-5. **Is the database down?** Section J.
-6. **Restart it.**
-   ```bash
-   sudo systemctl restart dic-alumni
-   ```
-
-Log lines for API requests look like this, and are safe to paste into a ticket
-— they contain no tokens, no passwords, and no query strings:
+From the staff portal: Administration → the account → Suspend. Or:
 
 ```
-2026-09-02T03:22:11.001Z 8f3a91c2d40e POST /api/auth/login 401 42ms anon
+PUT /api/admin/administrators/:id/status    {"status": "suspended"}
 ```
 
-The 12-character value is the request id, also returned to the browser as
-`X-Request-Id`. If a user can give you that, it will find their exact request.
+Super admin only. It refuses self-suspension, so you cannot lock yourself out.
+It bumps `token_version`, which means **every session that account has open dies
+on its next request** — not at token expiry.
+
+Reactivate the same way with `{"status": "active"}`. Rotate their password
+(section J) before reactivating if the account was compromised.
+
+A suspended account gets a distinct message at sign-in so the holder knows to
+ask an administrator rather than retrying their password.
 
 ---
 
-## M. Rollback
+## M. Incident response
 
-**Code:**
+### Severity
+
+| | Meaning | Response |
+|---|---|---|
+| **P1** | The platform is down, or personal data is exposed | Immediately, at any hour |
+| **P2** | A core function is broken for everyone — sign-in, the purge, backups | Same day |
+| **P3** | Degraded or partial — one screen, one role, a stale job | Next working day |
+
+### The first five minutes
+
+```bash
+curl -s -w ' [%{http_code}]\n' https://alumni.<domain>/api/health
+curl -s -H "X-Cron-Key: $CRON_SECRET" https://alumni.<domain>/api/internal/monitor
+sudo journalctl -u dic-alumni -n 200 --no-pager     # VPS
+```
+
+`/api/health` answers one question: is the application up and can it reach the
+database. `/api/internal/monitor` answers the rest — jobs, backups, off-site
+copy, overdue deletions, mail.
+
+### Site is down
+
+1. Is the process running? Section B.
+2. Is the database running and reachable? `degraded` in the health response
+   means the app is up and the database is not.
+3. Did it refuse to boot? Read the log — it names the missing variable.
+4. Both hostnames serving the alumni site ⇒ the `Host` header is not reaching
+   the application. A browser CORS error ⇒ `PUBLIC_ORIGIN` / `ADMIN_ORIGIN` do
+   not match the hostnames in use, scheme included.
+
+### Suspected data exposure
+
+1. **Suspend the accounts involved** (section L) before anything else.
+2. Do not restore, do not delete, do not "tidy up". Preserve the state.
+3. Export the relevant audit entries:
+   ```bash
+   psql "$DATABASE_URL" -c \
+     "SELECT * FROM audit_logs WHERE created_at > NOW() - INTERVAL '7 days' ORDER BY id" > incident.csv
+   ```
+4. `npm run verify-audit-chain` — record the result, whichever way it goes.
+5. Escalate (section S). A personal-data exposure is DIC's to disclose, not
+   yours.
+
+**Note on the audit log:** it is hash-chained but **unkeyed**. It detects
+accidental corruption and naive tampering. It does not stop somebody with
+database write access recomputing the whole chain. Do not present it as
+tamper-proof. `AUDIT_CHAIN.md` sets out exactly what it does and does not prove.
+
+### Communications
+
+_DIC to record who announces an outage to alumni, and through which channel._
+
+---
+
+## N. Rollback
+
+Decide which situation you are in first. Using the wrong one is how a bad deploy
+becomes lost data.
+
+### The code is bad, the data is fine — most rollbacks
 
 ```bash
 cd /srv/dic-alumni
 git log --oneline -10
-git checkout <previous-good-commit>
+git checkout <previous-commit-hash>
+npm ci --omit=dev
 sudo systemctl restart dic-alumni
 ```
 
-On Vercel, use *Instant Rollback* in the deployment list — it does not rebuild.
+Migrations are additive, so older code runs against a newer schema and ignores
+the columns it does not know about. **Do not "roll back" a migration by dropping
+columns.** There is no down-migration, and dropping a column destroys data the
+newer code wrote.
 
-**Database:** migrations in this project are additive and idempotent. They add
-columns and tables; they do not drop or rewrite. That means **rolling the code
-back does not require rolling the database back** — an older application simply
-ignores the newer columns. This is deliberate, and it is why the migration
-procedure below never needs a "down" script.
+**Vercel:** promote the previous deployment from the dashboard.
 
-If a migration itself failed, it rolled itself back — each one runs in a single
-transaction and verifies before committing. Nothing partial is left behind.
+### The data is bad
 
----
-
-## N. Migration procedure
-
-> Migrations are **not** run automatically during deployment. That is a
-> deliberate choice: a schema change should have a human watching it.
-
-1. **Verify a current backup exists.**
-   ```bash
-   cat "$BACKUP_DIR/last-backup.json"
-   ```
-2. **Take a fresh one anyway.**
-   ```bash
-   node backup.js
-   ```
-3. **Prove it restores.**
-   ```bash
-   node restore.js --drill
-   ```
-4. **Dry-run the migration** — applies it, verifies it, rolls it back.
-   ```bash
-   node migrate_v10.js --dry-run
-   ```
-5. **Apply it.**
-   ```bash
-   node migrate_v10.js
-   ```
-6. **Confirm.** Each migration prints its own verification checks; every line
-   must read `ok`. If any reads `FAIL` the migration rolled itself back and the
-   database is unchanged.
-7. **If something is wrong afterwards**, section E for the data and section M
-   for the code.
-
-Migrations to date: `migrate_v2.js` … `migrate_v10.js`. Run them in order on a
-new deployment.
+Section E. Restore into a new database, verify it, then switch.
 
 ---
 
-## O. Contacts and escalation
+## O. DNS and subdomains
 
-_Fill this in before go-live. An escalation path written during an incident is
-not an escalation path._
+The platform serves two portals, and which one you get is decided by the
+hostname or the path:
 
-| Role | Name | Contact | When |
-|---|---|---|---|
-| First responder (platform) | | | Site down, database down |
-| Institution IT authority | | | Anything touching alumni data |
-| Data-protection owner | | | Suspected data exposure, deletion disputes, key loss |
-| Database/hosting provider | | | Provider-side outage, PITR requests |
+| | `PUBLIC_ORIGIN` | `ADMIN_ORIGIN` |
+|---|---|---|
+| Two hosts | `https://alumni.<domain>` | `https://admin.alumni.<domain>` |
+| Single host | `https://alumni.<domain>` | the same value; staff use `/admin` |
 
-**Escalate immediately, do not wait for business hours:**
+Both are required in production. They are also the entire CORS allow-list.
 
-- Any suspicion that alumni personal data has been exposed.
-- `ENCRYPTION_KEY` lost or believed leaked.
-- The credentials file or `.env` believed to have been read by someone else.
-- A backup that cannot be restored.
+**The staff portal is not a security boundary.** The API enforces roles
+server-side on every request regardless of which HTML shell was served, so a
+single host is a legitimate choice.
 
-**Can wait until morning:** a single failed scheduled job, a stale backup with a
-good one behind it, a slow page.
+Hostnames are compared as hostnames, not substrings. `alumni.<domain>` is a
+substring of `admin.alumni.<domain>`, and a substring comparison used to serve
+the staff shell on the public domain.
+
+### Two symptoms worth recognising
+
+- **Both hostnames serve the alumni site** — the reverse proxy is not passing
+  `Host`. nginx needs `proxy_set_header Host $host;`.
+- **The browser reports a CORS error** — `PUBLIC_ORIGIN` or `ADMIN_ORIGIN` does
+  not exactly match the origin in use. The scheme counts: `https://` and
+  `http://` are different origins.
+
+TLS is terminated by the proxy or platform, not by the application. The
+application does not send `Strict-Transport-Security`; whatever terminates TLS
+should.
 
 ---
 
-## Appendix — daily and weekly checks
+## P. Health check
 
-**Daily (2 minutes):** open the staff portal → Operations. All jobs green and
-recent, backup green and under 36 hours old.
-
-**Weekly:** confirm the restore drill passed.
 ```bash
-cat "$BACKUP_DIR/last-drill.json"
+curl -s -w ' [%{http_code}]\n' https://alumni.<domain>/api/health
 ```
 
-**Each term:** review the audit log for use of the emergency super admin
-credential; confirm the escrowed secrets are still readable; re-check that the
-contacts above are still the right people.
+| Response | HTTP | Meaning |
+|---|---|---|
+| `{"status":"ok","database":"ok","latencyMs":n}` | **200** | Healthy |
+| `{"status":"degraded","database":"unreachable"}` | **503** | The application is up, the database is not |
+| no answer, timeout, connection refused | — | The application is down |
+
+It cannot report `ok` while the database is unreachable: it performs a real
+`SELECT 1` on every call. The third state is only observable from outside,
+which is why the monitor must not run on the same machine.
+
+---
+
+## Q. Monitoring
+
+Two layers. Set up at least the first.
+
+### 1. An external uptime service — prefer this
+
+A monitor on the same box cannot tell you the box is unreachable. Any uptime
+service will do; the contract is section P. **Alert on two consecutive failures
+at a 60-second interval.**
+
+_DIC to provide the monitoring service and the on-call address._
+
+### 2. Operational health, which an HTTP probe cannot see
+
+`/api/health` returns 200 while the purge has been failing for a fortnight and
+the backups stopped a week ago. This endpoint answers that:
+
+```bash
+curl -s -w ' [%{http_code}]\n' -H "X-Cron-Key: $CRON_SECRET" \
+  https://alumni.<domain>/api/internal/monitor
+```
+
+- **200** — everything is within its freshness window.
+- **503** — something needs attention; `problems` says what.
+
+It reports the database, every job with its age and outcome, the backup receipt,
+the off-site receipt, overdue deletions, and the mail mode. It separates
+`problems` (503, wake someone) from `advisories` (200, worth knowing — for
+example that no off-site destination is configured).
+
+It is authenticated with the **scheduler credential**, not an admin session, so
+an uptime service can carry it in a header. It is never exposed to the browser.
+
+There is also a local fallback that checks the same things from cron:
+
+```cron
+*/5 * * * *  /srv/dic-alumni/ops/healthcheck.sh || /usr/local/bin/alert-oncall
+```
+
+Exit codes: `0` healthy, `1` application or database down, `2` degraded.
+
+No dashboard is provided or wanted. The Operations panel in the staff portal
+shows the same state to a human.
+
+---
+
+## R. Where the logs are
+
+**VPS:**
+
+```bash
+sudo journalctl -u dic-alumni -f              # live
+sudo journalctl -u dic-alumni --since today
+tail -f /var/log/dic-alumni-cron.log          # nightly backup, off-site, jobs
+```
+
+**Vercel:** the project's Logs tab. There is no file to tail.
+
+### Reading a log line
+
+```
+[api] 2026-09-03T14:22:01.114Z a1b2c3d4e5f6 GET /api/alumni/42 200 18ms uid=7
+```
+
+Tag, timestamp, **correlation id**, method, path, status, duration, user id.
+The correlation id also goes out on the `X-Request-Id` response header, so a
+user's screenshot can be matched to a log line without either party quoting
+anything sensitive.
+
+**By default only failures are logged.** Successful requests appear only when
+`LOG_REQUESTS=all` is set. If you are investigating "saving failed yesterday"
+and find nothing, that is why — turn it on while diagnosing and turn it off
+again, because it is noisy.
+
+Other tags: `[mail]`, `[health]`, `[scheduler]`, `[ops]`, `[backup]`,
+`[offsite]`, `[monitor]`.
+
+### What is deliberately never logged
+
+Passwords, session tokens, reset tokens, reset links, `ENCRYPTION_KEY`,
+`SESSION_SECRET`, `CRON_SECRET`, database passwords, identity-vault plaintext,
+request bodies, query strings, and the `Authorization` header. Email addresses
+are masked in mail lines. **If you find any of these in a log, that is a
+security incident** — section M.
+
+### Rotation
+
+The cron entries append to files that nothing rotates. Add logrotate before
+they grow without limit:
+
+```
+/var/log/dic-alumni-*.log {
+    weekly
+    rotate 12
+    compress
+    missingok
+    notifempty
+    create 0640 dic-alumni dic-alumni
+}
+```
+
+---
+
+## S. Escalation contacts
+
+_DIC to fill in. Each of these is a named person, not a role._
+
+| | Name | Contact | Hours |
+|---|---|---|---|
+| First responder | | | |
+| Database / hosting | | | |
+| Data protection owner | | | |
+| Institutional escalation | | | |
+
+Two people must be able to reach the secret escrow (`KEY_MANAGEMENT.md`), and
+they must not both be unreachable at once.
+
+---
+
+## T. Provisioning the first administrator
+
+Only needed on a new deployment. A fresh install has **no accounts at all** —
+`seed.sql` is not run in production, and every provisioning route requires a
+super-admin session, so there is a bootstrap problem this command exists to
+solve.
+
+```bash
+cd /srv/dic-alumni
+node rotate_credentials.js --create-super-admin admin@dic.edu.bd --name "Full Name"
+```
+
+- Supply `ADMIN_PW_SUPER_ADMIN` (12 characters minimum) to choose the password,
+  or let it generate a 24-character one written **once** to
+  `admin-credentials.local.txt`.
+- It **refuses if a super admin already exists**. It is for the first one only.
+- The account is created with `must_change_password` set, so its first session
+  can do exactly three things: identify itself, change its password, and sign
+  out. Everything else returns *"This account must set its own password before
+  it can be used."*
+
+Move any generated password into the password manager and delete the file:
+
+```bash
+shred -u admin-credentials.local.txt 2>/dev/null || rm -f admin-credentials.local.txt
+```
+
+### The enrolment gate — expect help-desk questions about this
+
+Any account provisioned or reset by somebody else carries
+`must_change_password`, and is restricted to those three routes until it sets
+its own password. This is deliberate: bulk import gives an entire batch one
+shared password, so until it is replaced that credential is an enrolment token
+and nothing more.
+
+Two other tools you may need:
+
+```bash
+node rotate_credentials.js --check     # which accounts accept a weak password; changes nothing
+node rotate_credentials.js            # rotate privileged accounts that do
+```
+
+`--check` prints **no passwords** and changes nothing, despite what an earlier
+version of this document implied.
+
+---
+
+## Appendix 1 — Pre-deploy verification
+
+Run all of it before any deploy. It takes a few minutes.
+
+```bash
+cd /srv/dic-alumni
+npm ci                          # exactly what the lockfile pins
+npm test                        # 22 suites
+npm run drills                  # fresh install, purge/backup/restore, mail delivery
+npm run verify-audit-chain      # expect PASS and exit 0
+```
+
+`npm run preflight` runs the suites and the chain verification together. The
+drills build their own disposable databases and drop them; they never touch the
+live one. `.github/workflows/ci.yml` runs the same sequence on every push,
+against a database installed from `schema.sql` plus the migrations.
+
+## Appendix 2 — Every environment variable
+
+| Variable | Required | When |
+|---|---|---|
+| `PGHOST` `PGPORT` `PGDATABASE` `PGUSER` `PGPASSWORD` | yes | Or a single `DATABASE_URL` instead |
+| `SESSION_SECRET` | yes | Production |
+| `ENCRYPTION_KEY` | yes | Production. 64 hex characters |
+| `CRON_SECRET` | yes | Production. 32+ characters |
+| `MAIL_TRANSPORT` | yes | Production. No default |
+| `PUBLIC_ORIGIN` `ADMIN_ORIGIN` | yes | Production |
+| `BACKUP_DIR` | yes | Production. Absolute, outside the application directory |
+| `SMTP_HOST` `SMTP_FROM` | conditional | When `MAIL_TRANSPORT=smtp` |
+| `SMTP_PORT` `SMTP_USER` `SMTP_PASSWORD` | conditional | As the provider requires |
+| `PORT` | no | Defaults to 8000 |
+| `TRUST_PROXY` | no | Set to the hop count when behind a proxy. Wrong in both directions — section A |
+| `BACKUP_RETENTION_DAYS` | no | Defaults to 14 |
+| `OFFSITE_CMD` | no | But a deployment without one keeps a single copy of its data |
+| `OFFSITE_ENCRYPT_CMD` | no | When the destination cannot encrypt at rest |
+| `DB_TIMEZONE` | no | Defaults to `Asia/Dhaka`. Business dates are local dates |
+| `JOB_STALE_MINUTES` | no | Defaults to 30 |
+| `MONITOR_JOB_MAX_HOURS` `MONITOR_BACKUP_MAX_HOURS` | no | Default 36 |
+| `LOG_REQUESTS` | no | `all` logs successful requests too. Noisy |
+| `PG_DUMP` | no | Full path, when `pg_dump` is not on `PATH` |
+| `DOCKER_PG_CONTAINER` | no | Development only |
+| `ALLOW_DB_RESEED` | no | **Never in production** |
+| `DIC_SEED_DEMO` | no | **Never in production**. Seeds invented demonstration content |
+| `DIC_SKIP_DOTENV` | no | Testing only. Never on a real deployment |

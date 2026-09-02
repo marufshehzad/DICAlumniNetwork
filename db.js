@@ -46,12 +46,33 @@ if (fs.existsSync(envPath) && process.env.DIC_SKIP_DOTENV !== '1') {
   });
 }
 
+/* The institution's timezone, applied to every connection in the pool.
+
+   Business dates are local dates. An event "today", a task due "today" and a
+   grace period that expires "today" all mean today in Dhaka, not today in UTC.
+   Without this the session timezone is the database host's, which on a managed
+   provider is UTC — and Bangladesh is UTC+6, so between midnight and 06:00
+   local, CURRENT_DATE is still yesterday.
+
+   That window is not hypothetical: vercel.json fires the nightly jobs at 20:10
+   UTC, which is 02:10 in Dhaka, squarely inside it. The event status
+   roll-forward compares starts_on against CURRENT_DATE, so an event beginning
+   today was left 'upcoming' until the following night — a full day late, every
+   time, for as long as the platform has existed.
+
+   timestamptz comparisons (purge_after, expires_at) are absolute instants and
+   are unaffected either way. DATE columns are handed back as plain strings by
+   the parser above, so they are unaffected too. What changes is exactly what
+   should: CURRENT_DATE and friends now mean the date in Bangladesh. */
+const DB_TIMEZONE = process.env.DB_TIMEZONE || 'Asia/Dhaka';
+
 const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 
 let poolConfig;
 if (connectionString) {
   poolConfig = {
     connectionString,
+    options: `-c timezone=${DB_TIMEZONE}`,
     ssl: { rejectUnauthorized: false },
     max: 10,
     idleTimeoutMillis: 5000,
@@ -59,6 +80,7 @@ if (connectionString) {
   };
 } else {
   poolConfig = {
+    options: `-c timezone=${DB_TIMEZONE}`,
     host: process.env.PGHOST || '127.0.0.1',
     port: parseInt(process.env.PGPORT || '5432'),
     database: process.env.PGDATABASE || 'dic_alumni_db',
@@ -111,6 +133,7 @@ async function initDbSchemaAndSeed() {
 }
 
 module.exports = {
+  timezone: DB_TIMEZONE,
   query: async (text, params) => {
     if (!pool) throw new Error('Database pool unavailable');
     return await pool.query(text, params);

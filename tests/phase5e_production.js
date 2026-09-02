@@ -72,12 +72,13 @@ const FULL = {
   ENCRYPTION_KEY: 'a'.repeat(64),
   CRON_SECRET: 'c'.repeat(48),
   MAIL_TRANSPORT: 'none',
+  BACKUP_DIR: require('os').tmpdir(),   // Phase 6: required, outside the app dir
   PUBLIC_ORIGIN: 'https://alumni.example.edu',
   ADMIN_ORIGIN: 'https://admin.alumni.example.edu',
   ...PG
 };
 const REQUIRED = ['SESSION_SECRET', 'ENCRYPTION_KEY', 'CRON_SECRET',
-                  'MAIL_TRANSPORT', 'PUBLIC_ORIGIN', 'ADMIN_ORIGIN'];
+                  'MAIL_TRANSPORT', 'PUBLIC_ORIGIN', 'ADMIN_ORIGIN', 'BACKUP_DIR'];
 
 let port = 8390;
 
