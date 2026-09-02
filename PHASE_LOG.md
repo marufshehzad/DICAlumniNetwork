@@ -1187,7 +1187,7 @@ Outstanding engineering work is P2/P3 only: `P5C-007`, `P5C-010`, `P5C-011`,
 
 **Status:** COMPLETE
 **Date:** 2026-09-02
-**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Commit:** `e267ffb` (`e267ffb4597500514f5e7f24be0fd9055e745610`) — recorded by the follow-up commit, since a commit cannot contain its own hash
 **Parent:** `5b0a5b8`
 
 An audit of the production configuration path, the fixes it produced, and the
