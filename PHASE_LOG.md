@@ -36,7 +36,7 @@ file, so they are summarised from their commits rather than written at the time.
 
 **Status:** COMPLETE
 **Date:** 2026-09-02
-**Commit:** `PHASE_5A_COMMIT`
+**Commit:** `7d81d2e` (`7d81d2e4c3626a32a282af07cb1b41e86aaa6f24`) — recorded by the follow-up commit, since a commit cannot contain its own hash
 **Parent:** `c7072f5` (Phase 4)
 
 ### Why this phase existed
