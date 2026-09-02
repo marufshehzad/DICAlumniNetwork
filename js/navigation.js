@@ -110,13 +110,23 @@ function showPage(page) {
     return;
   }
 
+  /* The target is resolved BEFORE anything is hidden. This used to hide every
+     page and then re-show the target only `if (target)`, so navigating to an id
+     the current portal does not define left the whole document blank with no
+     error — which is exactly what the staff portal did when the topbar avatar
+     asked for 'profile', a page only the alumni site defines. Staying put and
+     saying so is recoverable; a blank screen is not. */
+  const target = document.getElementById('page-' + page);
+  if (!target) {
+    console.warn(`[nav] no page-${page} in this portal; staying on ${state.currentPage || 'the current page'}`);
+    if (typeof showToast === 'function') showToast('⚠ That page is not part of this portal.');
+    return;
+  }
+
   document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  const target = document.getElementById('page-' + page);
-  if (target) {
-    target.classList.remove('hidden');
-    target.classList.add('active');
-  }
+  target.classList.remove('hidden');
+  target.classList.add('active');
 
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   const navItem = document.getElementById('nav-' + page);

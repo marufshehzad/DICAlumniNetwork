@@ -9,6 +9,7 @@
    ============================================================ */
 
 const db = require('./db');
+const auditChain = require('./audit_chain');
 
 module.exports = function mountCompliance(app, {
   requireAuth, requireRole, ADMIN_ROLES,
@@ -28,14 +29,41 @@ module.exports = function mountCompliance(app, {
     const { consentType, granted, policyVersion } = req.body || {};
     if (!consentType) return res.status(400).json({ error: 'consentType is required' });
 
+    /* Bounded before the insert, not after it. consent_logs.consent_type is
+       VARCHAR(100) and policy_version VARCHAR(50), so an oversized value used
+       to reach Postgres and come back as a 500 carrying the raw driver
+       message — "value too long for type character varying(100)" — which tells
+       a caller the column type and width. A caller's mistake should be a 400
+       that names the limit, not a server error that describes the schema.
+
+       ip_address is VARCHAR(64) and comes from X-Forwarded-For, so it is
+       clamped rather than rejected: the caller does not control it on purpose,
+       and a long proxy chain is not a client error. Same reasoning as the
+       audit writer's clamp. */
+    if (String(consentType).length > 100) {
+      return res.status(400).json({ error: 'consentType must be 100 characters or fewer' });
+    }
+    if (policyVersion !== undefined && String(policyVersion).length > 50) {
+      return res.status(400).json({ error: 'policyVersion must be 50 characters or fewer' });
+    }
+    const clampTo = (v, n) => v === null || v === undefined ? null : String(v).slice(0, n);
+
     const row = await db.query(`
       INSERT INTO consent_logs (user_id, consent_type, granted, policy_version, ip_address, user_agent)
       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *
-    `, [req.user.uid, consentType, granted !== false,
-        policyVersion || 'PDPA-2026.1', clientIp(req), req.headers['user-agent'] || null]);
+    `, [req.user.uid, String(consentType), granted !== false,
+        clampTo(policyVersion || 'PDPA-2026.1', 50), clampTo(clientIp(req), 64),
+        clampTo(req.headers['user-agent'], 500)]);
 
+    /* consentType is supplied by the member, so it is bounded before it reaches
+       the audit trail. Unbounded caller text in a hash-chained log is a way to
+       flood it, and — because writeAudit swallows its own errors — an
+       oversized value used to make the entry vanish while the consent itself
+       was still recorded. */
     await writeAudit('Consent Recorded',
-      `user ${req.user.uid} ${granted !== false ? 'granted' : 'withdrew'} "${consentType}"`, '📜');
+      `user ${req.user.uid} ${granted !== false ? 'granted' : 'withdrew'} ` +
+      `"${String(consentType).slice(0, 60)}"`, '📜',
+      { actorId: req.user.uid, targetType: 'consent', targetId: row.rows[0].id, ip: clientIp(req) });
     res.json({ success: true, consent: row.rows[0] });
   }));
 
@@ -81,8 +109,11 @@ module.exports = function mountCompliance(app, {
       RETURNING id, field_type, last_four, created_at
     `, [req.user.uid, fieldType, ciphertext, iv, authTag, plain.slice(-4)]);
 
+    // The vault id is sufficient for operations; identity_vault.field_type
+    // remains queryable by anyone with cause to look.
     await writeAudit('Identity Field Encrypted',
-      `${fieldType.toUpperCase()} stored for user ${req.user.uid} (AES-256-GCM)`, '🔐');
+      `vault ${row.rows[0].id} stored for user ${req.user.uid} (AES-256-GCM)`, '🔐',
+      { actorId: req.user.uid, targetType: 'identity_vault', targetId: row.rows[0].id, ip: clientIp(req) });
     res.json({ success: true, entry: row.rows[0] });
   }));
 
@@ -111,8 +142,14 @@ module.exports = function mountCompliance(app, {
 
     await db.query('INSERT INTO vault_access_logs (vault_id, accessed_by, reason) VALUES ($1,$2,$3)',
       [row.rows[0].id, req.user.uid, reason.trim()]);
+    /* This was the most sensitive audit line in the codebase: it named the data
+       subject and the identity-document category in one string, in a table every
+       administrator can read. The operator's stated reason is written to
+       vault_access_logs on the line above, so nothing is lost by keeping it out
+       of here as well. */
     await writeAudit('Identity Field Decrypted',
-      `${row.rows[0].field_type.toUpperCase()} of ${row.rows[0].full_name} by user ${req.user.uid} — "${reason.trim()}"`, '🔓');
+      `vault ${row.rows[0].id} (${row.rows[0].field_type}) of user ${row.rows[0].user_id} by user ${req.user.uid}`, '🔓',
+      { actorId: req.user.uid, targetType: 'identity_vault', targetId: row.rows[0].id, ip: clientIp(req) });
 
     res.json({ value: plaintext, owner: row.rows[0].full_name, fieldType: row.rows[0].field_type });
   }));
@@ -234,7 +271,15 @@ module.exports = function mountCompliance(app, {
       db.query('SELECT COUNT(*)::int n FROM identity_vault'),
       db.query('SELECT COUNT(*)::int n FROM consent_logs'),
       db.query(`SELECT COUNT(*)::int n FROM deletion_requests WHERE status='pending'`),
-      db.query('SELECT COUNT(*)::int n FROM audit_logs'),
+      /* Split by chain version rather than a bare COUNT(*). Entries written
+         before the Phase 5A boundary are hash-chained in name only — the digest
+         input was never persisted, so nobody can recompute them (AUDIT_CHAIN.md
+         §1-2). Reporting one total would present them as carrying the same
+         guarantee as verifiable rows, in the panel an administrator reads to
+         judge exactly that. */
+      db.query(`SELECT COUNT(*) FILTER (WHERE chain_version = ${auditChain.CHAIN_VERSION})::int AS verifiable,
+                       COUNT(*) FILTER (WHERE chain_version IS DISTINCT FROM ${auditChain.CHAIN_VERSION})::int AS legacy
+                FROM audit_logs`),
       db.query('SELECT COUNT(*)::int n FROM vault_access_logs')
     ]);
 
@@ -252,9 +297,13 @@ module.exports = function mountCompliance(app, {
         status: consents.rows[0].n > 0 ? 'compliant' : 'pending'
       },
       {
-        icon: '🛡', title: 'Immutable Audit Trail (CA 2023)',
-        desc: `${audits.rows[0].n} hash-chained entries; ${access.rows[0].n} vault access record(s).`,
-        status: audits.rows[0].n > 0 ? 'compliant' : 'pending'
+        icon: '🛡', title: 'Hash-Chained Audit Trail (CA 2023)',
+        desc: `${audits.rows[0].verifiable} independently verifiable entries` +
+              (audits.rows[0].legacy
+                ? `; ${audits.rows[0].legacy} legacy entries retained but not verifiable`
+                : '') +
+              `; ${access.rows[0].n} vault access record(s).`,
+        status: audits.rows[0].verifiable > 0 ? 'compliant' : 'pending'
       },
       {
         icon: '📦', title: 'Data Subject Rights (DSAR)',

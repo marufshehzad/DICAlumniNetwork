@@ -194,10 +194,36 @@ function updateUserUI() {
    is not loaded used to throw and abort the rest of the sequence, leaving the
    page half-initialised. The guard means each portal simply skips what it does
    not have, and no module needs to know which entry point it is running in. */
+/* The topbar chip read "PostgreSQL 16 · Live" as a literal in the HTML of both
+   portals, with a green dot and nothing behind it. It said Live with the
+   database down, and it named a major version the deployment is not obliged to
+   be running. It now reports what GET /api/health answered, on the same
+   contract as the super admin panel and the external monitor. */
+function refreshConnectionChip() {
+  const chips = ['offline-status', 'drawer-offline-status']
+    .map(id => document.getElementById(id)).filter(Boolean);
+  if (!chips.length || typeof API?.health !== 'function') return;
+  API.health().then(h => {
+    const ok = h && h.status === 'ok' && h.database === 'ok';
+    const label = ok ? 'Database · Live'
+                : h && h.status === 'degraded' ? 'Database · Unreachable'
+                : 'API · No answer';
+    chips.forEach(el => {
+      const text = el.querySelector('.status-text');
+      if (text) text.textContent = label;
+      el.classList.toggle('online', ok);
+      el.classList.toggle('offline', !ok);
+      el.title = ok ? 'GET /api/health answered ok'
+                    : 'GET /api/health did not report a healthy system';
+    });
+  });
+}
+
 function initApp() {
   updateUserUI();
   renderSidebarNav(state.currentUser.role);
   renderDashboard();
+  refreshConnectionChip();
 
   const warm = (fn, ...args) => { if (typeof fn === 'function') fn(...args); };
 

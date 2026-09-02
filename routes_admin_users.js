@@ -125,8 +125,7 @@ module.exports = function mountAdminUsers(app, guards) {
 
     const id = row.rows[0].id;
     await writeAudit('Administrator Created',
-      `${String(fullName).trim()} <${clean}> as ${ASSIGNABLE_ROLES[role]} (${String(designation).trim()}) ` +
-      `by user ${req.user.uid}`, '👤', auditCtx(req, 'user', id));
+      `user ${id} as ${role} by user ${req.user.uid}`, '👤', auditCtx(req, 'user', id));
 
     const created = await db.query(`${SELECT_ADMIN} WHERE u.id = $1`, [id]);
     res.json({
@@ -188,11 +187,13 @@ module.exports = function mountAdminUsers(app, guards) {
 
     await db.query(`UPDATE users SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals);
 
+    const changedFields = sets.map(s => s.split(' = ')[0]).filter(c => c !== 'updated_at');
     await writeAudit('Administrator Updated',
-      `${before.full_name} (user ${id}) by user ${req.user.uid}`, '✎', auditCtx(req, 'user', id));
+      `user ${id} by user ${req.user.uid}; fields: ${changedFields.join(',')}`,
+      '✎', auditCtx(req, 'user', id));
     if (roleChanged) {
       await writeAudit('Administrator Role Changed',
-        `${before.full_name} (user ${id}): ${roleChanged.from} → ${roleChanged.to} by user ${req.user.uid}`,
+        `user ${id}: ${roleChanged.from} → ${roleChanged.to} by user ${req.user.uid}`,
         '🔀', auditCtx(req, 'user', id));
     }
 
@@ -234,7 +235,7 @@ module.exports = function mountAdminUsers(app, guards) {
        every request, so an outstanding token stops working on its next use
        rather than when it expires. */
     await writeAudit(status === 'suspended' ? 'Administrator Suspended' : 'Administrator Activated',
-      `${r.rows[0].full_name} (user ${id}) by user ${req.user.uid}`,
+      `user ${id} by user ${req.user.uid}`,
       status === 'suspended' ? '⛔' : '✅', auditCtx(req, 'user', id));
 
     res.json({ id, status, name: r.rows[0].full_name });
@@ -264,7 +265,7 @@ module.exports = function mountAdminUsers(app, guards) {
 
     // The action is audited; the password is not part of the audit entry.
     await writeAudit('Administrator Password Reset',
-      `${target.rows[0].full_name} (user ${id}) by user ${req.user.uid}`, '🔑',
+      `user ${id} by user ${req.user.uid}`, '🔑',
       auditCtx(req, 'user', id));
 
     res.json({ id, name: target.rows[0].full_name, temporaryPassword: password });

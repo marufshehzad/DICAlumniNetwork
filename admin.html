@@ -157,7 +157,7 @@
         </div>
         <div class="offline-status online drawer" id="drawer-offline-status">
           <span class="status-dot"></span>
-          <span class="status-text">PostgreSQL · Live</span>
+          <span class="status-text">Checking…</span>
         </div>
       </div>
 
@@ -189,11 +189,11 @@
         <span class="role-display" id="topbar-role-display"></span>
         <div class="offline-status" id="offline-status">
           <span class="status-dot"></span>
-          <span class="status-text">PostgreSQL 16 · Live</span>
+          <span class="status-text">Checking…</span>
         </div>
         <button class="topbar-btn alert-btn" onclick="showBroadcastModal()" title="Send a broadcast"><i data-lucide="megaphone" class="ui-icon"></i><span class="alert-btn-label"> Broadcast</span></button>
         <button class="topbar-btn notif-btn" onclick="showNotifications()"><i data-lucide="bell" class="ui-icon"></i> <span class="notif-count">7</span></button>
-        <div class="topbar-avatar" id="topbar-user-avatar" onclick="showPage('profile')">SA</div>
+        <div class="topbar-avatar" id="topbar-user-avatar" onclick="showChangePasswordModal(false)" title="Change your password">SA</div>
       </div>
     </div>
 
@@ -662,7 +662,7 @@
           </div>
         </div>
         <div class="glass-card">
-          <div class="card-header"><h3 class="card-title">Immutable Audit Trail</h3><span class="card-badge teal">Write-Once</span></div>
+          <div class="card-header"><h3 class="card-title">Hash-Chained Audit Trail</h3><span class="card-badge teal">Append-Only</span></div>
           <!-- Distinct from the dashboard's own #audit-log panel: two elements
                sharing that id left this page permanently empty. -->
           <div id="audit-log-page"></div>
@@ -686,8 +686,8 @@
       <a class="bottom-nav-item" onclick="showPage('events')" id="bnav-events">
         <span class="bnav-icon"><i data-lucide="calendar-days" class="ui-icon"></i></span><span class="bnav-label">Events</span>
       </a>
-      <a class="bottom-nav-item" onclick="showPage('profile')" id="bnav-profile">
-        <span class="bnav-icon"><i data-lucide="id-card" class="ui-icon"></i></span><span class="bnav-label">Profile</span>
+      <a class="bottom-nav-item" onclick="showChangePasswordModal(false)" id="bnav-profile">
+        <span class="bnav-icon"><i data-lucide="key" class="ui-icon"></i></span><span class="bnav-label">Password</span>
       </a>
     </nav>
   </div>

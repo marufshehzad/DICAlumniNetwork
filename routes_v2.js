@@ -7,6 +7,7 @@
 
 const crypto = require('crypto');
 const db = require('./db');
+const auditChain = require('./audit_chain');
 
 // ─── FIELD-LEVEL ENCRYPTION (REQ-14, PDPA 2026) ───
 // AES-256-GCM. The key comes from ENCRYPTION_KEY (64 hex chars). Without it the
@@ -45,20 +46,27 @@ function decryptField({ ciphertext, iv, auth_tag }) {
    Existing call sites pass three arguments and keep working; their entries
    simply leave the new columns NULL. The hash chain is unchanged — it still
    covers action + meta + timestamp, so no historical entry is invalidated. */
+/* Phase 5A replaced the chain this used to compute inline. The old digest
+   consumed `new Date().toISOString()` and stored nothing about it, while
+   created_at was a separate Postgres CURRENT_TIMESTAMP — so one of the four
+   inputs was discarded on every write and no entry could ever be recomputed.
+   It also truncated SHA-256 to 64 bits and read the predecessor without a lock.
+
+   The definition now lives in audit_chain.js, which the standalone verifier
+   reads through as well: one description of the chain, so a verifier cannot
+   agree with the writer merely because both drifted together. */
 async function writeAudit(action, meta, icon = '🛡', ctx = {}) {
   try {
-    const prev = await db.query('SELECT hash FROM audit_logs ORDER BY id DESC LIMIT 1');
-    const prevHash = prev.rows[0]?.hash || 'GENESIS';
-    const hash = crypto.createHash('sha256')
-      .update(prevHash + action + meta + new Date().toISOString())
-      .digest('hex').slice(0, 16);
-    await db.query(
-      `INSERT INTO audit_logs (icon, action, meta, hash, actor_id, target_type, target_id, ip)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [icon, action, meta, `0x${hash.toUpperCase()}`,
-       ctx.actorId ?? null, ctx.targetType ?? null, ctx.targetId ?? null, ctx.ip ?? null]
-    );
+    await auditChain.appendEntry(db, {
+      action, meta, icon,
+      actorId: ctx.actorId ?? null,
+      targetType: ctx.targetType ?? null,
+      targetId: ctx.targetId ?? null,
+      ip: ctx.ip ?? null
+    });
   } catch (e) {
+    // An audit failure must never take a request down with it. It is loud in
+    // the log, and the chain verifier will show the gap.
     console.warn('audit write failed:', e.message);
   }
 }
@@ -307,7 +315,8 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
 
     await writeAudit('Donation Pledged',
       `৳${value} to campaign ${parseInt(campaignId)} by user ${req.user.uid}` +
-      (note ? ` · note: ${String(note).slice(0, 120)}` : ''), '🤝');
+      (note ? ` · note attached (${String(note).length} chars)` : ''), '🤝',
+      { actorId: req.user.uid, targetType: 'donation', targetId: row.rows[0].id });
 
     res.json({ donation: row.rows[0], campaign: camp.rows[0].name });
   }));
@@ -360,7 +369,8 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
       await client.query('COMMIT');
       await writeAudit(received ? 'Donation Payment Recorded' : 'Donation Pledge Closed',
         `৳${cur.rows[0].amount} · donation ${id} · by user ${req.user.uid}` +
-        (received ? ` · ${receipt}` : ` · ${reason || 'not received'}`), '💰',
+        // The operator's reason is free text; bounded before it enters the chain.
+        (received ? ` · ${receipt}` : ` · ${String(reason || 'not received').slice(0, 80)}`), '💰',
         { actorId: req.user.uid, targetType: 'donation', targetId: id });
       res.json({ donation: upd.rows[0] });
     } catch (e) {

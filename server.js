@@ -688,7 +688,8 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     await client.query('COMMIT');
-    await writeAuditSafe('Alumni Self-Registered', `${clean} <${email.trim()}> awaiting verification`, '🎓');
+    await writeAuditSafe('Alumni Self-Registered', `user ${uid} awaiting verification`, '🎓',
+      { actorId: uid, targetType: 'user', targetId: uid, ip: clientIp(req) });
 
     const user = publicUser(userRes.rows[0]);
     const token = signToken({
@@ -874,7 +875,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
     }
 
     await writeAuditSafe('Password Reset Completed',
-      `${r.rows[0].full_name} (user ${r.rows[0].id})`, '🔑',
+      `user ${r.rows[0].id}`, '🔑',
       { actorId: r.rows[0].id, targetType: 'user', targetId: r.rows[0].id, ip: clientIp(req) });
 
     res.json({ success: true, message: 'Password updated. Please sign in.' });
@@ -989,9 +990,22 @@ app.get('/api/alumni', requireAuth, async (req, res) => {
 app.get('/api/alumni/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
   try {
+    /* Column order matters here, and getting it wrong was a privacy hole.
+       alumni_profiles has its own `id`, so `ap.*` listed AFTER `u.id` shadowed
+       it: row.id became the PROFILE id. The isSelf test below then compared a
+       user id against a profile id, and any member whose user id happened to
+       equal some other member's profile id was treated as that person — and
+       shown the contact details they had marked private. The response also
+       handed the client a profile id under the name `id`, which is not the
+       identifier any other endpoint uses.
+
+       u.id is therefore selected last, so it wins, and the profile's own key is
+       aliased out of the way rather than left to collide. */
     const result = await db.query(`
-      SELECT u.id, u.full_name as name, u.email, u.role, u.initials, u.is_verified,
-             ap.*
+      SELECT ap.*,
+             ap.id AS profile_id,
+             u.full_name as name, u.email, u.role, u.initials, u.is_verified,
+             u.id
       FROM users u
       LEFT JOIN alumni_profiles ap ON u.id = ap.user_id
       WHERE u.id = $1
@@ -1101,6 +1115,44 @@ app.put('/api/profile/me', requireAuth, async (req, res) => {
 
     vals.push(value);
     sets.push(`${column} = $${vals.length}`);
+  }
+
+  /* Field privacy. This is the only JSONB column a member may write, and it is
+     validated key by key rather than passed through the scalar whitelist above,
+     which would let a caller put arbitrary JSON into the column.
+
+     The value set is a whitelist because the read side fails OPEN: canSee()
+     tests `!== 'private'`, so any value it does not recognise would reveal the
+     field rather than hide it. An unknown key or level is rejected outright —
+     a setting that appears to save and then does nothing is exactly the kind of
+     false assurance this release exists to remove.
+
+     Only 'email' and 'mobile' are offered, because they are the only two
+     fields canSee() actually gates. */
+  if (req.body.privacySettings !== undefined) {
+    const PRIVACY_FIELDS = ['email', 'mobile'];
+    // 'alumni' is accepted as a legacy synonym for 'public' — it is what seeded
+    // rows hold, and the two are indistinguishable in this product because
+    // every viewer of a profile is already signed in.
+    const PRIVACY_LEVELS = ['public', 'alumni', 'private'];
+    const input = req.body.privacySettings;
+
+    if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+      return res.status(400).json({ error: 'privacySettings must be an object' });
+    }
+    const clean = {};
+    for (const key of Object.keys(input)) {
+      if (!PRIVACY_FIELDS.includes(key)) {
+        return res.status(400).json({ error: `Unknown privacy field: ${key}` });
+      }
+      if (typeof input[key] !== 'string' || !PRIVACY_LEVELS.includes(input[key])) {
+        return res.status(400).json({ error: `Invalid privacy level for ${key}` });
+      }
+      clean[key] = input[key];
+    }
+    // Merged, not replaced, so a partial payload cannot silently clear the rest.
+    vals.push(JSON.stringify(clean));
+    sets.push(`privacy_settings = COALESCE(privacy_settings, '{}'::jsonb) || $${vals.length}::jsonb`);
   }
 
   if (!sets.length) return res.status(400).json({ error: 'No editable fields supplied' });
@@ -1669,8 +1721,14 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
 
     await client.query("COMMIT");
 
+    /* The filename comes from the client and is unvalidated, so it is bounded
+       and stripped of anything that would let it impersonate the surrounding
+       log structure. An exported roster's filename can also carry personal
+       data, which is another reason not to take it whole. */
+    const safeName = String(filename || 'import.csv').replace(/[^\w.\- ]+/g, '').slice(0, 60);
     await writeAuditSafe("Bulk Import Completed",
-      `${filename || "import.csv"}: ${created} created, ${updated} updated, ${skippedDuplicate} duplicates, ${rejected} rejected`);
+      `${safeName}: ${created} created, ${updated} updated, ${skippedDuplicate} duplicates, ${rejected} rejected`,
+      '📥', auditCtx(req, 'import', null));
 
     res.json({
       success: true,
@@ -2079,7 +2137,7 @@ app.put('/api/users/:id/verify', requireRole(...MODERATOR_ROLES), async (req, re
       [verified, id]);
     if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
     await writeAuditSafe(verified ? 'Alumni Verified' : 'Verification Revoked',
-      `${r.rows[0].full_name} (user #${id}) by ${req.user.uid}`);
+      `user ${id} by user ${req.user.uid}`, '🛡', auditCtx(req, 'user', id));
     res.json(r.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });

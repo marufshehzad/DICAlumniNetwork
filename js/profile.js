@@ -199,14 +199,14 @@ async function viewAlumniProfile(id) {
 function showEditProfile() { showToast('✏ Profile editor loading…'); }
 
 // ─── 6. COMPREHENSIVE 10-SECTION USER PROFILE HUB ─────────────
+/* Only the two fields the server actually gates. GET /api/alumni/:id applies
+   canSee() to email and mobile and to nothing else, so listing address, cgpa,
+   linkedin, github and company here described protections that did not exist.
+   Loaded from the profile row in hydrateUserProfile; these are only the
+   fallbacks for an account that has never saved a preference. */
 let PROFILE_PRIVACY_SETTINGS = {
   mobile: 'private',
-  email: 'alumni',
-  address: 'private',
-  cgpa: 'private',
-  linkedin: 'public',
-  github: 'public',
-  company: 'public'
+  email: 'alumni'
 };
 
 /* This object used to be a complete, invented alumnus — Mohiuddin Rahman, ID
@@ -291,6 +291,12 @@ async function hydrateUserProfile() {
     twitter: v(p.twitter),
     website: v(p.website)
   });
+
+  /* Field privacy comes from the row. Without this the controls always showed
+     the defaults, so a saved preference looked lost on the next page load. */
+  if (p.privacy_settings && typeof p.privacy_settings === 'object') {
+    Object.assign(PROFILE_PRIVACY_SETTINGS, p.privacy_settings);
+  }
 
   // The digital ID card, from the same row.
   const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
@@ -524,13 +530,6 @@ function showEditProfileV2() {
       <div class="input-group"><label class="input-label">Current Company &amp; Job Title</label><input type="text" id="edit-company" class="form-input" value="${p.currentCompany}" required /></div>
       <div class="input-group"><label class="input-label">Technical Skills (Comma separated)</label><input type="text" id="edit-skills" class="form-input" value="${p.skills}" required /></div>
       <div class="input-group"><label class="input-label">LinkedIn Profile URL</label><input type="url" id="edit-linkedin" class="form-input" value="${p.linkedin}" /></div>
-      <div class="input-group"><label class="input-label">Mobile Number Privacy Level</label>
-        <select class="form-select" id="edit-priv-mobile">
-          <option value="public" ${PROFILE_PRIVACY_SETTINGS.mobile === 'public' ? 'selected' : ''}>Public (Everyone)</option>
-          <option value="alumni" ${PROFILE_PRIVACY_SETTINGS.mobile === 'alumni' ? 'selected' : ''}>DIC Alumni Only</option>
-          <option value="private" ${PROFILE_PRIVACY_SETTINGS.mobile === 'private' ? 'selected' : ''}>Private (Only Me)</option>
-        </select>
-      </div>
       <div class="input-group"><label class="input-label">Biography</label><textarea id="edit-bio" class="form-input" rows="3">${p.bio}</textarea></div>
       <button type="submit" class="btn btn-primary btn-full mt-16"><i data-lucide="save" class="ui-icon"></i> Save Profile &amp; Update ID Card</button>
     </form>
@@ -544,7 +543,6 @@ function handleSaveProfileV2(e) {
   FULL_USER_PROFILE.skills = document.getElementById('edit-skills').value.trim();
   FULL_USER_PROFILE.linkedin = document.getElementById('edit-linkedin').value.trim();
   FULL_USER_PROFILE.bio = document.getElementById('edit-bio').value.trim();
-  PROFILE_PRIVACY_SETTINGS.mobile = document.getElementById('edit-priv-mobile').value;
 
   closeModal();
   loadMyProfile(true);   // the row changed; drop the cached copy
@@ -735,6 +733,24 @@ async function showEditProfileV2() {
       ${txt('pf-facebook', 'Facebook Profile Link', p.facebook, 'url')}
       ${txt('pf-linkedin', 'LinkedIn', p.linkedin, 'url')}
 
+      <!-- Field privacy. Two fields and two levels, because those are the ones
+           GET /api/alumni/:id enforces. "Members" rather than "public": there is
+           no anonymous access to a profile, so every viewer is signed in. -->
+      <div class="input-group">
+        <label class="input-label">Who can see my email address</label>
+        <select id="pf-priv-email" class="form-select">
+          <option value="public" ${PROFILE_PRIVACY_SETTINGS.email !== 'private' ? 'selected' : ''}>Signed-in DIC members</option>
+          <option value="private" ${PROFILE_PRIVACY_SETTINGS.email === 'private' ? 'selected' : ''}>Only me and administrators</option>
+        </select>
+      </div>
+      <div class="input-group">
+        <label class="input-label">Who can see my mobile number</label>
+        <select id="pf-priv-mobile" class="form-select">
+          <option value="public" ${PROFILE_PRIVACY_SETTINGS.mobile !== 'private' ? 'selected' : ''}>Signed-in DIC members</option>
+          <option value="private" ${PROFILE_PRIVACY_SETTINGS.mobile === 'private' ? 'selected' : ''}>Only me and administrators</option>
+        </select>
+      </div>
+
       <div class="login-error hidden" id="pf-error" role="alert"></div>
       <button type="submit" class="btn btn-primary btn-full mt-16">Save Profile</button>
     </form>
@@ -757,13 +773,23 @@ async function handleSaveProfileV2(e) {
     designation: v('pf-designation'),
     presentAddress: v('pf-presentAddress'),
     facebook: v('pf-facebook'),
-    linkedin: v('pf-linkedin')
+    linkedin: v('pf-linkedin'),
+    // Validated server-side against a whitelist of fields and levels; an
+    // unknown key or value is rejected rather than silently dropped.
+    privacySettings: {
+      email: v('pf-priv-email') || PROFILE_PRIVACY_SETTINGS.email,
+      mobile: v('pf-priv-mobile') || PROFILE_PRIVACY_SETTINGS.mobile
+    }
   });
 
   if (apiFailed(res)) {
     const err = document.getElementById('pf-error');
     if (err) { err.textContent = res?.error || 'Could not save.'; err.classList.remove('hidden'); }
     return;
+  }
+
+  if (res && res.privacy_settings && typeof res.privacy_settings === 'object') {
+    Object.assign(PROFILE_PRIVACY_SETTINGS, res.privacy_settings);
   }
 
   closeModal();

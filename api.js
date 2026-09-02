@@ -100,12 +100,19 @@ const API = {
     setSessionToken(null);
   },
 
+  /* Returns the endpoint's own body on any answer, including the 503 the server
+     sends when its database is down — that body says 'degraded', and the caller
+     needs to see it rather than have it flattened into a transport failure.
+     Only a genuine no-answer produces the envelope below. It used to claim the
+     database was 'IndexedDB & Local State'; there is no IndexedDB in this
+     system and never was, so a failed health check was reporting an invented
+     storage engine to whoever was trying to diagnose the outage. */
   async health() {
     try {
       const res = await fetchWithTimeout(`${API_BASE_URL}/api/health`);
       return await res.json();
     } catch (e) {
-      return { status: 'offline', database: 'IndexedDB & Local State' };
+      return { status: 'unreachable', database: 'unknown' };
     }
   },
 

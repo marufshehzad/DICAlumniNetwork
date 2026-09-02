@@ -236,7 +236,7 @@ function renderSuperAdminDashboard(page) {
     <div class="dashboard-split mt-16">
       <div class="dashboard-left">
         <div class="glass-card">
-          <div class="card-header"><h3 class="card-title"><i data-lucide="scroll-text" class="ui-icon"></i> Immutable System Security Audit Trail</h3><button class="btn btn-outline btn-sm" onclick="showPage('admin')">View Full Audit Log →</button></div>
+          <div class="card-header"><h3 class="card-title"><i data-lucide="scroll-text" class="ui-icon"></i> Hash-Chained Security Audit Trail</h3><button class="btn btn-outline btn-sm" onclick="showPage('audit')">View Full Audit Log →</button></div>
           <div id="audit-log"></div>
         </div>
       </div>
@@ -311,7 +311,7 @@ async function approveAlumni(id) {
   renderVerificationQueue();
 }
 
-// ─── IMMUTABLE AUDIT LOG ───
+// ─── HASH-CHAINED AUDIT LOG ───
 /* The super admin dashboard embeds its own #audit-log panel, so on the staff
    portal two elements carried that id and getElementById() always returned the
    dashboard's — the Audit Logs page stayed permanently empty. The target is now
@@ -551,7 +551,7 @@ function renderBulkImportPanel() {
     <div class="glass-card mt-16">
       <div class="card-header">
         <h3 class="card-title"><i data-lucide="scroll-text" class="ui-icon"></i> Import Activity History &amp; Audit Trail</h3>
-        <span class="card-badge teal">Write-Once System Log</span>
+        <span class="card-badge teal">Append-Only</span>
       </div>
       <div class="table-scroll">
         <table class="rbac-table">

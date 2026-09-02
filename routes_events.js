@@ -792,7 +792,9 @@ module.exports = function mountEvents(app, guards) {
          SET checked_in = TRUE, checked_in_at = CURRENT_TIMESTAMP, checked_in_by = $2
        WHERE id = $1 RETURNING checked_in_at`, [t.id, req.user.uid]);
 
-    await writeAudit('Attendee Checked In', `${t.full_name} · ticket ${ticketCode}`, 'circle-check-big');
+    await writeAudit('Attendee Checked In',
+      `registration ${t.id} · attendee ${t.user_id} · event ${t.event_id}`, 'circle-check-big',
+      { actorId: req.user.uid, targetType: 'event_registration', targetId: t.id });
     res.json({ success: true, attendee: t.full_name, batch: t.batch,
                event: t.event_title, at: upd.rows[0].checked_in_at });
   }));
@@ -1318,7 +1320,8 @@ module.exports = function mountEvents(app, guards) {
        req.user.uid]);
 
     await writeAudit('External Contact Added',
-      `"${name}" (${roleTitle}) on event ${eventId} by user ${req.user.uid}`, 'user-plus');
+      `person ${row.rows[0].id} on event ${eventId} by user ${req.user.uid}`, 'user-plus',
+      { actorId: req.user.uid, targetType: 'event_person', targetId: row.rows[0].id });
     res.json(row.rows[0]);
   }));
 

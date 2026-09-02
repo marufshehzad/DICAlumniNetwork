@@ -210,21 +210,36 @@ function renderBatchBreakdown() {
     if (window.lucide) lucide.createIcons();
   });
 }
+/* Real system status. Everything shown is something GET /api/health actually
+   returned; when it does not answer, that is what the panel says.
+
+   The three states below are the three the endpoint can produce, and they are
+   not interchangeable: 200 ok, 503 degraded (the API is up and answering, its
+   database is not), and no answer at all. Collapsing the middle one into
+   "unreachable" would send an operator looking for a dead server when what is
+   actually dead is the database. This panel and the external monitor read the
+   same contract — see PRODUCTION_DEPENDENCIES.md §2.7. */
 function renderSystemStatus() {
   const el = document.getElementById('system-status');
   if (!el) return;
   API.health().then(h => {
-    if (apiFailed(h) || !h || h.status !== 'online') {
+    if (!h || h.status === 'unreachable') {
       el.innerHTML = `<div class="server-card"><div class="server-val" style="color:var(--danger)">Unreachable</div>
         <div class="server-label">The API did not answer a health check</div></div>`;
       return;
     }
-    const t = new Date(h.time);
+    if (h.status !== 'ok') {
+      el.innerHTML = `
+        <div class="server-card"><div class="server-val" style="color:var(--amber)">Degraded</div><div class="server-label">API status</div></div>
+        <div class="server-card"><div class="server-val" style="color:var(--danger);font-size:15px">Unreachable</div><div class="server-label">Database</div></div>`;
+      return;
+    }
+    const dbOk = h.database === 'ok';
+    const latency = Number.isFinite(h.latencyMs) ? `${h.latencyMs} ms` : '—';
     el.innerHTML = `
       <div class="server-card"><div class="server-val" style="color:var(--teal)">Online</div><div class="server-label">API status</div></div>
-      <div class="server-card"><div class="server-val" style="font-size:15px">${escapeHtml(h.database || 'PostgreSQL')}</div><div class="server-label">Database</div></div>
-      <div class="server-card"><div class="server-val">${statNum(h.total_users)}</div><div class="server-label">User accounts</div></div>
-      <div class="server-card"><div class="server-val" style="font-size:15px">${isNaN(t) ? '—' : t.toLocaleString()}</div><div class="server-label">Database server time</div></div>`;
+      <div class="server-card"><div class="server-val" style="font-size:15px;color:${dbOk ? 'var(--teal)' : 'var(--danger)'}">${dbOk ? 'Reachable' : 'Unreachable'}</div><div class="server-label">Database</div></div>
+      <div class="server-card"><div class="server-val" style="font-size:15px">${escapeHtml(latency)}</div><div class="server-label">Health check latency</div></div>`;
   });
 }
 
