@@ -671,19 +671,43 @@
           </a>
         </div>
         <div class="map-container glass-card">
-          <div class="map-canvas" id="alumni-map">
-            <div class="map-bg"></div>
-            <!-- SVG World Map simplified -->
-            <svg class="world-svg" viewBox="0 0 900 450" xmlns="http://www.w3.org/2000/svg" id="world-map-svg"></svg>
-            <!-- Cluster pins -->
-            <div class="map-clusters" id="map-clusters"></div>
+          <div class="map-toolbar">
+            <div class="map-modes" role="group" aria-label="Map detail level">
+              <button type="button" class="map-mode-btn active" data-map-mode="cities"
+                      onclick="setMapMode('cities')">Cities</button>
+              <button type="button" class="map-mode-btn" data-map-mode="countries"
+                      onclick="setMapMode('countries')">Countries</button>
+            </div>
+            <div class="map-zoom" role="group" aria-label="Map zoom">
+              <button type="button" class="map-zoom-btn" onclick="mapZoomOut()" aria-label="Zoom out">−</button>
+              <button type="button" class="map-zoom-btn" onclick="mapZoomIn()" aria-label="Zoom in">+</button>
+              <button type="button" class="map-zoom-btn wide" onclick="mapFocusBusiest()">Focus</button>
+              <button type="button" class="map-zoom-btn wide" onclick="mapResetView()">World</button>
+            </div>
+          </div>
+          <div class="map-layout">
+            <div class="map-canvas" id="alumni-map">
+              <!-- The graticule this projection is defined against, drawn by
+                   drawMapGraticule(). There are no country outlines: this
+                   project has no boundary dataset, and drawing shapes from
+                   memory would be inventing geography. -->
+              <svg class="world-svg" viewBox="0 0 900 450" xmlns="http://www.w3.org/2000/svg" id="world-map-svg"></svg>
+              <div class="map-clusters" id="map-clusters"></div>
+              <div class="map-empty hidden" id="map-empty">
+                <i data-lucide="map-pin-off" class="ui-icon"></i>
+                <p>No confirmed locations to display yet.</p>
+              </div>
+              <div class="map-detail hidden" id="map-detail"></div>
+            </div>
+            <!-- The exact numbers, for anyone who would rather read than
+                 measure a disc. Same source, same counts. -->
+            <div class="map-ranking" id="map-ranking"></div>
           </div>
           <div class="map-note" id="map-note"></div>
-          <div class="map-legend">
-            <div class="legend-item"><span class="legend-dot large"></span> 1000+</div>
-            <div class="legend-item"><span class="legend-dot medium"></span> 100–999</div>
-            <div class="legend-item"><span class="legend-dot small"></span> &lt;100</div>
-          </div>
+          <!-- Bands are derived from the real counts by mapBands(); the old
+               fixed 1000+/100–999/<100 scale put every real place in one
+               bucket. -->
+          <div class="map-legend" id="map-legend"></div>
         </div>
         <!-- 47 countries, 12,847 mapped alumni, 8,241 in Bangladesh, 4,606
              international, 23 active chapters — all five were literals, and the

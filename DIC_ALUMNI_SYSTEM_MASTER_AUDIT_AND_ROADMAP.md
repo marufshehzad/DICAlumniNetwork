@@ -812,12 +812,21 @@ checking the pipeline is not the same as checking the source.
 | Legacy data | Preserved, flagged `location_needs_confirmation`, excluded from the map, marked `(unconfirmed)` in the directory |
 | Privacy | `public` (visible + on the map) / `alumni` (visible, not mapped) / `private` (nobody). No staff bypass |
 | Address | Self-only, unconditionally; not a configurable setting |
-| Map | Equirectangular projection of real city coordinates over a drawn graticule. No library, no tiles, no API key, no licence |
+| Map | Equirectangular projection of real city coordinates over a drawn graticule. City and country views, count badges, clustering of co-located places, zoom, a data-derived legend and a ranked list. No library, no tiles, no API key, no licence — and **no country boundaries**: no geography dataset exists in this project and none is implied |
 | Filters | `?country=`, `?city=`, `?placeId=`, all privacy-aware; chips built from real data |
 | Import | Resolves location against the reference list; reports unmatched rows; never substitutes a default |
 
-Full detail in `LOCATION_SYSTEM_AUDIT.md` and the Phase 5B entry of
-`PHASE_LOG.md`. Verified by `tests/phase5b_location.js` (122 checks).
+Full detail in `LOCATION_SYSTEM_AUDIT.md` and the Phase 5B entries of
+`PHASE_LOG.md`. Verified by `tests/phase5b_location.js`.
+
+A follow-up pass upgraded the visualisation only — city and country badge
+views, clustering of places too close to draw apart, zoom, a legend derived
+from the data, a ranked list, and a click-through that opens the directory on
+the structured location filter. Every figure on it still comes from
+`GET /api/stats/map`, and the privacy contract above still decides who is
+counted. **It remains a coordinate map with no boundary data**; a country badge
+sits at the alumni-weighted mean of that country's cities, which is a statement
+about the alumni rather than about the country's shape.
 
 ## A method note for future audits
 

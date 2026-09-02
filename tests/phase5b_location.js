@@ -518,6 +518,107 @@ async function makeMember(label) {
   ok('a city name with no country still resolves when it is unique',
     ambiguous.status === 'resolved', ambiguous.status);
 
+  /* ══════════════════════════════════════════════════════════
+     M. Map visualisation  (Phase 5B follow-up)
+
+     The map draws region and city totals. These assert that every number and
+     every position on it comes from the database, that nothing is hardcoded,
+     and that the privacy contract still decides who is counted.
+     ══════════════════════════════════════════════════════════ */
+  console.log('\n=== M. the map visualises real aggregates, and only those ===');
+
+  const mapNow = (await j('/api/stats/map', H(V.token))).body;
+
+  // Country rollup: count, city count and position all reconcile with SQL.
+  for (const c of (mapNow.countries || [])) {
+    const truth = (await db.query(`
+      SELECT COUNT(*)::int AS n,
+             COUNT(DISTINCT lp.id)::int AS cities,
+             (SUM(lp.latitude)  / COUNT(*))::float8 AS lat,
+             (SUM(lp.longitude) / COUNT(*))::float8 AS lng
+        FROM alumni_profiles ap
+        JOIN location_places lp ON lp.id = ap.place_id
+       WHERE lp.country_code = $1 AND ${privacyModule.MAP_VISIBLE_SQL}`, [c.country_code])).rows[0];
+    ok(`country ${c.country}: the alumni count matches the database`,
+      c.n === truth.n, `api=${c.n} db=${truth.n}`);
+    ok(`country ${c.country}: the city count matches the database`,
+      c.cities === truth.cities, `api=${c.cities} db=${truth.cities}`);
+    ok(`country ${c.country}: the badge position is the mean of its real city coordinates`,
+      Math.abs(c.latitude - truth.lat) < 1e-6 && Math.abs(c.longitude - truth.lng) < 1e-6,
+      `api=${c.latitude},${c.longitude} db=${truth.lat},${truth.lng}`);
+  }
+
+  // City markers: every coordinate is the place's own, never invented.
+  for (const c of (mapNow.cities || [])) {
+    const place = (await db.query(
+      'SELECT city, country, latitude::float8 AS lat, longitude::float8 AS lng FROM location_places WHERE id = $1',
+      [c.place_id])).rows[0];
+    ok(`city ${c.city}: coordinates come from location_places`,
+      place && Math.abs(c.latitude - place.lat) < 1e-9 && Math.abs(c.longitude - place.lng) < 1e-9,
+      JSON.stringify({ api: [c.latitude, c.longitude], db: place && [place.lat, place.lng] }));
+    const truth = (await db.query(`
+      SELECT COUNT(*)::int n FROM alumni_profiles ap
+       WHERE ap.place_id = $1 AND ${privacyModule.MAP_VISIBLE_SQL}`, [c.place_id])).rows[0].n;
+    ok(`city ${c.city}: the count matches the database`, c.n === truth, `api=${c.n} db=${truth}`);
+  }
+
+  ok('country totals and city totals agree',
+    (mapNow.countries || []).reduce((a, c) => a + c.n, 0) ===
+    (mapNow.cities || []).reduce((a, c) => a + c.n, 0));
+
+  /* Privacy still decides who is counted. A member set to 'alumni' is visible
+     on their profile but must not appear in a map total, and 'private' must
+     not appear anywhere. */
+  const mapCityCount = (payload, placeId) =>
+    ((payload.cities || []).find(c => c.place_id === placeId) || { n: 0 }).n;
+
+  await send('PUT', '/api/profile/me', A.token,
+    { placeId: dhaka.id, privacySettings: { location: 'public' } });
+  const withPublic = mapCityCount((await j('/api/stats/map', H(V.token))).body, dhaka.id);
+  await send('PUT', '/api/profile/me', A.token, { privacySettings: { location: 'alumni' } });
+  const withAlumni = mapCityCount((await j('/api/stats/map', H(V.token))).body, dhaka.id);
+  await send('PUT', '/api/profile/me', A.token, { privacySettings: { location: 'private' } });
+  const withPrivate = mapCityCount((await j('/api/stats/map', H(V.token))).body, dhaka.id);
+  ok('an "alumni only" location is not counted on the map', withAlumni === withPublic - 1,
+    `${withPublic} → ${withAlumni}`);
+  ok('a private location is not counted on the map', withPrivate === withPublic - 1,
+    `${withPublic} → ${withPrivate}`);
+
+  ok('the map payload names no person and carries no personal coordinate',
+    !/full_name|user_id|"email"|present_address/.test(JSON.stringify(mapNow)));
+
+  // Unconfirmed legacy rows are reported, never plotted.
+  ok('unconfirmed legacy locations are reported as a number, not as markers',
+    typeof mapNow.unconfirmed === 'number' &&
+    (await db.query(`SELECT COUNT(*)::int n FROM alumni_profiles
+                      WHERE location_needs_confirmation AND place_id IS NOT NULL`)).rows[0].n === 0);
+
+  /* The visualisation itself: no hardcoded geography, no hardcoded counts, and
+     the click-through uses the structured filter rather than the search box. */
+  const dash = stripJs(fs.readFileSync(path.join(REPO, 'js', 'dashboard.js'), 'utf8'));
+  ok('no hardcoded country position table', !/MAP_COUNTRY_POSITIONS/.test(dash));
+  ok('no hardcoded top/left percentage constants for places',
+    !/top:\s*\d+\s*,\s*left:\s*\d+/.test(dash));
+  ok('positions are projected from coordinates', /projectLatLng/.test(dash));
+  /* The counts must come from the endpoint. A case-insensitive search for
+     "SELECT" matches querySelectorAll and mapSelected, so this looks for the
+     shapes a recomputation would actually take: SQL against the profile table,
+     or counting alumni rows in the browser. */
+  ok('the map does not query or recount alumni itself',
+    !/FROM\s+alumni_profiles|COUNT\(\*\)|GROUP\s+BY/i.test(dash) &&
+    !/getAlumni\s*\(/.test(dash));
+  ok('badge values are the endpoint’s own numbers',
+    /c\.total|\.n\b/.test(dash));
+  ok('legend bands are derived from the data', /function mapBands/.test(dash));
+  ok('co-located places are merged rather than stacked', /clusterMapPoints/.test(dash));
+  ok('the empty state is honest', /No confirmed locations to display yet/.test(
+    fs.readFileSync(path.join(REPO, 'index.html'), 'utf8')));
+  ok('clicking through uses the structured filter, not free-text search',
+    /viewAlumniForMapSelection[\s\S]{0,400}filterByCountry[\s\S]{0,200}filterByCity/.test(dash) &&
+    !/viewAlumniForMapSelection[\s\S]{0,400}d\.search\s*=/.test(dash));
+  ok('the admin panel uses the same endpoint, not its own aggregation',
+    (dash.match(/API\.getStatsMap\(\)/g) || []).length === 2);
+
   /* ══════════════════════════════════════════════════════════ */
   console.log('\n=== cleanup ===');
   const emails = `${TAG}-%@dic.test`;

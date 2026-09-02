@@ -1314,8 +1314,15 @@ body {
 
 .geo-heatmap { padding: 16px; }
 .geo-countries { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
-.geo-country-item { display: flex; align-items: center; gap: 10px; }
+/* A button now, because each row opens the directory filtered to that country. */
+.geo-country-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  background: none; border: none; padding: 5px 6px; border-radius: 7px;
+  cursor: pointer; text-align: left; min-height: 34px;
+}
+.geo-country-item:hover { background: #f1f5f9; }
 .geo-country-name { font-size: 12px; color: var(--text-secondary); flex: 1; }
+.geo-country-sub { display: block; font-size: 10px; color: var(--text-muted); }
 .geo-country-bar-track { width: 80px; height: 6px; background: rgba(11, 56, 151, 0.08); border-radius: 99px; overflow: hidden; }
 .geo-country-bar-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--primary), var(--teal)); }
 .geo-country-count { font-size: 11px; font-weight: 700; color: var(--teal); min-width: 40px; text-align: right; }
@@ -1483,60 +1490,174 @@ body.password-change-required .topbar-actions {
 
 /* ─── MAP ─── */
 .map-container { padding: 0; overflow: hidden; }
-.map-canvas { position: relative; height: 400px; background: linear-gradient(135deg, #0a1a2e, #0d2040); overflow: hidden; }
-.map-bg {
-  position: absolute; inset: 0;
-  background-image: radial-gradient(circle at 30% 40%, rgba(11, 56, 151,0.1) 0%, transparent 50%),
-    radial-gradient(circle at 70% 60%, rgba(0,212,170,0.08) 0%, transparent 50%);
+/* ─── ALUMNI MAP ───────────────────────────────────────────
+   Light, neutral and quiet, so the numbers carry the signal. The canvas was a
+   dark navy gradient — the only dark surface in an otherwise light product —
+   with glowing discs and a pulse animation. Nothing here glows or pulses now:
+   a badge is a badge, and motion that means nothing is motion that distracts
+   from the figure inside it. */
+/* The map gets the full width by default and the ranked list sits under it.
+   Side by side, the canvas was squeezed to about 430px, which put badges close
+   enough together that half the world merged into one cluster — the map has to
+   be wide enough for the geography to separate before the panel is worth its
+   space. The two only sit side by side on a genuinely wide screen. */
+.map-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; }
+@media (min-width: 1200px) { .map-layout { grid-template-columns: minmax(0, 1fr) 250px; } }
+.map-canvas {
+  position: relative;
+  height: 420px;
+  background: #f6f8fb;
+  border-bottom: 1px solid var(--border-glass);
+  overflow: hidden;
+}
+@media (min-width: 1200px) {
+  .map-canvas { border-bottom: none; border-right: 1px solid var(--border-glass); }
 }
 /* The graticule is drawn with stroke="currentColor" by drawMapGraticule(), so
-   the colour is set here rather than in the script. It inherited the page text
-   colour before, which is dark, and the grid was invisible on the dark map
-   canvas. Opacity is applied per-line in the script so the equator and prime
-   meridian can be emphasised. */
-.world-svg { width: 100%; height: 100%; color: #7fb2ff; }
+   the colour is set here rather than in the script. Opacity is applied
+   per-line so the equator and prime meridian can be emphasised. */
+.world-svg { width: 100%; height: 100%; color: #64748b; }
+
 /* Marks a location the old hardcoded path wrote rather than the member. */
 .loc-unconfirmed { color: var(--amber); font-size: 11px; font-weight: 600; }
 
 .map-clusters { position: absolute; inset: 0; }
-/* City name beside each pin. Pins are positioned by projecting the city's real
-   latitude and longitude, so the label sits where the place actually is. */
+
+/* A merged badge — several places too close to draw apart at this zoom. The
+   double ring is the only visual difference; the number still means the same
+   thing, which is how many alumni are inside it. */
+.map-cluster.is-group { box-shadow: 0 0 0 3px rgba(255,255,255,.85), 0 1px 5px rgba(15,23,42,.3); }
+
 .map-city-label {
   position: absolute;
-  transform: translate(14px, -50%);
+  transform: translate(var(--label-gap, 22px), -50%);
   font-size: 11px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.82);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+  color: #334155;
   white-space: nowrap;
   pointer-events: none;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.9);
 }
-@media (max-width: 640px) { .map-city-label { display: none; } }
+/* Near the right edge the label would run off the canvas — "Melbourne" was
+   clipped mid-word — so it flips to the other side of its badge. */
+.map-city-label.flip { transform: translate(calc(-100% - 22px), -50%); }
+@media (max-width: 900px) { .map-city-label { display: none; } }
+
 .map-cluster {
   position: absolute;
+  transform: translate(-50%, -50%);
   border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   color: #fff;
-  font-weight: 800;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
-  transition: var(--transition);
-  animation: clusterPulse 3s ease-in-out infinite;
-  border: 2px solid rgba(255,255,255,0.2);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.28);
+  padding: 0;
+  transition: box-shadow .15s ease, outline-color .15s ease;
 }
-.map-cluster:hover { transform: scale(1.2); z-index: 10; }
-.map-cluster.xl { background: rgba(11, 56, 151,0.8); width: 64px; height: 64px; font-size: 14px; box-shadow: 0 0 20px rgba(11, 56, 151,0.6); }
-.map-cluster.lg { background: rgba(0,212,170,0.7); width: 48px; height: 48px; font-size: 12px; box-shadow: 0 0 15px rgba(0,212,170,0.5); }
-.map-cluster.md { background: rgba(255,140,66,0.7); width: 36px; height: 36px; font-size: 10px; box-shadow: 0 0 12px rgba(255,140,66,0.4); }
-.map-cluster.sm { background: rgba(192,132,252,0.7); width: 28px; height: 28px; font-size: 9px; }
-@keyframes clusterPulse { 0%,100% { box-shadow: 0 0 10px rgba(11, 56, 151,0.4); } 50% { box-shadow: 0 0 25px rgba(11, 56, 151,0.7); } }
+.map-cluster:hover { box-shadow: 0 2px 8px rgba(15, 23, 42, 0.38); z-index: 10; }
+.map-cluster:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.map-cluster.is-selected { outline: 3px solid var(--primary); outline-offset: 2px; z-index: 11; }
 
-.map-legend { display: flex; gap: 16px; padding: 12px 16px; border-top: 1px solid var(--border-glass); font-size: 12px; color: var(--text-secondary); }
+/* One restrained ramp. Larger and darker means more people — the size and the
+   value say the same thing, so neither has to be decoded. */
+.map-cluster.sm { background: #7da3d9; width: 26px; height: 26px; font-size: 11px; }
+.map-cluster.md { background: #4a7fc1; width: 32px; height: 32px; font-size: 12px; }
+.map-cluster.lg { background: #2a5fa5; width: 40px; height: 40px; font-size: 13px; }
+.map-cluster.xl { background: #143f7d; width: 50px; height: 50px; font-size: 15px; }
+
+.map-empty {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;
+}
+.map-empty .ui-icon { width: 26px; height: 26px; opacity: .55; }
+.map-empty p { margin: 0; }
+
+/* Detail panel for the selected marker. */
+.map-detail {
+  position: absolute; right: 14px; top: 14px; width: 214px;
+  background: #fff; border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md, 10px);
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.14);
+  padding: 12px; z-index: 20;
+}
+.map-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.map-detail-title { font-size: 14px; font-weight: 700; color: var(--text-primary); }
+.map-detail-sub { font-size: 12px; color: var(--text-secondary); margin-top: 1px; }
+.map-detail-close {
+  background: none; border: none; cursor: pointer; color: var(--text-muted);
+  padding: 2px; line-height: 0; border-radius: 4px;
+}
+.map-detail-close:hover { color: var(--text-primary); background: var(--surface-sunken, #f1f5f9); }
+.map-detail-rows { margin: 10px 0 12px; display: grid; gap: 6px; }
+.map-detail-rows > div { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; }
+.map-detail-rows dt { color: var(--text-secondary); margin: 0; }
+.map-detail-rows dd { margin: 0; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.map-detail-foot { margin: 10px 0 0; font-size: 11px; line-height: 1.45; color: var(--text-muted); }
+/* The places inside a merged badge, each a way through to that one place. */
+.map-detail-list { margin: 10px 0 4px; display: flex; flex-direction: column; gap: 1px; max-height: 190px; overflow-y: auto; }
+.map-detail-item {
+  display: flex; justify-content: space-between; gap: 10px; align-items: center;
+  background: none; border: none; cursor: pointer; padding: 6px 7px; border-radius: 6px;
+  font-size: 12px; color: var(--text-primary); text-align: left; min-height: 32px;
+}
+.map-detail-item:hover { background: #f1f5f9; }
+.map-detail-item span:last-child { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Toolbar: detail level on the left, zoom on the right. */
+.map-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 14px; border-bottom: 1px solid var(--border-glass); flex-wrap: wrap;
+}
+.map-modes, .map-zoom { display: flex; gap: 6px; }
+.map-mode-btn, .map-zoom-btn {
+  background: #fff; border: 1px solid var(--border-glass); color: var(--text-secondary);
+  font-size: 12px; font-weight: 600; border-radius: 7px; cursor: pointer;
+  min-height: 32px; min-width: 32px; padding: 0 10px;
+}
+.map-mode-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.map-mode-btn:hover:not(.active), .map-zoom-btn:hover { border-color: var(--primary); color: var(--primary); }
+.map-zoom-btn.wide { padding: 0 12px; }
+
+/* Ranked list — the exact figures, and the part that carries a narrow screen. */
+.map-ranking { padding: 10px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; max-height: 420px; }
+.map-rank-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 54px 34px; align-items: center; gap: 8px;
+  background: none; border: none; border-radius: 7px; cursor: pointer;
+  padding: 7px 8px; text-align: left; width: 100%; min-height: 38px;
+}
+.map-rank-row:hover { background: #f1f5f9; }
+.map-rank-row.is-selected { background: #e8effa; }
+.map-rank-name { font-size: 12px; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-rank-sub { display: block; font-size: 10px; font-weight: 500; color: var(--text-muted); }
+.map-rank-bar { height: 5px; background: #e2e8f0; border-radius: 3px; overflow: hidden; }
+.map-rank-bar > span { display: block; height: 100%; background: #4a7fc1; border-radius: 3px; }
+.map-rank-n { font-size: 12px; font-weight: 700; color: var(--text-primary); text-align: right; font-variant-numeric: tabular-nums; }
+
+.map-legend {
+  display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+  padding: 10px 14px; border-top: 1px solid var(--border-glass);
+  font-size: 12px; color: var(--text-secondary);
+}
+.legend-title { font-weight: 600; color: var(--text-muted); }
 .legend-item { display: flex; align-items: center; gap: 6px; }
-.legend-dot.large { width: 14px; height: 14px; background: rgba(11, 56, 151,0.7); border-radius: 50%; }
-.legend-dot.medium { width: 10px; height: 10px; background: rgba(0,212,170,0.7); border-radius: 50%; }
-.legend-dot.small { width: 7px; height: 7px; background: rgba(255,140,66,0.7); border-radius: 50%; }
+.legend-dot { border-radius: 50%; display: inline-block; }
+.legend-dot.sm { width: 8px;  height: 8px;  background: #7da3d9; }
+.legend-dot.md { width: 11px; height: 11px; background: #4a7fc1; }
+.legend-dot.lg { width: 14px; height: 14px; background: #2a5fa5; }
+.legend-dot.xl { width: 17px; height: 17px; background: #143f7d; }
+
+/* The ranked list is a horizontal strip of rows under the map until there is
+   room to stand it beside. */
+.map-ranking { max-height: 260px; }
+@media (min-width: 1200px) { .map-ranking { max-height: 420px; } }
+@media (max-width: 860px) {
+  .map-canvas { height: 300px; }
+  .map-detail { right: 10px; left: 10px; width: auto; }
+}
 
 .map-stats { display: grid; grid-template-columns: repeat(5, 1fr); text-align: center; }
 .map-stat-item { padding: 16px; border-right: 1px solid var(--border-glass); }
@@ -1544,12 +1665,10 @@ body.password-change-required .topbar-actions {
 .map-stat-val { font-size: 22px; font-weight: 800; color: var(--teal); }
 .map-stat-lab { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 
-.location-toggle { display: flex; align-items: center; gap: 10px; }
-.toggle-label { font-size: 13px; color: var(--text-secondary); font-weight: 600; }
-.toggle-switch { width: 44px; height: 24px; background: rgba(255,255,255,0.1); border-radius: 12px; cursor: pointer; position: relative; transition: var(--transition); border: 1px solid var(--border-glass); }
-.toggle-switch.active { background: var(--teal); border-color: var(--teal); }
-.toggle-thumb { width: 18px; height: 18px; background: #fff; border-radius: 50%; position: absolute; top: 2px; left: 2px; transition: var(--transition); box-shadow: 0 2px 6px rgba(0,0,0,0.3); }
-.toggle-switch.active .toggle-thumb { left: 22px; }
+/* .location-toggle / .toggle-switch / .toggle-thumb / .toggle-label were the
+   styling for the "Share My Location" control removed in Phase 5B. That toggle
+   was a CSS class flip with no handler behind it; the markup went then, and
+   these rules are the last of it. Nothing in either portal references them. */
 
 /* ─── PROFILE ─── */
 .profile-layout { display: grid; grid-template-columns: 340px 1fr; gap: 24px; align-items: start; }
@@ -4207,6 +4326,19 @@ textarea.form-input { resize: vertical; min-height: 100px; }
   #pages [role="button"] {
     min-height: 44px;
     touch-action: manipulation;
+  }
+  /* Map badges are circles with an explicit width and height. This blanket
+     floor stretched a 40px badge to 44px tall and turned every one of them
+     into an ellipse. They keep their shape and get a 44px hit area from the
+     invisible ::before below instead, so the touch target is honoured without
+     deforming the thing being touched. */
+  #pages button.map-cluster { min-height: 0; }
+  .map-cluster::before {
+    content: '';
+    position: absolute; left: 50%; top: 50%;
+    width: 44px; height: 44px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
   }
   /* Small inline actions still get a comfortable target without stretching
      their visual box awkwardly. */

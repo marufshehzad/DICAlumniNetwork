@@ -688,3 +688,183 @@ Phase 5B superseded the mechanism they pinned:
 ### Next phase
 
 **Phase 5C has not been started.** Nothing here anticipates it.
+
+---
+
+## Phase 5B follow-up — Map visualisation
+
+**Status:** COMPLETE
+**Date:** 2026-09-02
+**Commit:** `PHASE_5B_FU_COMMIT`
+**Parent:** `6a15b6d`
+
+A visualisation upgrade on top of the Phase 5B location system. The location
+architecture, privacy model, migration and data-integrity rules were **not**
+reopened — no schema change, no migration, no change to what is collected or to
+who may see it.
+
+### What this is not
+
+There are **no country boundaries**, and none are implied. The repository was
+checked first: no `world-atlas`, `topojson`, `geojson`, `natural-earth` or any
+other geography dataset is installed or vendored, and `assets/` holds only
+logos. Per the brief's own fallback — *"If real country polygon data is
+unavailable, KEEP the existing coordinate-based world map and make the count
+markers visually excellent"* — the map stays coordinate-based. **No country
+shapes were hand-drawn**, and no map provider was added: `package.json` is
+untouched, and there is still no Leaflet, Mapbox, Google Maps or tile source
+anywhere in the project.
+
+### What changed
+
+**Backend — one query, one source of truth.** `GET /api/stats/map` already
+returned city aggregates with coordinates. The country rollup now also returns
+`cities` (how many distinct places that country's alumni are in) and a
+`latitude`/`longitude` for the badge. That position is the **alumni-weighted
+mean of the country's own city coordinates** — it is a fact about the alumni,
+not a centroid and not a border, and the interface says so where it is shown.
+It is computed in SQL so the browser never derives a figure of its own.
+
+**Cities and countries.** A toggle switches the same data between one badge per
+city and one per country. Country badges carry the total and open a panel
+reporting the name, the total and the number of cities represented.
+
+**Clustering.** Places too close to draw apart at the current zoom merge into a
+single badge carrying their combined total; clicking it lists the places inside
+with their individual counts, each a way through to that one place. The first
+attempt pushed colliding badges apart instead and scattered them across a third
+of the map — worse than the overlap it solved — so merging replaced it.
+
+**Zoom.** `−` / `+` / Focus / World. Zoom scales the projection rather than
+CSS-transforming the layer, so badge text keeps a constant size and stays
+legible. Zooming in recentres on the alumni-weighted centre of the data, and
+the range reaches 16× so that a cluster genuinely does separate — the detail
+panel tells the reader to zoom in, and at the original 4× ceiling Dhaka and
+Chattogram still would not have parted.
+
+**Legend** bands are derived from the counts actually being drawn. The old fixed
+`1000+ / 100–999 / <100` scale put every real place in one bucket.
+
+**Ranked list** beside the map (below it under 1200px) giving the exact figure
+per place, which is also what carries a narrow screen where labels are hidden.
+
+**Directory hand-off.** Clicking a city or country and choosing *View alumni*
+opens the directory through the **structured** `?city=` / `?country=` filter —
+never the free-text search box.
+
+**Light theme.** The canvas was the only dark surface in an otherwise light
+product, with glowing discs and a pulse animation. It is now a light neutral
+with a restrained single-hue ramp, no glow and no animation.
+
+**Admin portal.** The staff Geographic Distribution panel already read the same
+endpoint and gained no aggregation of its own. It now shows each country's city
+count and each row opens the directory on that country, through the same
+structured filter.
+
+### Files changed
+
+`server.js` (country rollup query only), `js/dashboard.js`, `index.html`,
+`styles.css`, `tests/phase5b_location.js`.
+
+### API changes
+
+One endpoint, additive: `GET /api/stats/map` country rows gained `cities`,
+`latitude` and `longitude`. No new endpoint, no removed field, no change to
+what any other endpoint returns.
+
+### Privacy
+
+Unchanged, and re-asserted by test. Only `location = 'public'` profiles are
+counted; `alumni` is visible on a profile but not on the map; `private` appears
+nowhere. There is no staff bypass. No personal coordinate exists to leak — the
+only coordinates in the payload belong to `location_places` rows. Unconfirmed
+legacy locations are still reported as a number and never plotted. Every map
+endpoint still refuses an unauthenticated caller.
+
+### Tests
+
+`tests/phase5b_location.js` grew a section M (**142 checks total**, 0 failed;
+the per-city assertions scale with how many cities hold alumni). It asserts,
+per country and per city, that the count, the city count and the marker
+position each reconcile with an independent SQL query; that city coordinates
+are the `location_places` values; that country and city totals agree; that
+`alumni` and `private` locations drop out of the totals; that the payload names
+no person; that no hardcoded position table or percentage constant remains;
+that the browser neither queries nor recounts; and that the click-through uses
+the structured filter.
+
+Full battery green: 893 across twelve suites, `phase5a_security` 70/0, tamper
+53/0, sourcetruth 78 metrics / 0 mismatch, sourcetruth15 33/0, crossref clean,
+`verify-audit-chain` PASS through 767 entries.
+
+### Browser verification
+
+With 29 temporary fixture members created through the real registration and
+profile API across 11 cities in 7 countries, then deleted (0 remaining;
+`users` back to 18).
+
+- The acceptance path end to end: badge `9` on Dhaka → click → detail panel →
+  *View alumni* → directory on `city=Dhaka`, free-text search empty →
+  *"Showing 9 of 9 profiles"*, every result in Dhaka.
+- Admin panel: *United Kingdom · 2 cities · 4* → click → `country=GB` → 4 of 4,
+  three London and one Manchester.
+- Cluster behaviour across zoom: world 6 badges (Bangladesh merged as *4
+  cities*), 8× splits London from Manchester, 16× splits Bangladesh into
+  Chattogram 5, Sylhet 3 and a Dhaka pair.
+- Empty state, exercised by stubbing the payload: *"No confirmed locations to
+  display yet."*, zero markers, zero rows, empty legend — no placeholder pins.
+- **360, 390, 430, 768, 1024, 1280**: no horizontal overflow at any width, all
+  badges circular, controls 44px tall, side-by-side layout engages at 1200px.
+- Zero console errors on either portal.
+
+### Regressions found and fixed during this work
+
+1. **Badges rendered as ellipses on mobile.** A blanket
+   `#pages button { min-height: 44px }` stretched a 40px circular badge to 44px
+   tall. They are exempted and given a 44px hit area through an invisible
+   `::before`, so the touch target is honoured without deforming the target.
+2. **The first anti-overlap strategy was wrong** and is described above.
+3. **Over-merging.** The replacement used a 54px clearance, which on a canvas
+   squeezed to ~430px by the side panel collapsed nine cities into one badge.
+   The map now takes the full width below 1200px and the threshold matches a
+   real badge diameter.
+4. **Zoom pushed the data off-canvas**, because it magnified 0°,0° in the
+   Atlantic.
+5. **A label was clipped** at the right edge; labels near the edge now flip.
+6. **Dead CSS** for the removed "Share My Location" toggle
+   (`.location-toggle`, `.toggle-switch`, `.toggle-thumb`, `.toggle-label`) was
+   still in the stylesheet and is gone.
+7. **One test of my own was a false positive** — `/SELECT/i` against the
+   frontend matches `querySelectorAll` and `mapSelected`. Rewritten to look for
+   the shapes a recomputation would actually take.
+
+### Intentional non-changes
+
+- No boundary dataset, no polygons, no map provider, no `package.json` change.
+- No schema change, no migration, no change to `location_places` contents.
+- No change to what is collected, to the privacy levels, or to the
+  confirmation rules.
+- The event, job and chapter location models were not touched.
+- Free-text search still does not match city or country; that is Phase 5B's
+  deliberate behaviour, and location filtering is structured.
+
+### Remaining limitations
+
+1. **No basemap.** A graticule and badges, no coastlines or borders. Adding
+   them needs a published dataset or a tile provider — a decision for DIC, with
+   licensing implications, not something to improvise.
+2. **A country badge is a mean position, not a place.** For a country whose
+   alumni are far apart the badge sits between them. The panel states this
+   wherever the position is shown, and the ranked list is unambiguous.
+3. **No pan.** Zoom recentres on the data or on the busiest place; there is no
+   drag-to-pan, so a place far from the centre can leave the frame when zoomed.
+   Every count remains readable in the ranked list, so no figure depends on
+   panning to reach it.
+4. **City labels are hidden below 900px** to stay legible; the ranked list
+   carries the names there.
+5. **Only cities in `location_places` can appear** — the Phase 5B limitation,
+   unchanged.
+
+### Next phase
+
+**Phase 5C has not been started.**

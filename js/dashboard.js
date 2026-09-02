@@ -466,18 +466,62 @@ function switchAnalytics(type, btn) {
    city is relative to the grid it is drawn on. */
 const MAP_VIEW = { width: 900, height: 450 };
 
+/* View state. Zoom scales the projection rather than CSS-transforming the
+   layer, so badges keep a constant pixel size and the numbers stay legible at
+   every level — the number is the primary signal, and a scaled-down number is
+   no signal at all. */
+/* The top of this range is deliberately deep. Dhaka and Chattogram are about
+   1.4° apart, which is five view units at world zoom — the detail panel tells
+   the reader to zoom in to separate a cluster, and at 4× they still would not
+   have. 16× puts roughly eighty units between them, so the promise holds. */
+const MAP_ZOOM_STEPS = [1, 2, 4, 8, 16];
+let mapZoomIndex = 0;
+let mapCenter = { lat: 0, lng: 0 };
+let mapMode = 'cities';          // 'cities' | 'countries'
+let mapData = null;              // last payload from GET /api/stats/map
+let mapSelected = null;          // the marker whose detail panel is open
+let mapClusters = [];            // the merged badges currently drawn
+
+function mapZoom() { return MAP_ZOOM_STEPS[mapZoomIndex]; }
+
 function projectLatLng(lat, lng) {
-  const x = (Number(lng) + 180) / 360 * MAP_VIEW.width;
-  const y = (90 - Number(lat)) / 180 * MAP_VIEW.height;
-  return { x, y };
+  const z = mapZoom();
+  const bx = (Number(lng) + 180) / 360;
+  const by = (90 - Number(lat)) / 180;
+  const cx = (mapCenter.lng + 180) / 360;
+  const cy = (90 - mapCenter.lat) / 180;
+  return {
+    x: ((bx - cx) * z + 0.5) * MAP_VIEW.width,
+    y: ((by - cy) * z + 0.5) * MAP_VIEW.height
+  };
 }
 
-// A pin's size band reflects how many alumni it stands for, matching the legend.
-function mapClusterSize(n) {
-  if (n >= 1000) return 'xl';
-  if (n >= 100) return 'lg';
-  if (n >= 10) return 'md';
-  return 'sm';
+/* Legend bands, derived from the dataset actually being drawn rather than from
+   the fixed 1000+/100–999/<100 scale the old legend printed. On a college-scale
+   dataset those three buckets put every real place in the smallest one, so the
+   legend described a distribution that did not exist. */
+function mapBands(counts) {
+  const max = counts.length ? Math.max(...counts) : 0;
+  if (max <= 1) return [{ label: '1', min: 1, cls: 'sm' }];
+  if (max <= 10) {
+    return [{ label: '1–3', min: 1, cls: 'sm' },
+            { label: '4–10', min: 4, cls: 'md' }];
+  }
+  if (max <= 50) {
+    return [{ label: '1–5', min: 1, cls: 'sm' },
+            { label: '6–20', min: 6, cls: 'md' },
+            { label: '21+', min: 21, cls: 'lg' }];
+  }
+  return [{ label: '1–10', min: 1, cls: 'sm' },
+          { label: '11–50', min: 11, cls: 'md' },
+          { label: '51–100', min: 51, cls: 'lg' },
+          { label: '100+', min: 101, cls: 'xl' }];
+}
+
+function mapBandFor(n, bands) {
+  let cls = bands[0].cls;
+  for (const b of bands) if (n >= b.min) cls = b.cls;
+  return cls;
 }
 
 /* The reference grid the pins are plotted on.
@@ -499,29 +543,78 @@ function drawMapGraticule() {
   if (!svg) return;
   const { width: W, height: H } = MAP_VIEW;
   const parts = [];
+  const z = mapZoom();
+  const step = z >= 8 ? 5 : z >= 2.6 ? 10 : 30;
 
-  for (let lng = -180; lng <= 180; lng += 30) {
+  for (let lng = -180; lng <= 180; lng += step) {
     const { x } = projectLatLng(0, lng);
+    if (x < -20 || x > W + 20) continue;
     const prime = lng === 0;
     parts.push(`<line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${H}" ` +
-      `stroke="currentColor" stroke-width="${prime ? 1.4 : 0.6}" opacity="${prime ? 0.55 : 0.28}" />`);
-    if (lng !== -180 && lng !== 180) {
-      parts.push(`<text x="${(x + 4).toFixed(1)}" y="${H - 6}" font-size="11" ` +
-        `fill="currentColor" opacity="0.5">${lng}°</text>`);
+      `stroke="currentColor" stroke-width="${prime ? 1.3 : 0.7}" opacity="${prime ? 0.5 : 0.22}" />`);
+    if (Math.abs(lng) !== 180) {
+      parts.push(`<text x="${(x + 4).toFixed(1)}" y="${H - 7}" font-size="10" ` +
+        `fill="currentColor" opacity="0.45">${lng}°</text>`);
     }
   }
-  for (let lat = -60; lat <= 60; lat += 30) {
+  for (let lat = -80; lat <= 80; lat += step) {
     const { y } = projectLatLng(lat, 0);
+    if (y < -20 || y > H + 20) continue;
     const equator = lat === 0;
     parts.push(`<line x1="0" y1="${y.toFixed(1)}" x2="${W}" y2="${y.toFixed(1)}" ` +
-      `stroke="currentColor" stroke-width="${equator ? 1.4 : 0.6}" opacity="${equator ? 0.55 : 0.28}" />`);
-    parts.push(`<text x="6" y="${(y - 5).toFixed(1)}" font-size="11" ` +
-      `fill="currentColor" opacity="0.5">${lat}°</text>`);
+      `stroke="currentColor" stroke-width="${equator ? 1.3 : 0.7}" opacity="${equator ? 0.5 : 0.22}" />`);
+    parts.push(`<text x="6" y="${(y - 5).toFixed(1)}" font-size="10" ` +
+      `fill="currentColor" opacity="0.45">${lat}°</text>`);
   }
 
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
   svg.setAttribute('preserveAspectRatio', 'none');
   svg.innerHTML = parts.join('');
+}
+
+/* Merge badges that would collide, rather than pushing them apart.
+
+   Dhaka, Chattogram, Cumilla and Sylhet are within about five degrees of each
+   other; at world zoom they project to nearly the same point. Nudging each one
+   aside scattered them across a third of the map and left every badge pointing
+   at somewhere it is not — worse than the overlap it was solving.
+
+   So co-located places combine into one badge carrying their combined total,
+   which is what a map cluster is for. Zooming in increases the projected
+   distance between them, so the cluster splits on its own and the zoom control
+   does something worth doing. A cluster is always expandable: clicking it
+   lists the places inside with their individual counts.
+
+   The cluster sits at the alumni-weighted centre of its members, so the badge
+   leans toward the place most of the people are. */
+function clusterMapPoints(points, minDist) {
+  const remaining = [...points].sort((a, b) => b.n - a.n);
+  const clusters = [];
+
+  while (remaining.length) {
+    const seed = remaining.shift();
+    const at = projectLatLng(seed.latitude, seed.longitude);
+    const members = [seed];
+
+    for (let i = remaining.length - 1; i >= 0; i--) {
+      const p = projectLatLng(remaining[i].latitude, remaining[i].longitude);
+      if (Math.hypot(p.x - at.x, p.y - at.y) < minDist) {
+        members.push(remaining[i]);
+        remaining.splice(i, 1);
+      }
+    }
+
+    const total = members.reduce((a, m) => a + m.n, 0);
+    const x = members.reduce((a, m) => a + projectLatLng(m.latitude, m.longitude).x * m.n, 0) / total;
+    const y = members.reduce((a, m) => a + projectLatLng(m.latitude, m.longitude).y * m.n, 0) / total;
+    members.sort((a, b) => b.n - a.n);
+    clusters.push({ members, total, x, y, key: 'c:' + mapKeyOf(seed) });
+  }
+  return clusters;
+}
+
+function mapKeyOf(row) {
+  return mapMode === 'countries' ? row.country_code : String(row.place_id);
 }
 
 async function renderMapClusters() {
@@ -538,7 +631,7 @@ async function renderMapClusters() {
     return;
   }
 
-  const cities = res.cities || [];
+  mapData = res;
   const countries = res.countries || [];
   set('map-stat-countries', String(countries.length));
   set('map-stat-mapped', Number(res.mapped || 0).toLocaleString('en-IN'));
@@ -546,49 +639,314 @@ async function renderMapClusters() {
   set('map-stat-intl', Number(res.international || 0).toLocaleString('en-IN'));
   set('map-stat-chapters', String(res.chapters ?? 0));
 
-  drawMapGraticule();
-
-  /* One pin per CITY, positioned from the coordinates the server sent with it.
-     Those coordinates belong to the city record, not to any alumnus — there is
-     no per-person coordinate anywhere in this system to plot. */
-  container.innerHTML = cities.map(c => {
-    const { x, y } = projectLatLng(c.latitude, c.longitude);
-    const left = (x / MAP_VIEW.width) * 100;
-    const top = (y / MAP_VIEW.height) * 100;
-    const label = `${c.city}, ${c.country}`;
-    return `
-      <div class="map-cluster ${mapClusterSize(c.n)}" style="top:${top.toFixed(2)}%;left:${left.toFixed(2)}%"
-           title="${escapeHtml(label)}: ${c.n} alumni"
-           role="img" aria-label="${escapeHtml(label)}, ${c.n} alumni">${c.n}</div>
-      <div class="map-city-label" style="top:${top.toFixed(2)}%;left:${left.toFixed(2)}%">${escapeHtml(c.city)}</div>`;
-  }).join('');
-
-  /* Honest caption: what is drawn, and what is real but deliberately not drawn.
-     `unconfirmed` are the profiles whose location the pre-v13 hardcoded path
-     wrote. Plotting them would republish a fabrication, so they are counted
-     here and left off the map. */
-  const note = document.getElementById('map-note');
-  if (note) {
-    const parts = [];
-    if (!cities.length) {
-      parts.push('No alumni have shared a city on the map yet, so there is nothing to plot.');
-    } else {
-      parts.push(`${cities.length} ${cities.length === 1 ? 'city' : 'cities'}, ` +
-                 `${res.mapped} alumni who chose to appear on the map.`);
-    }
-    if (res.unconfirmed) {
-      parts.push(`${res.unconfirmed} profile${res.unconfirmed === 1 ? '' : 's'} carry a location ` +
-                 `recorded automatically before it could be confirmed; ` +
-                 `${res.unconfirmed === 1 ? 'it is' : 'they are'} not shown here.`);
-    }
-    const hidden = (res.confirmed || 0) - (res.mapped || 0);
-    if (hidden > 0) {
-      parts.push(`${hidden} chose to keep their location off the map.`);
-    }
-    note.textContent = parts.join(' ');
-  }
+  paintMap();
 }
 
+/* Draws whatever is currently in mapData at the current mode and zoom. Split
+   from the fetch so zooming and switching mode never re-query the server —
+   §9's rule that the endpoint is the single source of truth cuts both ways:
+   the browser must not recompute the counts, and it must not re-fetch them to
+   redraw the same numbers. */
+function paintMap() {
+  const container = document.getElementById('map-clusters');
+  if (!container || !mapData) return;
+  const res = mapData;
+  const cities = res.cities || [];
+  const countries = res.countries || [];
+  const rows = mapMode === 'countries' ? countries : cities;
+
+  drawMapGraticule();
+  renderMapLegend(rows.map(r => r.n));
+  renderMapRanking();
+
+  const empty = document.getElementById('map-empty');
+  if (empty) empty.classList.toggle('hidden', rows.length > 0);
+  if (!rows.length) {
+    container.innerHTML = '';
+    renderMapNote();
+    return;
+  }
+
+  /* Markers are positioned from coordinates the SERVER sent. For a city that
+     is the city's own coordinate; for a country it is the alumni-weighted mean
+     of its cities, which the server computes. Neither is a person's position —
+     no such coordinate exists anywhere in this system. */
+  /* Clearance is computed in VIEW units from the canvas's real pixel width, so
+     two badges cannot end up touching on a narrow canvas where a view unit is
+     worth fewer pixels. 58px is the largest badge (50px) plus a margin; a fixed
+     view-unit constant left the biggest discs overlapping. */
+  /* Merge distance, in VIEW units, derived from the canvas's real pixel width
+     so that two badges merge exactly when they would otherwise overlap on
+     screen. 34px is a typical badge diameter plus a small margin; 54px — the
+     largest badge — was far too greedy on a narrow canvas and collapsed most of
+     the world into a single disc. */
+  const canvasEl = document.getElementById('alumni-map');
+  const pxPerUnit = Math.max(0.2, (canvasEl?.clientWidth || 740) / MAP_VIEW.width);
+  const clusters = clusterMapPoints(rows, 34 / pxPerUnit);
+  mapClusters = clusters;
+
+  const bands = mapBands(clusters.map(c => c.total));
+  const pct = (v, total) => (v / total * 100).toFixed(2);
+
+  container.innerHTML = clusters.map(c => {
+    const many = c.members.length > 1;
+    const first = c.members[0];
+    const name = many
+      ? `${c.members.length} ${mapMode === 'countries' ? 'countries' : 'cities'}`
+      : (mapMode === 'countries' ? first.country : first.city);
+    const sub = many
+      ? `${c.members.map(m => mapMode === 'countries' ? m.country : m.city).join(', ')} — ${c.total} alumni`
+      : (mapMode === 'countries'
+          ? `${first.country}: ${first.n} alumni · ${first.cities} ${first.cities === 1 ? 'city' : 'cities'}`
+          : `${first.city}, ${first.country}: ${first.n} alumni`);
+    const left = pct(c.x, MAP_VIEW.width);
+    const top = pct(c.y, MAP_VIEW.height);
+    const active = mapSelected === c.key ? ' is-selected' : '';
+
+    return `
+      <button type="button" class="map-cluster ${mapBandFor(c.total, bands)}${active}${many ? ' is-group' : ''}"
+              style="top:${top}%;left:${left}%"
+              onclick="selectMapMarker('${escapeHtml(c.key)}')"
+              aria-label="${escapeHtml(name)}, ${c.total} alumni. Show details."
+              title="${escapeHtml(sub)}">${c.total}</button>
+      <span class="map-city-label${c.x > MAP_VIEW.width * 0.8 ? ' flip' : ''}"
+            style="top:${top}%;left:${left}%">${escapeHtml(name)}</span>`;
+  }).join('');
+
+  renderMapNote();
+  renderMapDetail();
+  if (window.lucide) lucide.createIcons();
+}
+
+/* Honest caption: what is drawn, and what is real but deliberately not drawn.
+   `unconfirmed` are the profiles whose location the pre-v13 hardcoded path
+   wrote. Plotting them would republish a fabrication, so they are counted here
+   and left off the map. */
+function renderMapNote() {
+  const note = document.getElementById('map-note');
+  if (!note || !mapData) return;
+  const res = mapData;
+  const cities = res.cities || [];
+  const parts = [];
+
+  if (!cities.length) {
+    parts.push('No confirmed locations to display yet.');
+  } else {
+    parts.push(`${cities.length} ${cities.length === 1 ? 'city' : 'cities'} across ` +
+               `${(res.countries || []).length} ${(res.countries || []).length === 1 ? 'country' : 'countries'}, ` +
+               `${res.mapped} alumni who chose to appear on the map.`);
+  }
+  if (res.unconfirmed) {
+    parts.push(`${res.unconfirmed} profile${res.unconfirmed === 1 ? '' : 's'} carry a location ` +
+               `recorded automatically before it could be confirmed; ` +
+               `${res.unconfirmed === 1 ? 'it is' : 'they are'} not shown here.`);
+  }
+  const hidden = (res.confirmed || 0) - (res.mapped || 0);
+  if (hidden > 0) parts.push(`${hidden} chose to keep their location off the map.`);
+  note.textContent = parts.join(' ');
+}
+
+function renderMapLegend(counts) {
+  const el = document.getElementById('map-legend');
+  if (!el) return;
+  if (!counts.length) { el.innerHTML = ''; return; }
+  const bands = mapBands(counts);
+  el.innerHTML = `<span class="legend-title">Alumni per ${mapMode === 'countries' ? 'country' : 'city'}</span>` +
+    bands.map(b => `<span class="legend-item"><span class="legend-dot ${b.cls}"></span>${escapeHtml(b.label)}</span>`).join('');
+}
+
+/* A plain ranked list beside the map. The map answers "where", this answers
+   "how many, exactly" without anyone having to read a disc, and it is the part
+   that stays usable on a narrow screen. */
+function renderMapRanking() {
+  const el = document.getElementById('map-ranking');
+  if (!el || !mapData) return;
+  const rows = mapMode === 'countries' ? (mapData.countries || []) : (mapData.cities || []);
+  if (!rows.length) { el.innerHTML = ''; return; }
+  const max = Math.max(...rows.map(r => r.n));
+
+  el.innerHTML = rows.slice(0, 12).map(r => {
+    const name = mapMode === 'countries' ? r.country : r.city;
+    const sub = mapMode === 'countries'
+      ? `${r.cities} ${r.cities === 1 ? 'city' : 'cities'}`
+      : r.country;
+    const key = mapMode === 'countries' ? r.country_code : String(r.place_id);
+    return `
+      <button type="button" class="map-rank-row ${mapSelected === key ? 'is-selected' : ''}"
+              onclick="selectMapMarker('${escapeHtml(key)}')">
+        <span class="map-rank-name">${escapeHtml(name)}<span class="map-rank-sub">${escapeHtml(sub)}</span></span>
+        <span class="map-rank-bar"><span style="width:${Math.max(4, Math.round(r.n / max * 100))}%"></span></span>
+        <span class="map-rank-n">${r.n}</span>
+      </button>`;
+  }).join('');
+}
+
+
+/* ─── MAP INTERACTION ────────────────────────────────────────
+   Selection, the detail panel, zoom and the hand-off to the directory. All of
+   it reads mapData — nothing here recounts anything or calls the API again. */
+
+function mapRowFor(key) {
+  if (!mapData) return null;
+  return mapMode === 'countries'
+    ? (mapData.countries || []).find(c => c.country_code === key)
+    : (mapData.cities || []).find(c => String(c.place_id) === String(key));
+}
+
+/* A selection is either a single place (from the ranked list) or a cluster
+   badge holding several. Both resolve to the same shape so the detail panel
+   has one code path. */
+function mapSelectionFor(key) {
+  if (!key) return null;
+  if (String(key).startsWith('c:')) {
+    const cluster = (mapClusters || []).find(c => c.key === key);
+    if (!cluster) return null;
+    if (cluster.members.length === 1) return { kind: 'one', row: cluster.members[0] };
+    return { kind: 'group', cluster };
+  }
+  const row = mapRowFor(key);
+  return row ? { kind: 'one', row } : null;
+}
+
+function selectMapMarker(key) {
+  mapSelected = mapSelected === key ? null : key;
+  paintMap();
+}
+
+function closeMapDetail() { mapSelected = null; paintMap(); }
+
+/* The detail panel. For a country it reports the name, the total and how many
+   cities are represented — never a boundary or an area, because this map has
+   no boundary data and claims none. */
+function renderMapDetail() {
+  const el = document.getElementById('map-detail');
+  if (!el) return;
+  const sel = mapSelectionFor(mapSelected);
+  if (!sel) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+
+  const isCountry = mapMode === 'countries';
+  const close = `
+    <button type="button" class="map-detail-close" onclick="closeMapDetail()" aria-label="Close">
+      <i data-lucide="x" class="ui-icon"></i>
+    </button>`;
+
+  if (sel.kind === 'group') {
+    // A merged badge: name every place inside it, each with its own count and
+    // its own way through to the directory.
+    el.classList.remove('hidden');
+    el.innerHTML = `
+      <div class="map-detail-head">
+        <div>
+          <div class="map-detail-title">${sel.cluster.members.length} ${isCountry ? 'countries' : 'cities'} here</div>
+          <div class="map-detail-sub">${sel.cluster.total} alumni in total</div>
+        </div>${close}
+      </div>
+      <div class="map-detail-list">
+        ${sel.cluster.members.map(m => `
+          <button type="button" class="map-detail-item"
+                  onclick="selectMapMarker('${escapeHtml(mapKeyOf(m))}')">
+            <span>${escapeHtml(isCountry ? m.country : m.city)}</span><span>${m.n}</span>
+          </button>`).join('')}
+      </div>
+      <p class="map-detail-foot">These places are too close together to draw
+        separately at this zoom. Zoom in to separate them.</p>`;
+    if (window.lucide) lucide.createIcons();
+    return;
+  }
+
+  const row = sel.row;
+  const title = isCountry ? row.country : row.city;
+  const lines = isCountry
+    ? [['Alumni', row.n], ['Cities represented', row.cities]]
+    : [['Country', row.country], ['Alumni', row.n]];
+
+  el.classList.remove('hidden');
+  el.innerHTML = `
+    <div class="map-detail-head">
+      <div>
+        <div class="map-detail-title">${escapeHtml(title)}</div>
+        ${isCountry ? '' : `<div class="map-detail-sub">${escapeHtml(row.country)}</div>`}
+      </div>${close}
+    </div>
+    <dl class="map-detail-rows">
+      ${lines.map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd></div>`).join('')}
+    </dl>
+    <button type="button" class="btn btn-primary btn-sm btn-full"
+            onclick="viewAlumniForMapSelection()">
+      <i data-lucide="users" class="ui-icon"></i> View alumni
+    </button>
+    ${isCountry ? `<p class="map-detail-foot">Badge position is the average of this
+      country's alumni cities — not a border or a centroid.</p>` : ''}`;
+  if (window.lucide) lucide.createIcons();
+}
+
+/* Hands off to the directory using the STRUCTURED filter — ?country= or
+   ?city= — not the free-text search box. The old chips fed the search box,
+   which never looked at the country column, so "UK" and "USA" matched nothing. */
+function viewAlumniForMapSelection() {
+  const sel = mapSelectionFor(mapSelected);
+  if (!sel || sel.kind !== 'one') return;
+  if (mapMode === 'countries') filterByCountry(sel.row.country_code);
+  else filterByCity(sel.row.city);
+  showPage('directory');
+}
+
+function setMapMode(mode) {
+  if (mode !== 'cities' && mode !== 'countries') return;
+  mapMode = mode;
+  mapSelected = null;
+  document.querySelectorAll('[data-map-mode]').forEach(b =>
+    b.classList.toggle('active', b.dataset.mapMode === mode));
+  paintMap();
+}
+
+/* The alumni-weighted centre of everything currently drawn. Zooming about
+   0°,0° — a point in the Atlantic where nobody lives — pushed the data off the
+   canvas on the first click, so the first zoom recentres on where the alumni
+   actually are. */
+function mapDataCentre() {
+  const rows = mapMode === 'countries' ? (mapData?.countries || []) : (mapData?.cities || []);
+  if (!rows.length) return { lat: 0, lng: 0 };
+  const total = rows.reduce((a, r) => a + r.n, 0) || 1;
+  return {
+    lat: rows.reduce((a, r) => a + Number(r.latitude) * r.n, 0) / total,
+    lng: rows.reduce((a, r) => a + Number(r.longitude) * r.n, 0) / total
+  };
+}
+
+function mapZoomIn() {
+  if (mapZoomIndex >= MAP_ZOOM_STEPS.length - 1) return;
+  if (mapZoomIndex === 0) mapCenter = mapDataCentre();
+  mapZoomIndex++;
+  paintMap();
+}
+
+function mapZoomOut() {
+  if (mapZoomIndex <= 0) return;
+  mapZoomIndex--;
+  if (mapZoomIndex === 0) mapCenter = { lat: 0, lng: 0 };   // back to the whole world
+  paintMap();
+}
+
+/* Reset returns to the world view. Zoom is never required to read this map —
+   every count is also listed beside it — so there is no pan control to get
+   lost in. Zooming in centres on the busiest place so the control does
+   something useful rather than magnifying empty ocean. */
+function mapResetView() {
+  mapZoomIndex = 0;
+  mapCenter = { lat: 0, lng: 0 };
+  mapSelected = null;
+  paintMap();
+}
+
+function mapFocusBusiest() {
+  const rows = mapMode === 'countries' ? (mapData?.countries || []) : (mapData?.cities || []);
+  if (!rows.length) return;
+  const top = rows.reduce((a, b) => (b.n > a.n ? b : a), rows[0]);
+  mapCenter = { lat: Number(top.latitude), lng: Number(top.longitude) };
+  mapZoomIndex = Math.max(mapZoomIndex, 2);
+  paintMap();
+}
 
 /* renderRBACTable() was removed. It was the first version of the permission
    matrix, reading a MOCK_RBAC constant that no longer exists, so it would have
@@ -663,13 +1021,20 @@ async function generateGeoHeatmap() {
     return;
   }
 
+  /* Same endpoint, same counts, same privacy filter as the alumni map — this
+     panel has never had its own aggregation and does not gain one here. It now
+     also shows how many cities each country represents, which the endpoint
+     started returning for the map, and each row opens the directory on that
+     country through the structured filter. */
   const max = Math.max(...countries.map(c => c.n));
   el.innerHTML = `<div class="geo-countries">${countries.map(c => `
-    <div class="geo-country-item">
-      <div class="geo-country-name">${escapeHtml(c.country)}</div>
+    <button type="button" class="geo-country-item" onclick="filterByCountry('${escapeHtml(c.country_code)}'); showPage('directory');"
+            title="Show alumni in ${escapeHtml(c.country)}">
+      <div class="geo-country-name">${escapeHtml(c.country)}${
+        c.cities ? `<span class="geo-country-sub">${c.cities} ${c.cities === 1 ? 'city' : 'cities'}</span>` : ''}</div>
       <div class="geo-country-bar-track"><div class="geo-country-bar-fill" style="width:${Math.round((c.n / max) * 100)}%"></div></div>
       <div class="geo-country-count">${c.n.toLocaleString('en-IN')}</div>
-    </div>
+    </button>
   `).join('')}</div>`;
 }
 
