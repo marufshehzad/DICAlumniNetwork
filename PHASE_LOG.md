@@ -875,7 +875,7 @@ profile API across 11 cities in 7 countries, then deleted (0 remaining;
 
 **Status:** COMPLETE (audit only)
 **Date:** 2026-09-02
-**Commit:** `PHASE_5C_COMMIT`
+**Commit:** `e1aa5d4` (`e1aa5d43eacf4dc651627c8227ec8404858736a0`) — recorded by the follow-up commit, since a commit cannot contain its own hash
 **Parent:** `5cfbc5e`
 **Code changed:** none. **Schema changed:** none. **Migrations run:** none.
 **Business data changed:** none.
