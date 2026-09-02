@@ -2056,7 +2056,7 @@ question.
 
 **Status:** **BLOCKED** — on external inputs, not on engineering
 **Date:** 2026-09-03
-**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Commits:** `0ba95f2` (the phase) and the follow-up that records this hash
 **Parent:** `52b4360`
 
 Not COMPLETE, and deliberately so. The brief's own rule is *"do not mark
