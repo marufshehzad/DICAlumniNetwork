@@ -2259,3 +2259,108 @@ remaining gap, and no amount of further engineering closes it.
 None. The next actions are DIC's: make the hosting decision, supply the
 thirteen inputs, and commission the security review. Phase 7 has not been
 started.
+
+---
+
+## PHASE 6.5 — HANDOVER ADDENDUM
+
+**Status:** **BLOCKED**
+**Date:** 2026-09-03
+**Commit:** recorded by the follow-up commit
+**Change:** documentation only. No application code was modified.
+
+Adds `DIC_PRODUCTION_HANDOVER_CHECKLIST.md` — the single document DIC works
+through before the platform serves real alumni. Twenty-six sections covering the
+architecture, hosting, VPS, PostgreSQL, domain, DNS, TLS, the admin subdomain,
+SMTP, backup destination and retention, monitoring, scheduler, environment
+variables, secret management, encryption-key escrow, super-admin ownership,
+emergency recovery ownership, DIC IT and developer responsibilities, and the
+pre-deployment, smoke-test, rollback, security-review, UAT and final sign-off
+checklists.
+
+Every line is marked with an owner — **[ENG ✅]**, **[DIC]**, **[HOST]** or
+**[3RD]** — so an unticked box says whose work it is rather than looking like an
+oversight.
+
+No domain name, credential, bucket, account or provider was invented. Every
+value DIC must supply appears as a blank line to fill in.
+
+---
+
+# THE TWO COLUMNS
+
+Everything about the platform's readiness reduces to this distinction. It is
+restated here because it is the thing most easily lost.
+
+## ENGINEERING READY — built, executed, measured
+
+Not "written". Each line below was run, and the number beside it is what it
+produced.
+
+| | Evidence |
+|---|---|
+| Application, two portals, 138 API routes | 23 suites, **1,673 checks, 0 failures** |
+| Authorisation on every route | **774 probes**, 0 unexplained mismatches |
+| Fresh install from an empty database | `install_drill` — **30 checks**: 47 tables from nothing, first administrator created, signed in |
+| Deletion purge | `ops_drill` — **35 checks**: expired purges, unexpired does not, cancelled does not, super_admin refused |
+| Backup and restore | `ops_drill`: table counts, vault bytes, audit chain on the restored copy |
+| **Encrypted off-site round trip** | `offsite_drill` — **30 checks**: 79% smaller, unreadable without the passphrase, **downloaded back**, byte-identical, restored and verified |
+| Password-reset delivery | `mail_drill` — **26 checks**: delivered over real SMTP, link works once, token never logged |
+| Scheduler, both trigger paths | Three triggers in succession: reminders 4→4→4→4, purges 0→0→0→0 |
+| Monitoring and alerting | healthy exit 0 silent · degraded exit 2 **alert delivered** · unavailable exit 1 **alert delivered** · a broken alert path reports itself |
+| Production fail-closed configuration | Refuses to boot without any of seven required variables |
+| Hash-chained audit trail | `verify-audit-chain` PASS, **4,454 entries**, exit 0 |
+| Continuous integration | Installs from `schema.sql` plus migrations on every push |
+| Security review package | Architecture, threat model, authorisation matrix, 40 attack scenarios, known-gaps list |
+| Documentation | Deployment runbook, operations runbook, key management, provisioning, and this handover checklist |
+
+**Nothing in this column is waiting on anybody.**
+
+## EXTERNAL / DIC PROVISIONING REQUIRED — no engineering closes these
+
+| | Owner | Gates |
+|---|---|---|
+| The hosting decision — VPS or serverless | **DIC** | Everything |
+| A Linux VM meeting the stated requirements | HOST | Everything |
+| The domain, and one host or two | **DIC** | DNS, TLS, both origin variables |
+| DNS records published | HOST | TLS, go-live |
+| A TLS certificate covering both names | HOST | Go-live |
+| An SMTP account and a sender on a DIC-controlled domain | 3RD + **DIC** | Self-service password reset |
+| SPF, DKIM and DMARC records | 3RD | Whether reset mail is delivered or filed as spam |
+| An off-site storage destination | 3RD | Disaster recovery |
+| A backup encryption passphrase, escrowed separately from the backups | **DIC** | Encrypted off-site backups |
+| Retention policy sign-off, including the historical-audit-PII disclosure | **DIC** | Backup configuration |
+| An uptime monitoring service and an on-call address | 3RD + **DIC** | Knowing the site is down |
+| Production secrets generated on the server | HOST | Go-live |
+| Secret escrow, with **two named holders** | **DIC** | Disaster recovery |
+| The named owner of the super-admin account | **DIC** | Go-live |
+| Emergency-recovery contacts, all four named | **DIC** | Incident response |
+| Scheduler installed and observed running | HOST | The deletion purge being kept |
+| Production smoke test on the real deployment | HOST | Go-live |
+| **An independent security review** | **DIC** | Public announcement |
+| College UAT | **DIC** | Go-live |
+
+**Nineteen items. Eighteen are provisioning. The nineteenth is the review.**
+
+---
+
+### Why the review is the one marked RED
+
+Every security property this platform claims was verified by the party that
+implemented it. Phase 5F's adversarial pass found **two P0 stored
+cross-site-scripting vulnerabilities that four previous audits had passed
+over**, both confirmed executing in a live super-admin session. That is the
+argument for an outside reviewer, and it is made by this platform's own history
+rather than by convention.
+
+### What has not been claimed
+
+No deployment has happened. No domain, credential, bucket, provider account or
+DNS record has been created, assumed or invented. `DIC_PRODUCTION_HANDOVER_CHECKLIST.md`
+carries a blank for every value DIC must supply, and the phrase "nothing in this
+repository has ever run on a DIC server" appears at the top of it.
+
+### Next phase
+
+None. Phase 7 has not been started. The next actions are DIC's: decide the
+hosting model, work through the checklist, and commission the review.
