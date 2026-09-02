@@ -1386,7 +1386,7 @@ three audits before it, had passed over.
 
 **Status:** COMPLETE
 **Date:** 2026-09-02
-**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Commit:** `6118638` (`61186382f62654d1e42d2512c98bdda842638cc9`) — recorded by the follow-up commit, since a commit cannot contain its own hash
 **Parent:** `146c3aa`
 
 Phase 5E ended with one genuine RED: every security property this project claims
