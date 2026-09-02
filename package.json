@@ -11,12 +11,13 @@
     "verify-audit-chain": "node verify_audit.js",
     "backup": "node backup.js",
     "restore-drill": "node restore.js --drill",
-    "drills": "node tests/install_drill.js && node tests/ops_drill.js && node tests/mail_drill.js",
+    "drills": "node tests/install_drill.js && node tests/ops_drill.js && node tests/mail_drill.js && node tests/offsite_drill.js",
     "drill-install": "node tests/install_drill.js",
     "drill-ops": "node tests/ops_drill.js",
     "drill-mail": "node tests/mail_drill.js",
     "offsite": "node offsite.js",
     "scheduler": "node scheduler.js",
-    "preflight": "node tests/run-all.js && node verify_audit.js"
+    "preflight": "node tests/run-all.js && node verify_audit.js",
+    "drill-offsite": "node tests/offsite_drill.js"
   }
 }

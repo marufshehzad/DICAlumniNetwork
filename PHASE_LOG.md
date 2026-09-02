@@ -2049,3 +2049,213 @@ None defined. The next actions are DIC's: choose the host, supply the eight
 inputs, and commission the review. The one piece of engineering worth queueing
 is a Vercel-compatible backup path, if Vercel is the answer to the first
 question.
+
+---
+
+## Phase 6.5 — Production provisioning and deployment readiness
+
+**Status:** **BLOCKED** — on external inputs, not on engineering
+**Date:** 2026-09-03
+**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Parent:** `52b4360`
+
+Not COMPLETE, and deliberately so. The brief's own rule is *"do not mark
+COMPLETE unless the actual production provisioning requirements have been
+verified"*. Six of the twelve sections asked for real infrastructure — an
+object-storage account, an SMTP provider, a monitoring service, a domain, a
+server. None exists. What could be built and proved without them was; what
+could not is named, with an owner.
+
+### The deployment decision: **a VPS, not Vercel**
+
+The recommendation follows from what the operations actually need, and the
+evidence is in the code rather than in preference.
+
+**Three of the platform's operational tools cannot run on Vercel at all.**
+`backup.js`, `restore.js` and `offsite.js` need `pg_dump`, a writable directory
+that persists, and minutes of runtime. A serverless function has none of those.
+Six of the eleven npm scripts become unavailable.
+
+**The monitoring built in Phase 6 would be permanently blind.**
+`/api/internal/monitor` reads `last-backup.json` and `last-offsite.json` from
+`BACKUP_DIR` (`server.js:2982`). On Vercel the backup happens at the database
+provider and writes no receipt the application can read, so the monitor would
+report *"no backup has ever been recorded"* every night for ever — and an
+operator would learn to ignore it, which is worse than having no monitor.
+
+**The login throttle is per-process.** `loginAttempts` is an in-memory `Map`
+(`server.js:618`). Five failures per account and twenty per IP become 5×N and
+20×N across N warm instances.
+
+**Connection exhaustion.** `pg.Pool` is `max: 10` per process (`db.js:77`) and a
+managed PostgreSQL typically allows 20–100 in total. Three or four instances
+exhaust it.
+
+**The bootstrap needs a shell.** `--create-super-admin` writes a credentials
+file to disk.
+
+**The scheduler loses its best property.** On a VPS, `scheduler.js` reaches the
+database directly, so the nightly purge still runs when the web process is
+unhealthy — which is precisely when nobody is watching.
+
+Vercel would still give managed TLS, atomic deploys and a working cron. Those
+are real, and they do not outweigh the six. `PRODUCTION_PROVISIONING.md`
+section A carries the full argument, **and what it would cost to choose Vercel
+anyway**, because that remains DIC's decision rather than this phase's.
+
+### What was proved, by running it
+
+**The encrypted off-site round trip, including the half nobody tests.**
+`tests/offsite_drill.js` — **30 checks** — dumps the live database, gzips and
+AES-256-encrypts it, ships it to a destination outside the application tree,
+then **downloads it back to a third directory**, decrypts, decompresses,
+restores into a disposable database and compares everything:
+
+- 1.65 MB → 0.35 MB, **79% smaller**;
+- the shipped object contains no readable SQL and begins `Salted__`;
+- with the wrong passphrase, `openssl` exits 1 and what it does write is
+  unreadable garbage that will not even decompress;
+- with the right one, the recovered file is **byte-identical** to the original;
+- the restored database matches on all 47 tables, every row count, the
+  identity vault's ciphertext/IV/auth-tag fingerprint, and a verifying audit
+  chain.
+
+The transport is a local copy standing in for object storage. Substituting
+`aws s3 cp` is one line of `OFFSITE_CMD`, and until DIC provides an account
+that line cannot be exercised.
+
+**Both production trigger paths, and no duplicate execution.** Three separate
+triggers in succession — an operator's shell, the **Vercel path exactly as
+Vercel sends it** (a GET with `Authorization: Bearer $CRON_SECRET`), and
+`ops/cron-dic.sh` under a stripped `env -i` environment — gave:
+
+```
+reminder notifications  4 -> 4 -> 4 -> 4
+completed purges        0 -> 0 -> 0 -> 0
+runs left marked running                0
+```
+
+The cron-environment run earned its place immediately: under a minimal `PATH`
+the backup failed with `pg_dump ENOENT`, and the script **correctly reported it
+as an incident and exited 1**. That is the cron-specific failure class this test
+exists for; a Linux server has `/usr/bin/pg_dump` on cron's default `PATH`, and
+`PG_DUMP` exists for when it does not. With a complete environment the same
+script finished cleanly, exit 0.
+
+**A real alert path, fired for all three states.** `ops/healthcheck.sh` gained
+`ALERT_CMD` — provider-agnostic like `OFFSITE_CMD`, substituting `{severity}`
+and `{message}` — and now also consults `/api/internal/monitor` and the
+off-site receipt rather than only `/api/health`. Measured:
+
+| State | Exit | Alert |
+|---|---|---|
+| healthy | 0 | none, correctly silent |
+| degraded (backup receipt says failed) | 2 | **delivered** — *"DEGRADED: last backup failed"* |
+| unavailable (application not answering) | 1 | **delivered** — *"DOWN: application not responding"* |
+
+And a broken alert path reports itself: with `ALERT_CMD='false'` the script logs
+*"ALERT DELIVERY FAILED — the alert path itself is broken"*, because a monitor
+whose alerting is silently broken is worse than none.
+
+### Two corrections to the brief
+
+The brief listed four scheduled jobs. There are three.
+
+- **Task reminders are not a separate job** — they are half of
+  `event-maintenance`, which rolls statuses forward *and* sends deadline
+  reminders in one sweep.
+- **There is no engagement-snapshot job**, and `server.js:2349` says why: the
+  schema records no historical snapshot to compare a period against. Inventing
+  one would have meant inventing the data it reports, which is the pattern this
+  project has spent three phases removing.
+
+Both are pinned in `tests/phase65_provisioning.js` so the discrepancy is not
+rediscovered later as a missing feature.
+
+### Deliverables
+
+- **`PRODUCTION_PROVISIONING.md`** — the hosting recommendation with its
+  evidence and its cost, the production architecture, exact server
+  requirements, the prerequisites from DIC with owners, **the DNS records as
+  records** (A, AAAA, CAA, and the SPF/DKIM/DMARC the mail provider will need),
+  the environment-variable reference, a provisioning checklist, the database
+  policy, and a production smoke test.
+- **`tests/offsite_drill.js`** — the encrypted round trip, 30 checks.
+- **`tests/phase65_provisioning.js`** — 64 checks pinning this phase's claims,
+  including that no credential, bucket, token or domain was invented anywhere.
+- `ops/healthcheck.sh` — rewritten with the alert path and the monitor check.
+- `offsite.js` — encryption made tool-agnostic (`.enc`, not `.gpg`), and the
+  plain dump made the only source so a stale encrypted copy can never be shipped.
+
+### DNS records required
+
+Nothing was configured — no DNS credentials or instructions exist, and the
+brief is explicit about not guessing. The records are specified in
+`PRODUCTION_PROVISIONING.md` section D: two `A` records (`alumni` and
+`admin.alumni`), optional `AAAA`, an optional `CAA`, and the three `TXT`
+records for SPF, DKIM and DMARC that the mail provider will supply.
+
+### Tests
+
+```
+23 suites                     1,673 passed, 0 failed
+  of which phase65_provisioning    64
+4 drills                        121 passed, 0 failed
+  install 30 · ops 35 · mail 26 · offsite 30
+npm run verify-audit-chain    PASS, 4,454 entries, exit 0
+```
+
+**Production smoke test:** the alumni half 12/12, the staff half 18/18, both
+portals rendering every page (10/10 and 15/15) with **zero console errors and
+zero horizontal overflow**. The web root serves none of `.env`, `db.js`,
+`server.js`, `package.json`, `schema.sql`, `admin-credentials.local.txt` or
+`.git/config`.
+
+Two smoke assertions failed on the first run and were my own errors, not the
+platform's: `/api/profile/me` returns snake_case and I checked camelCase, and an
+`openssl` wrong-passphrase check tested for an empty file when what matters is
+that the bytes are unreadable. Both corrected to test the real property.
+
+### Data integrity
+
+Users **18**, profiles **14**, places **99**, privacy fingerprint
+`c24e9a0a…` — byte-identical to the Phase 5F baseline. Every drill built and
+dropped its own disposable database; none remained. No destructive operation
+was performed against the live database.
+
+### Remaining blockers
+
+Thirteen, none of them engineering. `PRODUCTION_PROVISIONING.md` section C
+carries them with owners; the ones that gate go-live:
+
+| | Owner |
+|---|---|
+| **The hosting decision itself** — accept the VPS recommendation, or choose Vercel and accept its trade-offs | **DIC** |
+| A Linux VM meeting the stated requirements | DIC / hosting |
+| The domain, and one host or two | DIC |
+| DNS records, and a TLS certificate covering both names | Whoever holds the zone |
+| An SMTP account with a sender on a DIC-controlled domain | DIC + provider |
+| An off-site storage destination | DIC / hosting |
+| A backup encryption passphrase, generated and escrowed **separately from the backups** | DIC |
+| An uptime monitoring service and an on-call address | DIC |
+| The named owner of the super-admin account | DIC |
+| Two named people who can reach the secret escrow | DIC |
+| Retention policy sign-off | DIC's data-protection owner |
+| **An independent security review** | **DIC** |
+
+### What "BLOCKED" means here, precisely
+
+Every mechanism this deployment depends on has been executed and proved: the
+install, the purge, the backup, the **encrypted off-site round trip including
+the restore**, the SMTP delivery, both scheduler trigger paths, the three
+monitoring states and a real alert firing.
+
+What has not happened is that any of it has run **on a server DIC owns, against
+a domain DIC controls, with an account DIC pays for**. That is the entire
+remaining gap, and no amount of further engineering closes it.
+
+### Next phase
+
+None. The next actions are DIC's: make the hosting decision, supply the
+thirteen inputs, and commission the security review. Phase 7 has not been
+started.

@@ -68,7 +68,8 @@ function writeReceipt(state) {
 function newestDump() {
   if (!fs.existsSync(DIR)) return null;
   const files = fs.readdirSync(DIR)
-    .filter(f => /^dic_alumni_.*\.(sql|sql\.gz|sql\.gpg)$/.test(f))
+    // The plain dump only: an encrypted copy is transient and is never the source.
+    .filter(f => /^dic_alumni_.*\.sql$/.test(f))
     .map(f => ({ f, t: fs.statSync(path.join(DIR, f)).mtimeMs }))
     .sort((a, b) => b.t - a.t);
   return files.length ? path.join(DIR, files[0].f) : null;
@@ -133,7 +134,9 @@ function run() {
   let temp = null;
 
   if (ENCRYPT_CMD) {
-    temp = dump + '.gpg';
+    /* .enc, not .gpg: the command is the deployment's choice and may be gpg,
+       openssl, age or something else. The extension should not claim a tool. */
+    temp = dump + '.enc';
     const enc = shell(ENCRYPT_CMD.replace(/\{file\}/g, JSON.stringify(dump))
                                  .replace(/\{out\}/g, JSON.stringify(temp)), 'encrypt');
     if (!enc.ok || !fs.existsSync(temp)) {
