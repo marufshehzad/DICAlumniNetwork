@@ -250,7 +250,18 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *
     `, [name.trim(), description || '', (tag || 'scholarship').toLowerCase(),
         parseFloat(goalAmount) || 1000000, parseInt(daysLeft) || 30,
-        Array.isArray(gateways) && gateways.length ? gateways : ['bkash', 'nagad', 'card']]);
+        /* No default gateway list. This wrote ['bkash','nagad','card'] onto
+           every campaign it created — three payment providers this platform has
+           never been connected to, recorded as fact in the database. Nothing
+           renders the column, so it was not a visible lie, but it was a
+           fabrication at write time and the same pattern as the hardcoded
+           'Dhaka' Phase 5B removed.
+
+           The column is left in place (dropping it belongs in a schema-cleanup
+           phase) and is now written only with what the caller actually supplies
+           — which today is nothing. Donations are pledges confirmed by the
+           alumni office; see the Payments section of README.md. */
+        Array.isArray(gateways) && gateways.length ? gateways : null]);
     await writeAudit('Campaign Created', `"${name.trim()}" by user ${req.user.uid}`, '💰');
     res.json(row.rows[0]);
   }));

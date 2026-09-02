@@ -7,7 +7,9 @@ value is the institution's to choose, it is a placeholder marked
 **`REQUIRED FROM DIC`** — those are not oversights, and the platform cannot go
 live until they are filled in by someone with the authority to decide them.
 
-Last updated at the end of Phase 5A.
+Last updated at the end of Phase 5E. The per-item handover list with owners
+and a readiness matrix is **`PRODUCTION_HANDOVER_CHECKLIST.md`**; the
+step-by-step deployment sequence is **`PRODUCTION_DEPLOYMENT_RUNBOOK.md`**.
 
 ---
 
@@ -252,3 +254,22 @@ Neither is a defect; both are scope decisions the institution should know about.
 2. **Legacy audit entries are not verifiable.** Everything before the Phase 5A
    boundary. Documented, reported honestly by the verifier, and impossible to
    fix retrospectively.
+
+---
+
+## Part 4 — Added by Phase 5E
+
+Phase 5E tested the production configuration path rather than reading it, and
+found six defects in it. All six are fixed and pinned by
+`tests/phase5e_production.js` (35 checks). Two changed what production
+*requires*, so they change what DIC must supply:
+
+| Variable | Was | Now |
+|---|---|---|
+| `MAIL_TRANSPORT` | optional; unset silently meant `console` | **required**, chosen explicitly |
+| `PUBLIC_ORIGIN` / `ADMIN_ORIGIN` | optional; unset meant a CORS wildcard | **required**, both |
+
+Neither is new work for DIC in substance — the domains and the mail decision
+were already Part 2 items. What changed is that the platform now refuses to
+start without them instead of starting in a weaker configuration and saying
+nothing.

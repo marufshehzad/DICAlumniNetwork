@@ -187,6 +187,17 @@ if (IS_PRODUCTION) {
      it and keep reset_link.js as the only recovery path. Silence is not
      consent: MAIL_TRANSPORT has to say so. */
   for (const v of mailer.missingMailConfig()) missing.push(v);
+
+  /* PUBLIC_ORIGIN and ADMIN_ORIGIN are the entire CORS allow-list. With neither
+     set, `cors(undefined)` is permissive and production answered every origin
+     with `Access-Control-Allow-Origin: *` — verified. Bearer tokens live in a
+     header rather than a cookie, so that is not classic CSRF, but it is a
+     wildcard on a platform whose own documentation says these two variables
+     are the allow-list, and a deployment that forgets them should not come up
+     quietly permissive. They also decide which host resolves to the staff
+     portal, so a production deployment needs them regardless. */
+  if (!process.env.PUBLIC_ORIGIN) missing.push('PUBLIC_ORIGIN');
+  if (!process.env.ADMIN_ORIGIN) missing.push('ADMIN_ORIGIN');
   if (missing.length) {
     // The names only — never the values, and never a partial value.
     throw new Error(
@@ -2675,12 +2686,38 @@ app.use((req, res, next) => {
    differ by which modules they load, not by having their own copies. */
 const ADMIN_HOST_PREFIX = 'admin.';
 
+/* The hostname of each configured origin, compared as a hostname.
+
+   This used to be `adminOrigin.includes(host)` — a substring test. Under the
+   recommended architecture (alumni.<domain> and admin.alumni.<domain>) the
+   alumni host is a substring of the admin origin, so a request to the PUBLIC
+   domain matched and was served the staff portal shell. Verified:
+   'https://admin.alumni.dic.edu.bd'.includes('alumni.dic.edu.bd') === true.
+
+   The API enforces roles server-side regardless of which shell is served, so
+   this was the wrong page rather than an access-control failure — but the
+   wrong page on the college's public alumni domain. */
+function originHost(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try { return new URL(raw).hostname.toLowerCase(); }
+  catch { return raw.toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0]; }
+}
+
 function wantsAdminPortal(req) {
   if (/^\/admin(\/|$)/.test(req.path)) return true;
   const host = String(req.hostname || '').toLowerCase();
+  if (!host) return false;
   if (host.startsWith(ADMIN_HOST_PREFIX)) return true;
-  const adminOrigin = (process.env.ADMIN_ORIGIN || '').toLowerCase();
-  return !!adminOrigin && adminOrigin.includes(host) && host !== '';
+
+  const adminHost = originHost(process.env.ADMIN_ORIGIN);
+  const publicHost = originHost(process.env.PUBLIC_ORIGIN);
+  /* When both portals share one origin — the development setup, and any
+     single-host deployment — the host cannot distinguish them and only the
+     path can. Treating a shared host as "admin" would serve the staff portal
+     for every request, including "/". */
+  if (adminHost && adminHost === publicHost) return false;
+  return !!adminHost && host === adminHost;
 }
 
 app.use((req, res) => {
@@ -2689,9 +2726,23 @@ app.use((req, res) => {
 
 // Start Express Server locally or export for Vercel Serverless
 if (require.main === module) {
-  app.listen(PORT, () => {
+  app.listen(PORT, async () => {
     console.log(`🚀 DIC Alumni Platform API Server running on http://localhost:${PORT}`);
-    console.log(`🐘 Connected to PostgreSQL Database "dic_alumni_db"`);
+    /* This line printed the literal "dic_alumni_db" whatever it was actually
+       connected to — it once reported that name while pointed at a database
+       that did not exist. During a restore verification or an incident, the
+       startup banner is exactly where an operator checks which copy they are
+       talking to, so it now asks the connection.
+
+       Reported, never assumed: on failure it says so rather than guessing, and
+       it never prints the connection string, which carries the password. */
+    try {
+      const r = await db.query('SELECT current_database() AS db, version() AS v');
+      console.log(`🐘 Connected to PostgreSQL database "${r.rows[0].db}" ` +
+                  `(${String(r.rows[0].v).split(' ').slice(0, 2).join(' ')})`);
+    } catch (err) {
+      console.error('🐘 NOT connected to PostgreSQL: ' + err.message);
+    }
   });
 }
 

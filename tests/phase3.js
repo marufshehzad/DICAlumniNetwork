@@ -76,12 +76,17 @@ const front = () => ['index.html', 'admin.html', 'api.js']
     boot({ ...PG, NODE_ENV: 'production', SESSION_SECRET: 'x'.repeat(64), ENCRYPTION_KEY: 'short' }, true,
       'production with a malformed ENCRYPTION_KEY refuses to start');
     /* Phase 4 widened what production requires: a scheduler credential
-       (without it the deletion purge cannot run) and a mail decision. This
-       case is about the two Phase 3 secrets being sufficient *for their own
-       check*, so the Phase 4 requirements are satisfied here rather than
-       retested — phase4.js section M covers them directly. */
+       (without it the deletion purge cannot run) and a mail decision. Phase 5E
+       widened it again with PUBLIC_ORIGIN and ADMIN_ORIGIN, which are the
+       entire CORS allow-list — without them production answered every origin
+       with a wildcard. This case is about the two Phase 3 secrets being
+       sufficient *for their own check*, so the later requirements are
+       satisfied here rather than retested; phase4.js section M and
+       phase5e_production.js cover them directly. */
     boot({ ...PG, NODE_ENV: 'production', SESSION_SECRET: 'x'.repeat(64), ENCRYPTION_KEY: 'a'.repeat(64),
-           CRON_SECRET: 'c'.repeat(48), MAIL_TRANSPORT: 'none' }, false,
+           CRON_SECRET: 'c'.repeat(48), MAIL_TRANSPORT: 'none',
+           PUBLIC_ORIGIN: 'https://alumni.example.edu',
+           ADMIN_ORIGIN: 'https://admin.alumni.example.edu' }, false,
       'production with every required secret starts');
     boot({ ...PG, NODE_ENV: 'development' }, false,
       'development still starts without either');

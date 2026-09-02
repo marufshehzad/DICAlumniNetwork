@@ -312,8 +312,14 @@ const src = f => fs.readFileSync(path.join(REPO, f), 'utf8').replace(/\r\n/g, '\
     }
     return out;
   };
+  /* Phase 5E widened the production contract: PUBLIC_ORIGIN and ADMIN_ORIGIN
+     are now required too, because leaving them unset handed the CORS
+     middleware `undefined` and a production deployment answered every origin
+     with a wildcard. A complete set has to include them. */
   const GOOD = { SESSION_SECRET: 'x'.repeat(64), ENCRYPTION_KEY: 'a'.repeat(64),
-                 CRON_SECRET: 'c'.repeat(48), MAIL_TRANSPORT: 'none' };
+                 CRON_SECRET: 'c'.repeat(48), MAIL_TRANSPORT: 'none',
+                 PUBLIC_ORIGIN: 'https://alumni.example.edu',
+                 ADMIN_ORIGIN: 'https://admin.alumni.example.edu' };
   fs.renameSync(ENV, BAK);
   let noCron = '', noSmtp = '';
   try {
@@ -322,8 +328,8 @@ const src = f => fs.readFileSync(path.join(REPO, f), 'utf8').replace(/\r\n/g, '\
     boot({ ...GOOD, NODE_ENV: 'production', ENCRYPTION_KEY: '' }, true, 'still refuses without ENCRYPTION_KEY');
     noCron = boot({ ...GOOD, NODE_ENV: 'production', CRON_SECRET: '' }, true, 'refuses without CRON_SECRET');
     boot({ ...GOOD, NODE_ENV: 'production', CRON_SECRET: 'short' }, true, 'refuses a too-short CRON_SECRET');
-    noSmtp = boot({ SESSION_SECRET: 'x'.repeat(64), ENCRYPTION_KEY: 'a'.repeat(64), CRON_SECRET: 'c'.repeat(48),
-                    ...PG, NODE_ENV: 'production', MAIL_TRANSPORT: 'smtp' }, true,
+    noSmtp = boot({ ...GOOD, NODE_ENV: 'production', MAIL_TRANSPORT: 'smtp',
+                    SMTP_HOST: '', SMTP_FROM: '' }, true,
                    'refuses when SMTP is required but unconfigured');
     boot({ ...GOOD, NODE_ENV: 'production', MAIL_TRANSPORT: 'smtp',
            SMTP_HOST: 'smtp.example.test', SMTP_FROM: 'a@b.test' }, false,

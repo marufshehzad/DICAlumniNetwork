@@ -1179,4 +1179,202 @@ Outstanding engineering work is P2/P3 only: `P5C-007`, `P5C-010`, `P5C-011`,
 
 ### Next phase
 
-**Phase 5E has not been started.**
+**Phase 5E had not been started when this entry was written.**
+
+---
+
+## Phase 5E — Production and handover readiness
+
+**Status:** COMPLETE
+**Date:** 2026-09-02
+**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Parent:** `5b0a5b8`
+
+An audit of the production configuration path, the fixes it produced, and the
+two documents a handover needs. No product feature was added, no UI redesigned,
+no schema changed, no column dropped, no historical audit entry rewritten.
+
+The method that mattered: **the production path was executed, not read.** Every
+finding below was invisible in code review and obvious the moment a server was
+booted with a production environment and asked what it did. Four of the six had
+been in the repository across several phases of audit.
+
+### Six production defects, found by running it
+
+**1 · `MAIL_TRANSPORT` unset silently meant `console`.** The mailer treated an
+absent variable as an explicit choice and fell through to the development
+transport, which *prints password-reset links into the log*. A production
+deployment that simply forgot the variable would have written single-use
+account-recovery tokens in plaintext to its log file while the Operations panel
+reported email as configured. It now has no default: production refuses to
+start until one of `smtp` / `console` / `none` is chosen.
+
+**2 · Production with no origins configured served
+`Access-Control-Allow-Origin: *`.** `PUBLIC_ORIGIN` and `ADMIN_ORIGIN` were
+optional, and unset they handed `cors()` an `undefined` origin — which is the
+permissive wildcard, not "no CORS". The session is a bearer token rather than a
+cookie, so this was not a one-click account takeover; it was still a production
+API answering every origin on the internet. Both are now required.
+
+**3 · The startup banner printed a database name it had not checked.** It
+printed a hardcoded `"dic_alumni_db"` whether or not that database existed, and
+whether or not the connection worked. Booted against a nonexistent database, it
+cheerfully announced a successful connection. It now asks the connection:
+
+```
+🐘 Connected to PostgreSQL database "dic_alumni_db" (PostgreSQL 16.14)
+🐘 NOT connected to PostgreSQL: <reason>
+```
+
+**4 · The public alumni domain served the staff portal.** Host routing used
+`adminOrigin.includes(host)` — a substring test. Under the architecture this
+project recommends, `alumni.dic.edu.bd` is a substring of
+`https://admin.alumni.dic.edu.bd`, so a request to the **public** domain matched
+the admin origin and was served `admin.html`. Verified:
+`'https://admin.alumni.dic.edu.bd'.includes('alumni.dic.edu.bd') === true`.
+
+The API enforces roles server-side regardless of which shell is served, so this
+was the wrong page rather than an access-control failure — but the wrong page,
+on the college's public alumni domain, for every visitor. Now compared as
+hostnames, with an explicit fallback: when both origins share a hostname (the
+single-host deployment) the server keeps routing by path, because treating a
+shared host as "admin" would serve the staff portal for every request.
+
+**5 · Campaign creation fabricated payment gateways.** `POST /api/campaigns`
+defaulted `gateways` to `['bkash','nagad','card']` — three payment providers
+this platform has never been connected to, written into the database as fact by
+every campaign an administrator created. Nothing renders the column, so it was
+never a visible lie; it was a fabrication at write time, and the same pattern as
+the hardcoded `'Dhaka'` that Phase 5B removed. It now writes only what the
+caller supplies, which today is nothing. **The column was not dropped** — that
+belongs to a schema-cleanup phase.
+
+**6 · `tests/run-all.js` referenced two variables that no longer existed.**
+Left from a rename. The runner threw `ReferenceError` on any suite that produced
+no summary line — exactly the case it exists to report.
+
+### The restore drill
+
+Run end to end, following the brief's sequence, into an **isolated** database
+(`p5e_restore_verify`). Never over the live one.
+
+- 47 tables restored.
+- Location data intact: 99 reference places, 0 bad coordinates, and **0 personal
+  coordinate columns** — the Phase 5B invariant re-checked on the restored copy.
+- Privacy values preserved exactly.
+- **Audit chain verified on the restored database through 1,417 entries, exit 0.**
+  This is the strongest available evidence that a dump is complete and
+  unaltered: any missing or modified row breaks the chain.
+- The application was started against the restored copy and a real `super_admin`
+  sign-in succeeded.
+- The drill database was dropped; the live database was confirmed untouched
+  (18 users, unchanged).
+
+### Fail-closed testing, honestly
+
+Testing "production refuses to start without X" on a machine that has a `.env`
+is worthless: the file supplies X and the test passes for the wrong reason.
+`.env` was moved aside twice and **restored byte-identical, md5-verified, both
+times**. For the repeatable suite, `db.js` gained `DIC_SKIP_DOTENV=1`, which
+makes the app ignore the file entirely. It can only ever make the configuration
+smaller, never weaker-but-running — with a variable genuinely absent, production
+refuses to start.
+
+Two of that suite's first results were **false failures of my own making**, both
+worth recording:
+
+- Three source assertions of the form "this pattern is gone" matched the
+  *comment explaining the fix*, which quotes the pattern. Comments are now
+  stripped before source assertions — the third time this project has hit that
+  trap.
+- The host-routing test used `fetch` to send a `Host` header. `Host` is a
+  forbidden header name in the fetch spec and undici drops it silently, so the
+  test reported that the admin host served the alumni site **having never
+  changed the host**. Rewritten with raw `http.request`, it passes.
+
+### Secrets
+
+No secret value is printed anywhere — by the refusal message, by a successful
+boot, or by this log. That is asserted, not assumed: the suite boots a server
+with known throwaway secrets and greps the entire output for them.
+
+### Tests
+
+`tests/phase5e_production.js` — **35 checks**, registered in `run-all.js`:
+production fails closed on each of the six required variables and on three
+malformed ones; no secret is printed; CORS is an allow-list and never a
+wildcard; each hostname serves its own portal and `/admin` still works on any
+host; the banner asks `current_database()`; no fabricated gateway anywhere,
+including in `package.json`.
+
+Two suites had expectations updated because **the contract genuinely changed** —
+`PUBLIC_ORIGIN` and `ADMIN_ORIGIN` became required, so a "complete set of
+secrets" now includes them. `tests/phase3.js` and `tests/phase4.js` were widened
+accordingly, with the reason recorded in each file. Nothing was relaxed.
+
+```
+20 suites — 1,395 passed, 0 failed
+npm run verify-audit-chain — PASS, 1,766 entries, exit 0
+```
+
+### Browser verification
+
+Staff portal: sign-in, Super Admin dashboard, Operations panel — which reports
+`No SMTP server configured · DEVELOPMENT — NOT SENDING`, the honest answer for
+this environment. Alumni site: dashboard and the world map, which renders one
+cluster and states plainly that 18 profiles carry a location recorded
+automatically before it could be confirmed and are not shown. **Zero console
+errors on every screen.**
+
+### Documents
+
+- **`PRODUCTION_DEPLOYMENT_RUNBOOK.md`** — the first-deployment sequence, step 0
+  (choose the hostnames) through step 15 (record what was deployed), plus
+  rollback. Step 3 is a hard stop: *do not continue past this line with a
+  placeholder*. Rollback separates "the code is bad" from "the data is bad",
+  because using the wrong one is how a bad deploy becomes lost data, and states
+  that `ENCRYPTION_KEY` cannot be rolled back at all.
+- **`PRODUCTION_HANDOVER_CHECKLIST.md`** — every item labelled READY IN CODE /
+  REQUIRES DIC / REQUIRES HOSTING PROVIDER / REQUIRES THIRD-PARTY / FUTURE
+  FEATURE, in four parts (college, technical, security, operations), ending in a
+  GREEN/YELLOW/RED readiness matrix.
+- `README.md` — the production-requirements table listed two variables and
+  there are now six. Corrected.
+- `.env.example` — origins and `MAIL_TRANSPORT` rewritten as required, with
+  what went wrong when they were not; `DIC_SKIP_DOTENV` documented, with a
+  warning never to set it on a real deployment.
+- `PRODUCTION_DEPENDENCIES.md` — Part 4 added.
+
+### Readiness — stated plainly
+
+**This platform is not ready to go live today, and not because of the code.**
+
+Nine items block go-live. Eight are inputs nobody in this repository can supply:
+a domain, a server, TLS, three generated secrets and their escrow, an SMTP
+account or a documented decision to do without one, a cron entry, an off-site
+backup destination, and a named person who owns the super-admin account.
+
+The ninth is the one genuine RED: **no independent security review has ever been
+performed.** Every security property this project claims was verified by the
+party that implemented it. That is worth something, and it is not the same
+thing. Someone else should look before this is announced to alumni.
+
+The engineering is finished to the standard this project has been held to. Six
+production defects were found in this phase alone — all by executing the
+production path rather than reading it — which is the argument for the review,
+not against it.
+
+### Intentional non-changes
+
+- No feature added, no UI redesigned, no payment gateway, no map provider.
+- Location and RBAC architecture untouched.
+- `campaigns.gateways` left in the schema; no column dropped.
+- No historical audit entry rewritten. No production data modified.
+- No credentials, domains or deployments invented — every hostname in the new
+  documents is a placeholder and says so.
+- The deferred P2/P3 findings from Phase 5C were not opportunistically fixed.
+
+### Next phase
+
+None is defined. The next action is DIC's: the eight inputs above, and the
+security review.

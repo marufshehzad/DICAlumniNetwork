@@ -16,9 +16,17 @@ types.setTypeParser(1082, (v) => v);
 const fs = require('fs');
 const path = require('path');
 
-// Auto-load .env file if present
+/* Auto-load .env file if present.
+
+   DIC_SKIP_DOTENV=1 ignores the file entirely. That exists so the production
+   fail-closed behaviour can be tested on a machine that has a .env — without
+   it, a developer's file silently supplies the very variable the test is
+   trying to remove, and the test passes for the wrong reason.
+
+   It can only ever make the configuration smaller, never weaker-but-running:
+   with a variable genuinely absent, production refuses to start. */
 const envPath = path.join(__dirname, '.env');
-if (fs.existsSync(envPath)) {
+if (fs.existsSync(envPath) && process.env.DIC_SKIP_DOTENV !== '1') {
   const envContent = fs.readFileSync(envPath, 'utf8');
   envContent.split('\n').forEach(line => {
     const trimmed = line.trim();

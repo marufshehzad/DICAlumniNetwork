@@ -199,21 +199,30 @@ anywhere in the code.
 ## 🔒 Production requirements
 
 The server **refuses to start** when `NODE_ENV=production` (or `VERCEL=1`)
-unless both of these are set:
+unless all six of these are set, and it names the ones it is missing:
 
 | Variable | Why it is mandatory |
 |---|---|
 | `SESSION_SECRET` | Signs session tokens. Without it the server invents one per boot, so every user is signed out on each restart — and on every serverless cold start. |
 | `ENCRYPTION_KEY` | 64 hex characters. Encrypts NID/BRC identity records (AES-256-GCM) and signs event ticket QR codes. Without it the identity vault and ticketing both refuse to operate rather than degrade silently. |
+| `CRON_SECRET` | 32 characters minimum. The scheduler's credential. Without it nothing can trigger the nightly jobs — including the 30-day deletion purge, which is a promise made to every user who asks to be erased. |
+| `MAIL_TRANSPORT` | `smtp`, `console` or `none`, chosen explicitly. It has no default: an unset value used to mean `console`, so a deployment that simply forgot the variable printed every password-reset link into its log and believed mail was configured. |
+| `PUBLIC_ORIGIN` | The alumni site's origin. Also the CORS allow-list. Unset, the middleware received `undefined` — which is the permissive wildcard, so production answered every origin with `Access-Control-Allow-Origin: *`. |
+| `ADMIN_ORIGIN` | The staff portal's origin, and which hostname is served `admin.html`. Set it to the same value as `PUBLIC_ORIGIN` for a single-host deployment; the server then routes the staff portal by path. |
 
-Generate either with:
+Generate the three secrets with:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
 Keep `ENCRYPTION_KEY` backed up somewhere durable. Identity-vault records are
-encrypted with it and cannot be recovered if it is lost.
+encrypted with it and **cannot be recovered if it is lost** — unlike the other
+two, which can be rotated freely.
+
+`.env.example` documents every variable, required or not. For the full
+deployment sequence see **`PRODUCTION_DEPLOYMENT_RUNBOOK.md`**; for what is
+still owed by DIC or a hosting provider, **`PRODUCTION_HANDOVER_CHECKLIST.md`**.
 
 ---
 

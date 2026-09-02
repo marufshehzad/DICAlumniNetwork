@@ -27,7 +27,8 @@ const BASE = process.env.TEST_BASE || 'http://localhost:8123';
 const SUITES = [
   'phase0_sec', 'phase0_role', 'acceptance', 'qa1', 'qa2', 'qa3', 'portal',
   'phase2b', 'phase2c', 'phase3', 'phase4', 'phase5a',
-  'phase5a_security', 'phase5b_location', 'phase5d_hardening', 'tamper',
+  'phase5a_security', 'phase5b_location', 'phase5d_hardening',
+  'phase5e_production', 'tamper',
   'sourcetruth', 'sourcetruth15', 'crossref'
 ];
 
@@ -84,7 +85,7 @@ for (const name of SUITES) {
     for (const line of out.split('\n').filter(l => /^\s+FAIL/.test(l)).slice(0, 6)) {
       console.log('        ' + line.trim());
     }
-    if (r.status !== 0 && !c && !m) console.log('        exit ' + r.status);
+    if (r.status !== 0 && !counts.length && !metrics.length) console.log('        exit ' + r.status);
   }
 }
 

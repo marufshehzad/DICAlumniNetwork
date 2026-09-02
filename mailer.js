@@ -57,6 +57,20 @@ function getTransport() {
 /* What production must have before it is allowed to boot. Returned rather
    than thrown so server.js can report every missing secret at once. */
 function missingMailConfig() {
+  /* Silence is not consent, and until Phase 5E it was.
+
+     MODE falls back to 'console' when neither MAIL_TRANSPORT nor SMTP_HOST is
+     set, and this function then returned [] because 'console' looked like a
+     deliberate choice. So a production deployment that simply forgot about
+     e-mail booted cleanly, reported healthy, and wrote every password-reset
+     link to a log file nobody reads — self-service recovery silently inert
+     while everything appeared fine.
+
+     In production the operator has to say which it is. 'console' and 'none'
+     remain valid answers; not answering is not. */
+  if (!process.env.MAIL_TRANSPORT) {
+    return ['MAIL_TRANSPORT (set it to smtp, console or none — see .env.example)'];
+  }
   if (MODE === 'none' || MODE === 'console') return [];   // an explicit choice
   const missing = [];
   if (!CONFIG.host) missing.push('SMTP_HOST');
