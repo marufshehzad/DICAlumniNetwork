@@ -1651,7 +1651,7 @@ eight inputs.
 
 **Status:** COMPLETE
 **Date:** 2026-09-03
-**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Commits:** `0f0a2f3` (the phase) and the follow-up that records this hash, since a commit cannot contain its own
 **Parent:** `797f254`
 
 ### Scope, and why
