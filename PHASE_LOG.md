@@ -2266,7 +2266,7 @@ started.
 
 **Status:** **BLOCKED**
 **Date:** 2026-09-03
-**Commit:** recorded by the follow-up commit
+**Commit:** `d18fb27`
 **Change:** documentation only. No application code was modified.
 
 Adds `DIC_PRODUCTION_HANDOVER_CHECKLIST.md` — the single document DIC works
