@@ -19,27 +19,65 @@
 ### 📥 1. Bulk User Import & Automatic Profile Creation (`Admin Panel -> Bulk Import`)
 - **Supported Format:** CSV (`.csv`). Excel files are not supported — export to CSV first.
 - **Downloadable Sample Template:** Download `sample_alumni_import_template.csv` directly from the admin panel.
-- **Comprehensive 43-Field Support:** Basic, Academic, Professional, Contact, Personal, Location, Social, Emergency Contact, and Networking Preferences.
-- **Validation Engine:** Real-time checking for required fields, email format, phone format, CGPA numerical ranges, and passing years.
-- **4-Priority Duplicate Detection:** Auto-detects duplicates by Student ID > Roll Number > Email > Mobile Number.
+- **19 mappable columns:** Full Name and Email (both required), Mobile, HSC Passing Year, HSC Group, HSC Version, Blood Group, Present Address, Permanent Address, Hometown, City, District, Postal Code, Country, Occupation, Organisation, Designation, Photo URL, Facebook. Column headers are auto-detected and any unrecognised column defaults to "do not import", so a new column can never land in the wrong field silently.
+- **Location resolution:** City and Country are matched against the reference place list, with documented aliases (Chittagong → Chattogram, UK → United Kingdom). A city that cannot be matched is **reported back by row number** and the row imports without a location — never with a guessed one.
+- **Validation:** Full Name and a recoverable email address are required; a row missing either is rejected and listed. A non-four-digit passing year is dropped rather than failing the row. There is no CGPA or phone-format validation.
+- **Duplicate detection by email, then mobile number** (last ten digits).
 - **Duplicate Handling Strategies:** Skip duplicates, update existing profiles, or merge records.
 - **Automated Credential Generation:** Each import batch gets a freshly generated temporary password, shown once to the administrator who ran it and stored only as a scrypt hash. Every imported account is flagged to choose its own password at first sign-in.
 - **Downloadable Error Report:** Generates `bulk_import_error_report.csv` for invalid rows detailing exact errors & suggested fixes.
 - **Import Audit History:** Complete historical log of past import batches (Date, Admin, Total/Success/Failed/Duplicates, Processing Speed).
 
-### 👤 2. Comprehensive 10-Section User Profile System (`My Profile`)
-- **10 Profile Sections:**
-  1. **Basic & Academic Identity**: Photo, Cover Photo, Full Name, Nickname, Student ID, Roll, Reg No, Batch, Department, Degree, Status, DOB, Gender, Blood Group, Bio.
-  2. **Contact & Emergency**: Primary Email, Secondary Email, Mobile, Alt Phone, Emergency Contact Name/Phone/Relation.
-  3. **Address & Location**: Present & Permanent Address, Hometown, City, District, Division, Country, Postal Code.
-  4. **Academic Record**: Institution Name, Department, Degree, CGPA, Graduation Year, Admission Year, Student Clubs, Scholarships, Awards, Publications.
-  5. **Professional & CV**: Current Company, Job Title, Employment Type, Industry, Experience, Previous Companies, Skills, Certifications, Resume/CV Upload, Portfolio.
-  6. **Networking & Hiring**: Open to Mentor, Looking for Job, Actively Hiring, Startup Collaboration, Freelancing, Speaking.
-  7. **Social Profiles**: LinkedIn, Facebook, GitHub, X (Twitter), Instagram, YouTube, Behance, Dribbble, Medium, Kaggle, Stack Overflow, Custom Links.
-  8. **Skills & Interests**: Technical Skills, Soft Skills, Languages, Hobbies, Sports, Volunteer Work, Areas of Interest.
-  9. **Granular Privacy Controls**: Select field-level visibility (*Public*, *Alumni Only*, *Same Batch*, *Connections*, *Teachers*, *Private*).
-  10. **Admin Custom Fields**: Dynamic no-code custom field builder for administrators to add new profile schema fields on the fly.
-- **Verification Badges:** Display verification status pills (Email Verified ✓, Phone Verified ✓, Student ID Verified ✓, Alumni Board Verified ✓).
+### 👤 2. Alumni Profile (`My Profile`)
+
+The profile page presents the following sections. Every field listed here has a
+column behind it and is editable or displayed by the running application.
+
+1. **Basic & academic identity** — Profile photo URL, Full Name, Student ID,
+   Roll Number, Registration Number, Batch, Passing Year, Department, Program,
+   Section, Degree, Current Status, Date of Birth, Gender, Blood Group, Bio.
+2. **Contact & emergency** — Primary Email, Secondary Email, Mobile, Alternate
+   Mobile, WhatsApp Number, Emergency Contact Name / Phone / Relation.
+3. **Address & location** — Present Address, Permanent Address, Hometown,
+   **Current City** (chosen from a reference list), District, Division, Country,
+   Postal Code. The city is what places an alumnus on the map; see §Location.
+4. **Academic record** — CGPA, Admission Year, Clubs, Scholarships, Awards,
+   Publications, Certifications.
+5. **Professional** — Current Organisation, Job Title, Employment Type,
+   Industry, Years of Experience, Occupation, Skills.
+6. **Networking & hiring** — Open to Mentor, Looking for a Mentor, Looking for
+   Job, Actively Hiring, Open to Collaboration.
+7. **Social links** — LinkedIn, Facebook, GitHub, X (Twitter), Website.
+8. **Field privacy** — see below.
+9. **Admin custom fields** — administrators can define additional profile
+   fields from the admin portal.
+
+**Field privacy — exactly what the server enforces.** The contract lives in one
+place (`privacy.js`), the browser renders its controls from it, and the read
+side gates against it:
+
+| Field | Levels offered | Default | Visible to administrators when private? |
+|---|---|---|---|
+| Email address | Members / Only me | Members | Yes |
+| Mobile number | Members / Only me | Only me | Yes |
+| City & country | Members **and on the map** / Members only / Only me | Members only | **No** |
+
+Street address, permanent address, postal code and hometown are **visible only
+to their owner**, unconditionally. That is not a setting, and it is deliberate:
+the only alternative level would be "share my home address with every member",
+which has no legitimate use in an alumni directory.
+
+There is no per-batch, per-connection or per-teacher visibility scoping.
+
+**Verification** is a single administrator-set flag (`is_verified`) shown as one
+badge. There are no separate email, phone, student-ID or board verifications.
+
+**Not currently implemented** — listed because earlier drafts of this file
+claimed them: cover photo, résumé/CV upload, portfolio, previous companies,
+Instagram, YouTube, Behance, Dribbble, Medium, Kaggle, Stack Overflow, custom
+link lists, separate soft-skills / languages / hobbies / sports / volunteering
+/ interests fields, and per-batch or per-connection privacy scoping. None of
+these has a column, an API field or a control.
 
 ---
 
@@ -47,8 +85,8 @@
 
 | Role Level | Role Title | Access Rights & Dashboard View |
 |---|---|---|
-| **Level 1** | **Alumni** | Profile completion, Networking, Directory, Mentorship, Events, Jobs, Career Tracker, DIC News & Live Polls. |
-| **Level 2** | **Moderator** | **Moderator Dashboard**: Pending profile approvals queue, reported posts, content moderation tools. |
+| **Level 1** | **Alumni** | Profile, Directory, Connections, Mentorship, Events & tickets, Jobs, Chapters, Donations, Alumni Map, DIC News & Live Polls. |
+| **Level 2** | **Moderator** | **Moderator Dashboard**: account verification queue, chapter and story review, event creation and approval, broadcasts. There is no post-reporting or flagged-content system. |
 | **Level 3** | **Department Admin** | **Dept Admin Dashboard (CSE/SWE/BBA/EEE)**: Department placement funnel, department verification queue, department announcements. |
 | **Level 4** | **College Admin** | **College Command Center**: college-wide alumni figures, engagement trends, college broadcasts, event approval. |
 | **Level 5** | **Super Admin** | **Super Admin Control Panel**: Bulk User Import, Dynamic Custom Fields, immutable audit logs, database tools. |
@@ -176,6 +214,35 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 Keep `ENCRYPTION_KEY` backed up somewhere durable. Identity-vault records are
 encrypted with it and cannot be recovered if it is lost.
+
+---
+
+## 📍 Location — current position
+
+Alumni location is **city-level and chosen from a reference list**, never typed
+free-hand and never observed from a device.
+
+- **No coordinate is stored for any person.** `location_places` holds ~99 cities
+  with their coordinates; a profile references a place by id. A city's position
+  is public knowledge, a person's is not.
+- **No GPS, no browser geolocation, no address geocoding.** `navigator.geolocation`
+  appears nowhere in the codebase.
+- **The Alumni Map plots aggregate counts per city or country**, drawn from real
+  coordinates on an equirectangular projection with a graticule. It uses **no
+  map library, no tiles, no API key and no provider** — and therefore shows **no
+  country boundaries**. A country badge sits at the alumni-weighted mean of its
+  cities, which is a statement about the alumni, not about the country's shape.
+- **Only members who set their location visibility to "on the map" are counted.**
+  "Members only" appears on a profile but not on the map; "Only me" appears
+  nowhere.
+- **Locations recorded before this system existed are flagged, not trusted.**
+  An earlier version wrote a hardcoded `Dhaka, Bangladesh` into every profile at
+  registration and import. Those values are preserved, marked *unconfirmed* in
+  the directory, excluded from the map, and only the member can clear the flag
+  by choosing their city.
+
+**Planned / not currently implemented:** country boundary rendering, map pan,
+chapter locations, and event venue coordinates or directions.
 
 ---
 

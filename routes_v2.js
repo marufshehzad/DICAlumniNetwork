@@ -354,6 +354,14 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
 
       if (received) {
         await client.query(`
+          /* NOT A SOURCE OF TRUTH — see POST_PHASE5B_WHOLE_SYSTEM_AUDIT.md P5C-009.
+
+             This counter is still incremented so the column does not drift further, but
+             nothing in the product reads it: campaign totals are SUM(amount) over settled donations.
+             It was seeded with fabricated values (chapters.members_count sums to 41,990
+             against 0 real memberships), so its absolute value is meaningless and only
+             the delta is maintained. Do not start displaying or enforcing on it without
+             reconciling it first. Dropping it is queued for a schema-cleanup phase. */
           UPDATE campaigns SET raised_amount = raised_amount + $2, donors_count = donors_count + 1
           WHERE id = $1
         `, [cur.rows[0].campaign_id, cur.rows[0].amount]);

@@ -15,6 +15,18 @@ as all five roles, which stamps `last_login_at` and resets failed-login counters
 on those seeded accounts. The rate-limit probe recorded five failed sign-ins for
 a non-existent address. Nothing else was written.
 
+
+> **Status update — Phase 5D (commit recorded in `PHASE_LOG.md`).**
+> Both P0 findings are **RESOLVED**, along with `P5C-003`, `P5C-005`, `P5C-006`,
+> `P5C-008`, `P5C-013` and `P5C-021`. `P5C-009` is **mitigated** (every write
+> site now carries a NOT-A-SOURCE-OF-TRUTH marker; the columns were deliberately
+> not dropped and their seeded values deliberately not rewritten). `P5C-004`,
+> `P5C-007`, `P5C-010`, `P5C-011` and the P3 items remain **open/deferred**.
+> Fixing P5C-001 uncovered three further defects, recorded below as `P5C-025`
+> to `P5C-027`. The findings text below is the audit as written; only
+> disposition labels were added. Nothing was rewritten to look better in
+> hindsight.
+
 ---
 
 ## Executive summary
@@ -140,7 +152,7 @@ already documented and are not engineering work.
 
 ### P0 — production / security blockers
 
-#### P5C-001 — Stored XSS in the bulk-import preview (admin session)
+#### P5C-001 — Stored XSS in the bulk-import preview (admin session)  ·  **RESOLVED (Phase 5D)**
 - **Status:** SECURITY RISK · **Severity:** Critical
 - **Current behavior:** `renderWizardStepContent()` renders CSV field values
   directly into `innerHTML` with no escaping. **Fifteen** interpolations across
@@ -162,7 +174,7 @@ already documented and are not engineering work.
 - **Disposition:** **FIXED** — immediately, ahead of any other work.
 - **Dependency:** None.
 
-#### P5C-002 — README documents a product that does not exist
+#### P5C-002 — README documents a product that does not exist  ·  **RESOLVED (Phase 5D)**
 - **Status:** FAKE / MISLEADING · **Severity:** High
 - **Current behavior:** `README.md` §2 advertises Cover Photo, Resume/CV Upload,
   Portfolio, Previous Companies, Instagram, YouTube, Behance, Dribbble, Medium,
@@ -185,7 +197,7 @@ already documented and are not engineering work.
 
 ### P1 — major correctness / functionality
 
-#### P5C-003 — `GET /api/stories` is unauthenticated and exposes author identity
+#### P5C-003 — `GET /api/stories` is unauthenticated and exposes author identity  ·  **RESOLVED (Phase 5D)**
 - **Status:** SECURITY RISK · **Severity:** Moderate
 - **Current behavior:** The only data endpoint reachable without a session. It
   runs `SELECT *`, returning `author_id` and `author_name`.
@@ -198,7 +210,7 @@ already documented and are not engineering work.
   news feed is intended. **The intent should be stated, not inferred.**
 - **Disposition:** **FIXED**.
 
-#### P5C-004 — SMTP unconfigured, so password reset cannot reach a user
+#### P5C-004 — SMTP unconfigured, so password reset cannot reach a user  ·  **DEFERRED — external**
 - **Status:** REAL / PARTIAL (production blocker, external) · **Severity:** High
 - **Evidence:** `/api/ops/status` → `mail: { mode: "console", host: null }`.
 - **Impact:** Self-service recovery is inert until DIC supplies credentials; an
@@ -207,7 +219,7 @@ already documented and are not engineering work.
   `PRODUCTION_DEPENDENCIES.md` §2.4.
 - **Disposition:** **DEFERRED** — institutional dependency, not engineering.
 
-#### P5C-005 — Import wizard trusts client-side validation classification
+#### P5C-005 — Import wizard trusts client-side validation classification  ·  **RESOLVED (Phase 5D)**
 - **Status:** REAL / PARTIAL · **Severity:** Moderate
 - **Current behavior:** `validateImportRows()` decides valid/invalid/duplicate
   in the browser; the server re-validates name and email but accepts the
@@ -220,7 +232,7 @@ already documented and are not engineering work.
   the result screen (it already returns `created/updated/rejected`).
 - **Disposition:** **FIXED**.
 
-#### P5C-006 — Import preview counts are not reconciled against the result
+#### P5C-006 — Import preview counts are not reconciled against the result  ·  **RESOLVED (Phase 5D)**
 - **Status:** REAL / PARTIAL · **Severity:** Low-moderate
 - **Evidence:** Step 3 renders `currentImportState.validRecords.length` as
   "Successfully created N User Accounts" (`js/admin.js:770`) rather than the
@@ -229,7 +241,7 @@ already documented and are not engineering work.
   screen overstates what happened.
 - **Disposition:** **FIXED** — same change as `P5C-005`.
 
-#### P5C-007 — `chapters` have no structured location
+#### P5C-007 — `chapters` have no structured location  ·  **DEFERRED**
 - **Status:** MISSING · **Severity:** Low-moderate
 - **Evidence:** `chapters` columns: no country/city; `type='regional'` with the
   region only in the free-text `name` ("DIC UK & Europe Alumni").
@@ -238,7 +250,7 @@ already documented and are not engineering work.
 - **Disposition:** **DEFERRED** — a Phase 5B follow-on if DIC wants regional
   chapter targeting. Not a defect in what exists.
 
-#### P5C-008 — `PUT /api/jobs/:id` has no UI
+#### P5C-008 — `PUT /api/jobs/:id` has no UI  ·  **RESOLVED (Phase 5D)**
 - **Status:** MISSING (backend without UI) · **Severity:** Moderate
 - **Evidence:** `api.js:423` defines `updateJob`; no caller in `js/` or either
   shell. The job card offers Applicants and Delete only (`js/jobs.js:179-181`).
@@ -248,7 +260,7 @@ already documented and are not engineering work.
 
 ### P2 — important UX / maintainability
 
-#### P5C-009 — Denormalised counters hold seeded fiction
+#### P5C-009 — Denormalised counters hold seeded fiction  ·  **MITIGATED (Phase 5D), removal DEFERRED**
 - **Status:** DEAD / UNUSED · **Severity:** Moderate
 - **Evidence:** `chapters.members_count` sums to **41,990** against **0** rows
   in `chapter_memberships`; `events.registered_count` sums to **27** against
@@ -263,7 +275,7 @@ already documented and are not engineering work.
   constraint. Removal is cleaner — no reader exists.
 - **Disposition:** **REMOVED**.
 
-#### P5C-010 — `event_proposals` is a dead table
+#### P5C-010 — `event_proposals` is a dead table  ·  **DEFERRED to a schema-cleanup phase**
 - **Status:** DEAD / UNUSED · **Severity:** Low
 - **Evidence:** Table-usage sweep across all live code with comments stripped:
   1 of 47 tables unreferenced. Holds 1 row. `routes_planner.js:142,259` mention
@@ -286,7 +298,7 @@ already documented and are not engineering work.
 - **Disposition:** **MERGED/REMOVED** case by case; `getConsentHistory` and
   `updateCampaign` are worth wiring, the rest removed.
 
-#### P5C-013 — Events "All" filter chip is unreachable at 360 px
+#### P5C-013 — Events "All" filter chip is unreachable at 360 px  ·  **RESOLVED (Phase 5D)**
 - **Status:** BROKEN · **Severity:** Moderate (mobile)
 - **Evidence:** At 360 px the chip occupies x 342–384 against a 360 px viewport,
   and `.ev-filters` reports `scrollWidth === clientWidth === 376` — it does not
@@ -314,6 +326,44 @@ already documented and are not engineering work.
 - **Evidence:** `index.html:243`, `admin.html:179`. Overwritten by
   `js/notifications.js:52` at load, so it is a flash, not a persistent lie.
 - **Disposition:** **FIXED** — render an empty badge until the count arrives.
+
+
+### Discovered while fixing the above (Phase 5D)
+
+#### P5C-025 — `esc()` was called in the import success screen and never defined  ·  **RESOLVED (Phase 5D)**
+- **Status:** BROKEN · **Severity:** Moderate
+- **Current behavior (before the fix):** `js/admin.js` step 4 called `esc(...)`
+  on the batch temporary password. No such function exists in the frontend —
+  the only `esc` in the repository is a local CSV helper inside
+  `routes_events.js`, server-side.
+- **Evidence:** Proved live in the staff portal:
+  `ReferenceError: esc is not defined`, so `renderWizardStepContent()` threw
+  whenever `lastResult.temporaryPassword` was present — that is, on every import
+  that actually created accounts.
+- **Impact:** The success screen failed to render at the exact moment it shows
+  the batch password, which is displayed once and stored only as a hash. An
+  administrator would have completed an import and been unable to read the
+  credential their new users need.
+- **Fix:** Uses `escapeHtml`, the real helper.
+
+#### P5C-026 — `HEADER_RULES` auto-mapped six fields `IMPORT_FIELDS` did not offer  ·  **RESOLVED (Phase 5D)**
+- **Status:** BROKEN · **Severity:** Moderate · **Introduced by Phase 5B.**
+- **Current behavior (before the fix):** Phase 5B taught the CSV header rules to
+  recognise `permanentAddress, hometown, city, district, country, postalCode`
+  and taught the server to store them, but never added them to the mapping
+  dropdown. A column auto-mapped to `city` therefore had no matching `<option>`,
+  the select fell back to showing "— Do not import —", and an administrator
+  adjusting any other row would silently drop the mapping.
+- **Fix:** The six fields are offered in the dropdown. A test now asserts that
+  every header-rule target is a field the dropdown offers.
+
+#### P5C-027 — The import panel claimed Excel support and email notifications  ·  **RESOLVED (Phase 5D)**
+- **Status:** FAKE / MISLEADING · **Severity:** Low
+- **Evidence:** The panel read *"Upload CSV or Excel files … with automated
+  login accounts & email notifications."* The parser accepts CSV only (the
+  README says so explicitly), and an import sends no email — accounts share one
+  temporary password shown once on screen.
+- **Fix:** The panel now describes what actually happens.
 
 ### P3 — optional
 

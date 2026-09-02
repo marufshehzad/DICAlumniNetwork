@@ -44,36 +44,45 @@ function filterJobLocation(v) {
 // ─── CREATE EVENT (was a toast-only shell) ───
 
 // ─── POST JOB (was a toast-only shell) ───
-function showPostJobModal() {
+/* One form for posting and for editing.
+
+   PUT /api/jobs/:id has existed and been ownership-guarded the whole time, but
+   nothing called it: the job card offered Applicants and Delete only, so a
+   poster who mistyped a title had to delete the posting — losing its
+   applicants — and post it again. Passing a job here switches the same form to
+   edit mode rather than duplicating it. */
+function showPostJobModal(job) {
+  const editing = !!job;
   showModal(`
     <div class="modal-header">
-      <div class="modal-title"><i data-lucide="plus" class="ui-icon"></i> Post a Job</div>
+      <div class="modal-title"><i data-lucide="${editing ? 'pen-line' : 'plus'}" class="ui-icon"></i> ${editing ? 'Edit Job' : 'Post a Job'}</div>
       <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
     </div>
     <div style="background:var(--primary-glow);border:1px solid rgba(11,56,151,0.2);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:16px;font-size:12px;color:var(--primary-light)">
       <i data-lucide="lock" class="ui-icon"></i> Alumni-only posting — visible to verified DIC alumni.
     </div>
-    <form onsubmit="handlePostJobSubmit(event)">
+    <form onsubmit="handlePostJobSubmit(event, ${editing ? job.id : 'null'})">
       <div class="input-group"><label class="input-label">Job Title</label>
-        <input type="text" id="job-title" class="form-input" placeholder="e.g. Senior Software Engineer" required /></div>
+        <input type="text" id="job-title" class="form-input" placeholder="e.g. Senior Software Engineer" value="${editing ? escapeHtml(job.title) : ''}" required /></div>
       <div class="input-group"><label class="input-label">Company</label>
-        <input type="text" id="job-company" class="form-input" placeholder="Your company name" required /></div>
+        <input type="text" id="job-company" class="form-input" placeholder="Your company name" value="${editing ? escapeHtml(job.company) : ''}" required /></div>
       <div class="field-grid-2">
         <div class="input-group"><label class="input-label">Type</label>
           <select id="job-type" class="form-select">
-            <option value="fulltime">Full-time</option><option value="parttime">Part-time</option>
-            <option value="internship">Internship</option><option value="contract">Contract</option>
+            ${['fulltime:Full-time','parttime:Part-time','internship:Internship','contract:Contract']
+              .map(o => { const [v,l] = o.split(':');
+                return `<option value="${v}" ${editing && job.type === v ? 'selected' : ''}>${l}</option>`; }).join('')}
           </select></div>
         <div class="input-group"><label class="input-label">Location</label>
           <!-- value="Dhaka" was prefilled, so an unedited posting recorded
                Dhaka whether or not the role was there. Blank by default. -->
-          <input type="text" id="job-location" class="form-input" placeholder="e.g. Chattogram, or Remote" value="" /></div>
+          <input type="text" id="job-location" class="form-input" placeholder="e.g. Chattogram, or Remote" value="${editing ? escapeHtml(job.location || '') : ''}" /></div>
       </div>
       <div class="input-group"><label class="input-label">Salary Range</label>
-        <input type="text" id="job-salary" class="form-input" placeholder="e.g. ৳80K–৳120K/mo" /></div>
+        <input type="text" id="job-salary" class="form-input" placeholder="e.g. ৳80K–৳120K/mo" value="${editing ? escapeHtml(job.salary || '') : ''}" /></div>
       <div class="input-group"><label class="input-label">Skill Tags (comma separated)</label>
-        <input type="text" id="job-tags" class="form-input" placeholder="React, Node.js, PostgreSQL" /></div>
-      <button type="submit" class="btn btn-primary btn-full">Post Job</button>
+        <input type="text" id="job-tags" class="form-input" placeholder="React, Node.js, PostgreSQL" value="${editing ? escapeHtml((job.tags || []).join(', ')) : ''}" /></div>
+      <button type="submit" class="btn btn-primary btn-full">${editing ? 'Save changes' : 'Post Job'}</button>
     </form>
   `);
 }
@@ -178,6 +187,7 @@ async function renderJobsEnhanced(filter = '') {
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           ${mine || isAdmin
             ? `<button class="apply-btn" onclick="showJobApplicants(${j.id}, '${safeTitle}')"><i data-lucide="users" class="ui-icon"></i> Applicants (${j.applicants})</button>
+               <button class="referral-btn" onclick="editJobPrompt(${j.id})"><i data-lucide="pen-line" class="ui-icon"></i> Edit</button>
                <button class="referral-btn" onclick="deleteJobPrompt(${j.id}, '${safeTitle}')"><i data-lucide="trash-2" class="ui-icon"></i> Delete</button>`
             : `<button class="apply-btn" ${j.has_applied ? 'disabled' : ''} onclick="applyJob(${j.id}, '${safeTitle}')">${j.has_applied ? '<i data-lucide="check" class="ui-icon"></i> Applied' : 'Apply →'}</button>
                <button class="referral-btn" onclick="showReferralModal(${j.id}, '${safeTitle}', '${escapeHtml(j.posted_by_name || '').replace(/'/g, '&#39;')}')"><i data-lucide="handshake" class="ui-icon"></i> Referral</button>`}
@@ -314,19 +324,37 @@ async function deleteJobPrompt(id, title) {
 // ─── EVENT PLANNER REPORTS ───
 
 
-async function handlePostJobSubmit(e) {
+async function handlePostJobSubmit(e, jobId = null) {
   if (e) e.preventDefault();
-  const res = await API.createJob({
+  const payload = {
     title: document.getElementById('job-title').value.trim(),
     company: document.getElementById('job-company').value.trim(),
     type: document.getElementById('job-type').value,
     location: document.getElementById('job-location').value.trim(),
     salary: document.getElementById('job-salary').value.trim(),
     tags: document.getElementById('job-tags').value
-  });
+  };
 
-  if (apiFailed(res)) { showToast(`⚠ ${res?.error || 'Could not post the job.'}`); return; }
+  /* PUT /api/jobs/:id enforces ownership server-side — poster or an
+     administrator — so the button below being hidden is a convenience, not the
+     control. */
+  const res = jobId ? await API.updateJob(jobId, payload) : await API.createJob(payload);
+
+  if (apiFailed(res)) {
+    showToast(`⚠ ${res?.error || (jobId ? 'Could not save the changes.' : 'Could not post the job.')}`);
+    return;
+  }
   closeModal();
-  showToast(`✅ "${res.title}" posted to the job board.`);
+  showToast(jobId ? `✅ "${res.title}" updated.` : `✅ "${res.title}" posted to the job board.`);
   renderJobsEnhanced();
+}
+
+/* Loads the posting fresh before editing, so the form starts from what the
+   server holds rather than from whatever the list was showing. */
+async function editJobPrompt(id) {
+  const all = await API.getJobs({});
+  if (apiFailed(all) || !Array.isArray(all)) { showToast('⚠ Could not load the posting.'); return; }
+  const job = all.find(j => j.id === id);
+  if (!job) { showToast('⚠ That posting no longer exists.'); renderJobsEnhanced(); return; }
+  showPostJobModal(job);
 }

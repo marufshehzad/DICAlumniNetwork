@@ -521,7 +521,11 @@ function renderBulkImportPanel() {
       <div class="card-header">
         <div>
           <h3 class="card-title"><i data-lucide="download" class="ui-icon"></i> Bulk User Import &amp; Automatic Profile Generation</h3>
-          <p style="font-size:12px;color:var(--text-secondary);margin-top:2px">Upload CSV or Excel files to import hundreds of student/alumni records simultaneously with automated login accounts &amp; email notifications.</p>
+          <!-- "or Excel" and "email notifications" were both untrue: the parser
+               accepts CSV only (README says so), and no email is sent by an
+               import — every account signs in with the batch temporary
+               password shown at the end. -->
+          <p style="font-size:12px;color:var(--text-secondary);margin-top:2px">Upload a CSV file to create alumni accounts and profiles in bulk. Each batch gets one temporary password, shown once when the import finishes.</p>
         </div>
         <button class="btn btn-outline btn-sm" onclick="downloadSampleImportCSV()"><i data-lucide="file-text" class="ui-icon"></i> Download CSV Template</button>
       </div>
@@ -671,7 +675,10 @@ function renderWizardStepContent() {
     return `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
         <div style="font-weight:700;font-size:14px;color:var(--text-primary)">
-          <i data-lucide="file-text" class="ui-icon"></i> Parsed File: <strong>"${currentImportState.filename}"</strong> (${currentImportState.totalRows} Total Records)
+          <!-- The FILENAME is untrusted too: it comes from the uploaded file
+               and is chosen by whoever produced the roster. Step 1 escaped it;
+               this header did not. -->
+          <i data-lucide="file-text" class="ui-icon"></i> Parsed File: <strong>"${escapeHtml(currentImportState.filename)}"</strong> (${escapeHtml(currentImportState.totalRows)} Total Records)
         </div>
         <button class="btn btn-outline btn-sm" onclick="resetImportWizard()">← Upload Different File</button>
       </div>
@@ -705,7 +712,20 @@ function renderWizardStepContent() {
         </div>
       ` : ''}
 
-      <!-- PREVIEW TABLE -->
+      <!-- PREVIEW TABLE
+
+           Every cell below carries a value that came out of an uploaded CSV,
+           and every one of them is escaped. They were not: fifteen fields were
+           interpolated raw into innerHTML, so a roster containing
+           <img src=x onerror=...> in its Name column executed script in the
+           administrator's session — the session that can provision
+           administrators, read the audit log and reveal identity-vault
+           records. Rosters arrive from departments and third parties, so an
+           untrusted file is the normal case here, not an exotic one.
+
+           escapeHtml() is the same helper the other ~370 call sites use; this
+           screen simply never called it. Every value in these three tables is
+           text and must stay text. -->
       <div class="table-scroll" style="max-height:260px">
         <table class="rbac-table">
           <thead>
@@ -714,38 +734,38 @@ function renderWizardStepContent() {
           <tbody>
             ${currentImportState.validRecords.map(r => `
               <tr>
-                <td>#${r.row}</td>
-                <td><strong>${r.name}</strong></td>
-                <td>${r.studentId}</td>
-                <td>${r.email}</td>
-                <td>${r.year}</td>
-                <td>${r.dept}</td>
+                <td>#${escapeHtml(r.row)}</td>
+                <td><strong>${escapeHtml(r.name)}</strong></td>
+                <td>${escapeHtml(r.studentId)}</td>
+                <td>${escapeHtml(r.email)}</td>
+                <td>${escapeHtml(r.year)}</td>
+                <td>${escapeHtml(r.dept)}</td>
                 <td><span class="card-badge teal">Valid</span></td>
                 <td style="color:var(--teal);font-size:11px"><i data-lucide="check" class="ui-icon"></i> Ready for Account Creation</td>
               </tr>
             `).join('')}
             ${currentImportState.duplicateRecords.map(r => `
               <tr>
-                <td>#${r.row}</td>
-                <td><strong>${r.name}</strong></td>
-                <td>${r.studentId}</td>
-                <td>${r.email}</td>
-                <td>${r.year}</td>
-                <td>${r.dept}</td>
+                <td>#${escapeHtml(r.row)}</td>
+                <td><strong>${escapeHtml(r.name)}</strong></td>
+                <td>${escapeHtml(r.studentId)}</td>
+                <td>${escapeHtml(r.email)}</td>
+                <td>${escapeHtml(r.year)}</td>
+                <td>${escapeHtml(r.dept)}</td>
                 <td><span class="card-badge amber">Duplicate</span></td>
-                <td style="color:var(--amber);font-size:11px"><i data-lucide="triangle-alert" class="ui-icon"></i> Matches existing alumni ID ${r.studentId}</td>
+                <td style="color:var(--amber);font-size:11px"><i data-lucide="triangle-alert" class="ui-icon"></i> Matches existing alumni ID ${escapeHtml(r.studentId)}</td>
               </tr>
             `).join('')}
             ${currentImportState.invalidRecords.map(r => `
               <tr>
-                <td>#${r.row}</td>
-                <td><strong>${r.name || 'N/A'}</strong></td>
-                <td>${r.studentId || 'Missing'}</td>
-                <td>${r.email || 'Missing'}</td>
-                <td>${r.year || 'N/A'}</td>
-                <td>${r.dept || 'N/A'}</td>
+                <td>#${escapeHtml(r.row)}</td>
+                <td><strong>${escapeHtml(r.name || 'N/A')}</strong></td>
+                <td>${escapeHtml(r.studentId || 'Missing')}</td>
+                <td>${escapeHtml(r.email || 'Missing')}</td>
+                <td>${escapeHtml(r.year || 'N/A')}</td>
+                <td>${escapeHtml(r.dept || 'N/A')}</td>
                 <td><span class="card-badge red">Invalid</span></td>
-                <td style="color:var(--red);font-size:11px"><i data-lucide="circle-x" class="ui-icon"></i> ${r.errorMsg}</td>
+                <td style="color:var(--red);font-size:11px"><i data-lucide="circle-x" class="ui-icon"></i> ${escapeHtml(r.errorMsg)}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -765,17 +785,36 @@ function renderWizardStepContent() {
     return `
       <div style="text-align:center;padding:24px 0">
         <div style="font-size:48px;margin-bottom:8px"><i data-lucide="party-popper" class="ui-icon"></i></div>
-        <h2 style="color:var(--teal);font-size:22px;font-weight:800">Bulk Import &amp; Profile Generation Complete!</h2>
-        <p style="color:var(--text-secondary);font-size:13px;max-width:500px;margin:8px auto 20px">
-          Successfully created <strong>${currentImportState.validRecords.length} User Accounts &amp; Alumni Profiles</strong> in the database.
+        <h2 style="color:var(--teal);font-size:22px;font-weight:800">Bulk Import Complete</h2>
+        <!-- These are the SERVER's tallies, not the browser's. This line used
+             to print validRecords.length — what the client believed before it
+             sent anything — so a row the server rejected still counted as a
+             created account on the success screen. The server re-validates
+             every row and returns what it actually did; that is what an
+             administrator needs to read here. -->
+        <p style="color:var(--text-secondary);font-size:13px;max-width:520px;margin:8px auto 20px">
+          <strong>${escapeHtml(currentImportState.lastResult?.created ?? 0)}</strong> account(s) created,
+          <strong>${escapeHtml(currentImportState.lastResult?.updated ?? 0)}</strong> updated,
+          <strong>${escapeHtml(currentImportState.lastResult?.skipped ?? 0)}</strong> duplicate(s) skipped,
+          <strong>${escapeHtml(currentImportState.lastResult?.rejected ?? 0)}</strong> rejected by the server.
         </p>
+
+        ${currentImportState.lastResult?.unresolvedLocationCount ? `
+          <div class="ev-banner warn" style="max-width:520px;margin:0 auto 20px;text-align:left">
+            <i data-lucide="map-pin-off" class="ui-icon"></i>
+            <div><strong>${escapeHtml(currentImportState.lastResult.unresolvedLocationCount)} row(s) had a location that could not be matched.</strong>
+            Those accounts were imported without a location rather than with a guessed one.
+            ${(currentImportState.lastResult.unresolvedLocations || []).slice(0, 5).map(u =>
+              `<div style="font-size:12px;margin-top:4px">Row ${escapeHtml(u.row)}: ${escapeHtml(u.supplied)} — ${escapeHtml(u.reason)}</div>`).join('')}
+            </div>
+          </div>` : ''}
 
         ${currentImportState.lastResult?.temporaryPassword ? `
           <div style="max-width:520px;margin:0 auto 20px;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);text-align:left">
             <div style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;color:var(--text-primary)">
               <i data-lucide="key-round" class="ui-icon"></i> Temporary password for this batch
             </div>
-            <div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:18px;font-weight:700;letter-spacing:1px;margin:10px 0;color:var(--teal);user-select:all">${esc(currentImportState.lastResult.temporaryPassword)}</div>
+            <div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:18px;font-weight:700;letter-spacing:1px;margin:10px 0;color:var(--teal);user-select:all">${escapeHtml(currentImportState.lastResult.temporaryPassword)}</div>
             <div style="font-size:12px;color:var(--text-secondary);line-height:1.5">
               Every account created by this import signs in with this password once, then
               has to choose their own. It is shown here only — it is not stored anywhere
@@ -805,10 +844,26 @@ function resetImportWizard() {
   renderBulkImportPanel();
 }
 
+/* The error report is the second place this untrusted CSV data leaves the
+   wizard, so it gets the same treatment as the preview table.
+
+   Two problems it had: values were wrapped in quotes but embedded quotes were
+   not doubled, so a name containing " broke the row into extra columns (RFC
+   4180 requires ""); and a value beginning = + - or @ is treated as a formula
+   by Excel and Sheets, so a hostile roster could round-trip a formula through
+   our own error report. Prefixing with an apostrophe is the standard defence
+   and is stripped by the spreadsheet on display. */
+function csvCell(value) {
+  let s = String(value ?? '');
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
 function downloadImportErrorReportCSV() {
   const headers = ['RowNumber', 'Name', 'StudentID', 'Email', 'ErrorType', 'SuggestedFix'];
   const rows = currentImportState.invalidRecords.map(r => [
-    r.row, `"${r.name || ''}"`, `"${r.studentId || ''}"`, `"${r.email || ''}"`, `"${r.errorMsg}"`, '"Provide required valid Student ID, Email, and Full Name"'
+    csvCell(r.row), csvCell(r.name), csvCell(r.studentId), csvCell(r.email), csvCell(r.errorMsg),
+    csvCell('Provide required valid Student ID, Email, and Full Name')
   ]);
 
   const csvContent = "data:text/csv;charset=utf-8," + headers.join(",") + "\n" + rows.map(e => e.join(",")).join("\n");
@@ -1213,6 +1268,18 @@ const IMPORT_FIELDS = [
   { key: 'hscVersion',     label: 'HSC Version' },
   { key: 'bloodGroup',     label: 'Blood Group' },
   { key: 'presentAddress', label: 'Present Address' },
+  /* Phase 5B taught HEADER_RULES to recognise these six and taught the server
+     to store them, but they were never added here — so a column the rules
+     auto-mapped to "city" had no matching <option>, the select fell back to
+     showing "— Do not import —", and an administrator correcting any other row
+     would silently drop the mapping. Auto-detection and manual mapping have to
+     offer the same set. */
+  { key: 'permanentAddress', label: 'Permanent Address' },
+  { key: 'hometown',       label: 'Hometown' },
+  { key: 'city',           label: 'City' },
+  { key: 'district',       label: 'District' },
+  { key: 'postalCode',     label: 'Postal Code' },
+  { key: 'country',        label: 'Country' },
   { key: 'occupation',     label: 'Occupation' },
   { key: 'organization',   label: 'Current Organization / Institution' },
   { key: 'designation',    label: 'Current Designation' },

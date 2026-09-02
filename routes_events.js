@@ -642,6 +642,15 @@ module.exports = function mountEvents(app, guards) {
          type ? type.name : 'standard', priceValue, paymentGateway || null, status]);
 
       if (status === 'confirmed') {
+        /* NOT A SOURCE OF TRUTH — see POST_PHASE5B_WHOLE_SYSTEM_AUDIT.md P5C-009.
+
+           This counter is still incremented so the column does not drift further, but
+           nothing in the product reads it: event capacity is enforced with a live COUNT(*) of
+           event_registrations, a few lines above this.
+           It was seeded with fabricated values (chapters.members_count sums to 41,990
+           against 0 real memberships), so its absolute value is meaningless and only
+           the delta is maintained. Do not start displaying or enforcing on it without
+           reconciling it first. Dropping it is queued for a schema-cleanup phase. */
         await client.query('UPDATE events SET registered_count = registered_count + 1 WHERE id=$1', [eventId]);
       }
       if (clientMutationId) {

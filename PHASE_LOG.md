@@ -962,3 +962,221 @@ closed from inside the repository.
 
 **Phase 5D has not been started.** Its recommended contents are in the audit's
 prioritised roadmap.
+
+---
+
+## Phase 5D — Closing the handover blockers
+
+**Status:** COMPLETE
+**Date:** 2026-09-02
+**Commit:** `PHASE_5D_COMMIT`
+**Parent:** `01776c0`
+
+Implements the P0 and actionable P1 findings from
+`POST_PHASE5B_WHOLE_SYSTEM_AUDIT.md`. No schema change, no migration, no
+business data touched.
+
+### P0-001 · `P5C-001` — Stored XSS in the bulk-import preview
+
+CSV field values were interpolated into `innerHTML` unescaped and rendered in
+an ADMIN_ROLES session — one that can provision administrators, read the audit
+log and reveal identity-vault records. Rosters arrive from departments and
+third parties, so an untrusted file is the normal case.
+
+**Every sink was audited, not just the demonstrated one.** Sixteen in total:
+fifteen record fields across the valid, duplicate and invalid preview tables,
+plus the "Parsed File" header, which renders the **uploaded filename** — also
+attacker-chosen. All now pass through `escapeHtml`, the same helper the other
+~370 call sites use; this screen simply never called it. The step-1 mapping
+block was already correct and was left alone.
+
+*The filename sink was found only because the fix was verified in the live DOM.*
+An earlier check against a detached node reported SAFE because it set the record
+fields but not the filename. The live panel still executed the payload. That is
+recorded because it is the reason the verification method matters: a component
+tested in isolation passed while the real screen was still vulnerable.
+
+**Verified** in the live staff portal with the payload classes from the brief —
+`<em>` marker, `<img src=x onerror=…>`, `"><svg onload=…>`,
+`</script><script>…`, a `javascript:` URL, an `onclick` div, and a quote-break
+attempt. Result: **handler never fired, no injected element, no `img` created,
+no `javascript:` href, payload present as literal text**. The three `onerror`
+attributes remaining in the DOM are the application's own logo fallbacks.
+
+The **error-report CSV** is the second sink for the same untrusted data and got
+the same treatment: values are now RFC-4180 quoted (embedded `"` doubled — a
+name containing a quote previously broke the row into extra columns) and
+prefixed against spreadsheet formula injection when they begin `= + - @`.
+
+### P0-002 · `P5C-002` — README described a product that does not exist
+
+All 21 advertised profile fields were checked against
+`information_schema.columns`: **0 of 21 existed**. The three claimed privacy
+levels ("Same Batch", "Connections", "Teachers") exist nowhere in the code.
+
+The feature list was rewritten from the schema and from `privacy.js`. It now
+lists the fields that have columns, the three privacy fields the server
+actually enforces with their real levels and defaults, and the single
+`is_verified` flag rather than four verification badges. The absent features
+are named explicitly under **"Not currently implemented"** rather than quietly
+deleted, so a reader who remembers the old claims can see what happened to
+them.
+
+Also corrected in the README: the bulk-import section (19 mappable columns, not
+"43-Field Support"; duplicate detection by email then mobile, not a four-key
+priority chain; no CGPA or phone validation, which was claimed and does not
+exist), and the RBAC table (a "Career Tracker" and a reported-posts moderation
+queue, neither of which exists). A **Location** section was added — Phase 5B
+built the whole location system and the README never mentioned it.
+
+### `P5C-003` — `GET /api/stories` was public
+
+The only route in the product answering without a session, returning
+`SELECT *` including `author_id`.
+
+**Decision: require a session,** rather than keeping it public because it
+happened to be. The news feed is reachable only from inside the signed-in
+application, all 140 other data routes require a session, and the platform has
+no anonymous surface at all — it was public by omission. The column list is now
+explicit and `author_id` is returned to nobody. If DIC later wants a genuinely
+public news page, that is a deliberate decision with its own endpoint.
+
+Verified: anonymous **401**, authenticated 200, `author_id` absent, feed still
+renders (2 cards).
+
+### P1 decisions
+
+| Finding | Decision |
+|---|---|
+| `P5C-004` SMTP unset | **Deferred — external.** No code can fix it; documented in `PRODUCTION_DEPENDENCIES.md` §2.4. |
+| `P5C-005`/`P5C-006` import result | **Fixed.** The success screen now reports the server's `created/updated/skipped/rejected` instead of the client's pre-send count, and surfaces unresolved locations by row — data the server has returned since Phase 5B that nothing displayed. |
+| `P5C-007` chapter location | **Deferred.** A feature decision for DIC, not a defect in what exists. |
+| `P5C-008` job edit | **Fixed.** `PUT /api/jobs/:id` was ownership-guarded and unreachable; the job card now offers Edit and reuses the posting form. |
+| `P5C-009` stale counters | **Mitigated, removal deferred** — see below. |
+| `P5C-013` events filter | **Fixed** — see below. |
+| `P5C-021` test suites | **Fixed** — see below. |
+
+### `P5C-009` — stale counters: deliberately not dropped, deliberately not rewritten
+
+The brief cautioned against casually dropping columns, and against silently
+rewriting seeded counters. Both were honoured: **no column was dropped and no
+counter value was changed** (`chapters.members_count` still sums to 41,990,
+verified after the work).
+
+What changed is that the trap is no longer silent. Every write site now carries
+a `NOT A SOURCE OF TRUTH` block naming the audit finding, stating what the
+product reads instead (`COUNT(chapter_memberships)`, a live `COUNT(*)` for event
+capacity, `SUM(amount)` for campaigns), and warning that the absolute value is
+meaningless. A test asserts the marker is present at each site. Removal belongs
+in a schema-cleanup phase with a migration, not here.
+
+### `P5C-013` — events filter unreachable at 360 px
+
+The row already had `overflow-x: auto`, which did nothing: `.ev-toolbar` is a
+**column** flex container at that width, so `flex` governs height and never
+constrained the width. The row rendered 376 px inside a 344 px toolbar and the
+"All" chip sat past the edge of a 360 px screen.
+
+Pinning `width: 100%; max-width: 100%` gives the overflow something to scroll.
+Verified at 360 px: client width 344, scroll width 376, **scrollable true**, all
+five chips reachable, all 44 px tall (raised from 40), no document overflow.
+
+### `P5C-021` — the test suites now live in the repository
+
+Sixteen suites existed only in a scratch directory outside the repository and
+would not have survived a clone. All are now under `tests/`, with every
+absolute path replaced by `path.join(__dirname, '..')`.
+
+Two portability defects surfaced in the process and were fixed rather than
+worked around:
+
+- **`phase4` matched source with `\n`** while a Windows checkout stores CRLF, so
+  two assertions failed on a fresh clone while passing where they were written.
+  The source reader now normalises line endings.
+- **`phase0_sec` asserted 401 exclusively** when spraying weak passwords. It
+  already avoided the per-account lockout, but the per-IP rate limiter still
+  trips partway through — correctly. The property under test is "a weak password
+  never yields a session", and 429 satisfies that more strongly than 401, so
+  both are accepted and a token is still forbidden.
+
+`npm test` runs all 19 suites through `tests/run-all.js` and reports one total.
+
+### New defects found while fixing the above
+
+- **`P5C-025`** — `esc()` was called in the import success screen and is not
+  defined anywhere in the frontend. Proved live: `ReferenceError: esc is not
+  defined`, thrown whenever a batch created accounts — the one moment the
+  temporary password is shown, and it is stored only as a hash. Fixed.
+- **`P5C-026`** — a Phase 5B regression of mine: `HEADER_RULES` auto-mapped six
+  location fields that `IMPORT_FIELDS` never offered, so an auto-mapped column
+  showed "— Do not import —" in the dropdown and could be silently dropped.
+  Fixed, with a test asserting the two lists agree.
+- **`P5C-027`** — the import panel claimed "CSV or Excel" and "email
+  notifications"; neither is true. Corrected.
+
+### Files changed
+
+`js/admin.js`, `js/jobs.js`, `server.js`, `routes_events.js`, `routes_v2.js`,
+`styles.css`, `README.md`, `package.json`,
+`POST_PHASE5B_WHOLE_SYSTEM_AUDIT.md`, `PHASE_LOG.md`.
+New: `tests/phase5d_hardening.js`, `tests/run-all.js`, and the sixteen relocated
+suites.
+
+### Tests
+
+**1,360 passed, 0 failed across 19 suites** via `npm test`, including the new
+`tests/phase5d_hardening.js` (56 checks) which pins every fix above: that no
+record field or the filename is interpolated unescaped, that `esc()` is gone,
+that the escaping helper neutralises each dangerous character, that the success
+screen reads the server's tallies, that the error CSV quotes and guards its
+cells, that header rules and the dropdown agree, that `/api/stories` refuses
+anonymous callers and hides `author_id`, that the README claims no absent field
+or privacy level, that the events filter row scrolls with 44 px targets, and
+that every stale counter carries its marker while its seeded value is
+unchanged.
+
+Three of those assertions failed on first run — all three were bugs in the test,
+not in the fix (a line-wrapped README phrase, and two searches anchored on the
+first `UPDATE <table>` rather than on the counter's own increment). They were
+corrected to test the property rather than the coincidence.
+
+### Browser verification
+
+Both portals. Alumni at **360, 390, 430, 768, 1024, 1280**; staff at 1280 and
+360. No horizontal document overflow at any width, all 11 alumni and 15 staff
+pages rendering, **zero console errors** in a fresh tab.
+
+Specifically exercised: the hostile-CSV import preview in the live admin DOM
+(safe, payload as text); the events filter row at 360 px (scrolls, all chips
+reachable); the job Edit button (opens prefilled, "Save changes"); and the news
+feed after the stories auth change (still renders).
+
+### Data integrity
+
+18 users (unchanged), **0 test fixtures**, 14 profiles, 1 confirmed location, 13
+unconfirmed, 99 reference places, privacy values unchanged, and
+`chapters.members_count` still 41,990 — **not silently rewritten**.
+
+### Intentional non-changes
+
+- No schema change, no migration, no column dropped, no counter reconciled.
+- `event_proposals` left in place (`P5C-010`).
+- Chapter location, planner UI, map pan, skip-link and heading hierarchy left
+  for later phases.
+- The P2/P3 items not listed above were **not** opportunistically fixed.
+
+### Readiness
+
+**No P0 remains.** The two handover blockers are closed and pinned by tests.
+
+The remaining gap is not engineering: SMTP credentials, two domains, three
+secrets and their escrow, a hosting decision and named people for the escalation
+path — `PRODUCTION_DEPENDENCIES.md` Part 2. Those cannot be closed from inside
+the repository.
+
+Outstanding engineering work is P2/P3 only: `P5C-007`, `P5C-010`, `P5C-011`,
+`P5C-012`, `P5C-014` to `P5C-020`, `P5C-022` to `P5C-024`.
+
+### Next phase
+
+**Phase 5E has not been started.**

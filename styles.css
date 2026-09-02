@@ -5746,9 +5746,19 @@ textarea.form-input { resize: vertical; min-height: 100px; }
     flex-wrap: nowrap;
     scrollbar-width: none;
     padding-bottom: 2px;
+    /* The row rendered 376px wide inside a 344px toolbar, so the last chip
+       ("All") sat past the right edge of a 360px screen with no way to reach
+       it. `.ev-toolbar` is a COLUMN flex container here, so `flex` governs
+       height and could never constrain the width — the width has to be pinned
+       explicitly. With the box pinned to the parent, the overflow-x above
+       finally has something to scroll. */
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
   }
   .ev-toolbar .ev-filters::-webkit-scrollbar { display: none; }
-  .ev-toolbar .ev-chip { flex-shrink: 0; min-height: 40px; }
+  /* 44px, not 40 — these are the primary controls on the events screen. */
+  .ev-toolbar .ev-chip { flex-shrink: 0; min-height: 44px; }
   .ev-search-input { height: 44px; font-size: 16px; } /* 16px avoids iOS zoom */
 }
 

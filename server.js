@@ -1430,6 +1430,14 @@ app.post('/api/chapters/:id/join', requireAuth, async (req, res) => {
     if (check.rows.length > 0) {
       // Leave chapter
       await db.query('DELETE FROM chapter_memberships WHERE chapter_id = $1 AND user_id = $2', [chapterId, targetUserId]);
+      /* NOT A SOURCE OF TRUTH — see POST_PHASE5B_WHOLE_SYSTEM_AUDIT.md P5C-009.
+
+         This counter is still incremented so the column does not drift further, but
+         nothing in the product reads it: chapter membership is COUNT(chapter_memberships).
+         It was seeded with fabricated values (chapters.members_count sums to 41,990
+         against 0 real memberships), so its absolute value is meaningless and only
+         the delta is maintained. Do not start displaying or enforcing on it without
+         reconciling it first. Dropping it is queued for a schema-cleanup phase. */
       await db.query('UPDATE chapters SET members_count = GREATEST(1, members_count - 1) WHERE id = $1', [chapterId]);
       joined = false;
     } else {
@@ -1479,9 +1487,26 @@ app.get('/api/chapters/:id/members', requireAuth, async (req, res) => {
 });
 
 // ─── 5. STORIES & NEWS FEED ───
-app.get('/api/stories', async (req, res) => {
+/* Published stories.
+
+   This was the only route in the product that answered without a session, and
+   it ran `SELECT *`, so `author_id` — an internal user id — was readable by
+   anyone on the internet. Nothing was designed that way: the news feed is
+   reachable only from inside the signed-in application, every other data route
+   requires a session, and the platform has no anonymous surface at all. The
+   endpoint was public by omission, so it now requires a session like the rest.
+
+   The column list is explicit as well. `author_id` is not returned to anybody:
+   the feed renders `author_name` and never used the id. Should DIC later want a
+   genuinely public news page, that is a deliberate decision to take then — with
+   its own endpoint and its own column list — rather than one inherited from an
+   oversight. */
+app.get('/api/stories', requireAuth, async (req, res) => {
   try {
-    const result = await db.query('SELECT * FROM stories WHERE status = $1 ORDER BY id DESC', ['published']);
+    const result = await db.query(`
+      SELECT id, emoji, category, title, excerpt, content,
+             author_name, status, published_date, created_at
+        FROM stories WHERE status = $1 ORDER BY id DESC`, ['published']);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
