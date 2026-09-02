@@ -573,6 +573,35 @@ const PUBLIC_BY_DESIGN = new Set([
   const adminShell = await raw('GET', '/admin', { Host: 'localhost' });
   ok('the staff portal is not indexable', /noindex/.test(String(adminShell.headers['x-robots-tag'] || '')));
   ok('the staff portal cannot be framed', adminShell.headers['x-frame-options'] === 'DENY');
+  ok('the staff portal sends frame-ancestors none',
+    /frame-ancestors 'none'/.test(String(adminShell.headers['content-security-policy'] || '')),
+    String(adminShell.headers['content-security-policy']));
+
+  /* BOTH portals must carry a Content-Security-Policy. Until Phase 5F the
+     alumni site had none at all — and that is the portal every stored-XSS
+     finding of that phase was reachable from. Asserted on the WIRE, not in the
+     source: the source was already correct while a stale process was still
+     serving responses without the header, and nothing here would have noticed. */
+  const alumniShell = await raw('GET', '/', { Host: 'localhost' });
+  ok('the alumni portal sends a Content-Security-Policy at all',
+    !!alumniShell.headers['content-security-policy'],
+    String(alumniShell.headers['content-security-policy']));
+  ok('…and it is frame-ancestors self', 
+    /frame-ancestors 'self'/.test(String(alumniShell.headers['content-security-policy'] || '')));
+
+  /* What the policy deliberately does NOT contain. There is no script-src, so
+     the CSP is clickjacking protection and NOT an XSS mitigation. Saying so in
+     a test keeps the two from being confused later: a script-src directive is
+     impossible while the application uses inline event-handler attributes, and
+     removing those is the prerequisite, tracked in
+     FINAL_SECURITY_REVIEW_FOLLOWUPS.md. */
+  const csp = String(alumniShell.headers['content-security-policy'] || '');
+  ok('the CSP is honestly frame-ancestors only — no script-src is claimed',
+    !/script-src/.test(csp), csp);
+  const inlineHandlers = fs.readdirSync(path.join(REPO, 'js')).filter(f => f.endsWith('.js'))
+    .reduce((n, f) => n + (src('js/' + f).match(/on[a-z]+="/g) || []).length, 0);
+  ok('the inline-handler count is recorded, as the script-src prerequisite',
+    inlineHandlers > 0, `${inlineHandlers} inline handler attributes in js/*.js`);
 
   for (const p of ['/.env', '/db.js', '/server.js', '/package.json', '/schema.sql',
                    '/admin-credentials.local.txt', '/.git/config']) {

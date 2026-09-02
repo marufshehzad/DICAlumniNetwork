@@ -1386,7 +1386,7 @@ three audits before it, had passed over.
 
 **Status:** COMPLETE
 **Date:** 2026-09-02
-**Commit:** `6118638` (`61186382f62654d1e42d2512c98bdda842638cc9`) — recorded by the follow-up commit, since a commit cannot contain its own hash
+**Commits:** `6118638` (the phase) and `95fdbbf` (records the hash, since a commit cannot contain its own), then `<this commit>` for the corrections below
 **Parent:** `146c3aa`
 
 Phase 5E ended with one genuine RED: every security property this project claims
@@ -1465,6 +1465,23 @@ holes, and are recorded as such rather than padding a findings count.
 | P3-11 | Authentication events were not audited at all | `Signed In` / `Sign-In Failed` in the hash chain, by user id |
 | P3-12 | `X-Powered-By: Express` | `app.disable('x-powered-by')` |
 | BUG-13 | `renderNewsFeed()` called unconditionally from the staff portal | guarded |
+| P3-14 | The alumni portal sent **no** `Content-Security-Policy` header at all — the portal every stored-XSS finding of this phase was reachable from | `frame-ancestors 'self'` alongside its existing `X-Frame-Options`. **Partial by design: see below.** |
+
+**On the CSP — what was and was not done.** Both portals now send a
+Content-Security-Policy: `frame-ancestors 'none'` on the staff portal,
+`frame-ancestors 'self'` on the alumni site. That closes "no policy at all",
+and it is **clickjacking protection, not an XSS mitigation**. There is no
+`script-src` directive, and there cannot be one while the application renders
+through 217 `innerHTML` assignments and 343 inline `on*=` handler attributes
+(196 in `js/*.js`, 147 in the two HTML shells). Replacing those with delegated
+listeners is the prerequisite, it is a real refactor, and it is deferred in
+`FINAL_SECURITY_REVIEW_FOLLOWUPS.md` rather than half-done here.
+
+The header is now asserted **on the wire** by `tests/security_smoke.js` §N,
+not in the source — because the source was already correct while a stale
+process was still serving responses without it, and nothing in the suite
+noticed. A test that reads the file it is meant to be testing the behaviour of
+is the same failure as the `crossref.js` stripper described below.
 
 Two more were found while writing the review documents, both verified by
 execution rather than by reading, and both fixed:
@@ -1560,14 +1577,20 @@ credentials file, not by eye.
 ### Verification
 
 ```
-21 suites                        1,520 passed, 0 failed
-tests/security_smoke.js            109 passed, 0 failed
+21 suites                        1,525 passed, 0 failed
+tests/security_smoke.js            114 passed, 0 failed
 authorization matrix               774 checks, 0 mismatches
-npm run verify-audit-chain       PASS, 3,112 entries, exit 0
+npm run verify-audit-chain       PASS, exit 0
 browser                150 page-renders (10 alumni + 15 staff pages
                        × 360/390/430/768/1024/1280), zero console
                        errors, zero horizontal overflow
 ```
+
+The audit-chain entry count is deliberately not quoted as a fixed number: the
+chain grows every time the suites run, so a figure recorded here would be stale
+by the next run and would read as a discrepancy rather than as growth. What
+matters is that it verifies and exits 0. It read 3,565 entries at the close of
+this phase.
 
 No test expectation was weakened to pass. Two suites (`phase3`, `phase4`) had
 already been widened in Phase 5E for a contract change; nothing was relaxed here.
