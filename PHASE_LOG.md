@@ -1386,7 +1386,7 @@ three audits before it, had passed over.
 
 **Status:** COMPLETE
 **Date:** 2026-09-02
-**Commits:** `6118638` (the phase) and `95fdbbf` (records the hash, since a commit cannot contain its own), then `<this commit>` for the corrections below
+**Commits:** `6118638` (the phase) and `95fdbbf` (records the hash, since a commit cannot contain its own), then `1b77c86` for the corrections below
 **Parent:** `146c3aa`
 
 Phase 5E ended with one genuine RED: every security property this project claims
