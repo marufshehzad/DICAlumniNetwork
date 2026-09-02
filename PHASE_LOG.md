@@ -695,7 +695,7 @@ Phase 5B superseded the mechanism they pinned:
 
 **Status:** COMPLETE
 **Date:** 2026-09-02
-**Commit:** `PHASE_5B_FU_COMMIT`
+**Commit:** `6a89d9e` (`6a89d9eea44eeacbae634dcc5ae08307c8d0ca44`) — recorded by the follow-up commit, since a commit cannot contain its own hash
 **Parent:** `6a15b6d`
 
 A visualisation upgrade on top of the Phase 5B location system. The location
