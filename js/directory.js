@@ -28,7 +28,8 @@ async function renderAlumniGrid({ append = false } = {}) {
   const [result] = await Promise.all([
     API.getAlumni({
       search: d.search, batch: d.batch, domain: d.domain,
-      mentor: d.mentor, sort: d.sort, limit: d.limit, offset: d.offset
+      mentor: d.mentor, country: d.country, city: d.city,
+      sort: d.sort, limit: d.limit, offset: d.offset
     }),
     loadConnectionState()
   ]);
@@ -86,15 +87,75 @@ function toggleChip(el, filter) {
   d.batch = '';
   d.domain = '';
   d.search = '';
+  d.country = '';
+  d.city = '';
 
   if (filter === 'mentor') d.mentor = true;
   else if (/^\d{4}$/.test(filter)) d.batch = filter;
   else if (['tech', 'finance', 'design', 'business'].includes(filter)) d.domain = filter;
-  else if (filter !== 'all') d.search = filter; // location chips: dhaka / uk / usa
 
   const searchBox = document.getElementById('dir-search');
   if (searchBox) searchBox.value = d.search;
 
+  renderAlumniGrid();
+}
+
+/* Location filters, built from GET /api/locations/filters — the places alumni
+   are actually in, and have not marked private.
+
+   These were three hardcoded chips: Dhaka, UK and USA. They set the free-text
+   search box, which never matched the country column, so "UK" and "USA"
+   returned nothing at all while looking exactly as functional as "Dhaka". A
+   filter offered here now exists because somebody is there. */
+async function renderLocationFilters() {
+  const el = document.getElementById('location-filter-chips');
+  if (!el) return;
+
+  const res = await API.getLocationFilters();
+  if (apiFailed(res)) { el.innerHTML = ''; return; }
+
+  const countries = res.countries || [];
+  const cities = res.cities || [];
+
+  if (!countries.length) {
+    el.innerHTML = `<span class="dir-filter-empty" style="font-size:12px;color:var(--text-secondary)">
+      No location filters yet — they appear as alumni share their city.</span>`;
+    return;
+  }
+
+  const country = (state.directory.country || '').toLowerCase();
+  const city = (state.directory.city || '').toLowerCase();
+
+  el.innerHTML =
+    countries.map(c => `
+      <button class="chip ${country === String(c.code).toLowerCase() ? 'active' : ''}"
+              onclick="filterByCountry('${escapeHtml(c.code)}')">
+        <i data-lucide="flag" class="ui-icon"></i> ${escapeHtml(c.country)} (${c.n})
+      </button>`).join('') +
+    cities.slice(0, 8).map(c => `
+      <button class="chip ${city === String(c.city).toLowerCase() ? 'active' : ''}"
+              onclick="filterByCity('${escapeHtml(c.city)}')">
+        <i data-lucide="map-pin" class="ui-icon"></i> ${escapeHtml(c.city)} (${c.n})
+      </button>`).join('');
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function filterByCountry(code) {
+  const d = state.directory;
+  const next = (d.country || '').toLowerCase() === String(code).toLowerCase() ? '' : code;
+  Object.assign(d, { offset: 0, country: next, city: '' });
+  document.querySelectorAll('#filter-chips .chip').forEach(c => c.classList.remove('active'));
+  renderLocationFilters();
+  renderAlumniGrid();
+}
+
+function filterByCity(city) {
+  const d = state.directory;
+  const next = (d.city || '').toLowerCase() === String(city).toLowerCase() ? '' : city;
+  Object.assign(d, { offset: 0, city: next, country: '' });
+  document.querySelectorAll('#filter-chips .chip').forEach(c => c.classList.remove('active'));
+  renderLocationFilters();
   renderAlumniGrid();
 }
 
@@ -194,7 +255,14 @@ function renderAlumniCard(a) {
         <div class="alumni-card-info">
           <div class="alumni-card-name">${escapeHtml(a.name)}</div>
           <div class="alumni-card-role">${escapeHtml(subtitle)}</div>
-          <div class="alumni-card-location"><i data-lucide="map-pin" class="ui-icon"></i> ${escapeHtml(a.location || 'Location not set')}${a.batch ? ` · Batch ${a.batch}` : ''}</div>
+          <!-- A location the pre-v13 hardcoded path wrote is marked, not
+               presented as the member's own answer. The value is still shown,
+               because hiding it would lose the only record of what the old
+               system stored, but it is not allowed to read as a fact. -->
+          <div class="alumni-card-location"><i data-lucide="map-pin" class="ui-icon"></i> ${escapeHtml(a.location || 'Location not set')}${
+            a.locationNeedsConfirmation
+              ? ' <span class="loc-unconfirmed" title="Recorded automatically before it could be confirmed by this member">(unconfirmed)</span>'
+              : ''}${a.batch ? ` · Batch ${a.batch}` : ''}</div>
         </div>
       </div>
       <div class="alumni-tags">

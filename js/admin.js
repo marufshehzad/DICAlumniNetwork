@@ -477,7 +477,7 @@ function downloadSampleImportCSV() {
     'FullName', 'StudentID', 'RollNumber', 'RegistrationNumber', 'Batch', 'PassingYear', 'Department', 'Program', 'Section',
     'CGPA', 'CurrentStatus', 'Degree', 'GraduationDate', 'CurrentCompany', 'JobTitle', 'Industry', 'EmploymentStatus',
     'YearsExperience', 'Skills', 'LinkedIn', 'Portfolio', 'Email', 'MobileNumber', 'AltPhone', 'DateOfBirth', 'Gender',
-    'BloodGroup', 'PresentAddress', 'PermanentAddress', 'Hometown', 'District', 'Country', 'Facebook', 'GitHub', 'Twitter',
+    'BloodGroup', 'PresentAddress', 'PermanentAddress', 'Hometown', 'City', 'District', 'PostalCode', 'Country', 'Facebook', 'GitHub', 'Twitter',
     'EmergencyName', 'EmergencyPhone', 'EmergencyRelation', 'AreasOfExpertise', 'CanMentor', 'LookingForJob', 'Hiring', 'Networking'
   ];
   
@@ -485,7 +485,7 @@ function downloadSampleImportCSV() {
     'Rafiqul Islam', 'DIC-2020-101', '101', 'REG-2020-001', '2020', '2020', 'CSE', 'BSc CSE', 'A',
     '3.85', 'Alumni', 'BSc CSE', '2020-12-15', 'Brain Station 23', 'Software Engineer', 'Technology', 'Full-time',
     '4', 'React; Node.js; AWS', 'https://linkedin.com/in/rafiqul', 'https://rafiqul.dev', 'rafiqul@gmail.com', '+8801711223344', '+8801811223344', '1998-05-12', 'Male',
-    'O+', 'Dhanmondi, Dhaka', 'Comilla', 'Comilla', 'Dhaka', 'Bangladesh', 'https://fb.com/rafiqul', 'https://github.com/rafiqul', 'https://x.com/rafiqul',
+    'O+', 'Dhanmondi, Dhaka', 'Comilla', 'Comilla', 'Dhaka', 'Dhaka', '1209', 'Bangladesh', 'https://fb.com/rafiqul', 'https://github.com/rafiqul', 'https://x.com/rafiqul',
     'Abul Islam', '+8801911223344', 'Father', 'Software Architecture; Cloud', 'Yes', 'No', 'Yes', 'Yes'
   ];
 
@@ -493,7 +493,7 @@ function downloadSampleImportCSV() {
     'Nusrat Jahan Rima', 'DIC-2020-102', '102', 'REG-2020-002', '2020', '2020', 'SWE', 'BSc SWE', 'B',
     '3.92', 'Alumni', 'BSc SWE', '2020-12-15', 'Pathao', 'Data Analyst', 'Tech', 'Full-time',
     '3', 'Python; SQL; Tableau', 'https://linkedin.com/in/nusrat', 'https://nusrat.io', 'nusrat.rima@gmail.com', '+8801722334455', '', '1999-02-20', 'Female',
-    'AB+', 'Gulshan, Dhaka', 'Noakhali', 'Noakhali', 'Dhaka', 'Bangladesh', '', 'https://github.com/nusrat', '',
+    'AB+', 'Gulshan, Dhaka', 'Noakhali', 'Noakhali', 'Dhaka', 'Dhaka', '1212', 'Bangladesh', '', 'https://github.com/nusrat', '',
     'Mariam Begum', '+8801922334455', 'Mother', 'Data Science; Machine Learning', 'Yes', 'Yes', 'No', 'Yes'
   ];
 
@@ -1232,7 +1232,22 @@ const HEADER_RULES = [
   [/^group\s*$|hsc\s*group/i,                        'hscGroup'],
   [/version|medium/i,                                'hscVersion'],
   [/blood/i,                                         'bloodGroup'],
+  /* Location. The template has offered PresentAddress, PermanentAddress,
+     Hometown, District and Country since it was written, but only
+     presentAddress was ever mapped — the other four were parsed out of the file
+     and silently dropped, and the server then overwrote city and country with
+     'Dhaka','Bangladesh' regardless. All of them are carried through now, and
+     City is offered as well, because the city is what the map aggregates on.
+
+     Ordering matters here: these run before the generic address rule, so
+     "PermanentAddress" is not swallowed by /^address$/. */
+  [/permanent\s*address/i,                           'permanentAddress'],
   [/(present|current)\s*address|^address$/i,         'presentAddress'],
+  [/home\s*town|^hometown$/i,                        'hometown'],
+  [/^city$|current\s*city|city\s*of\s*residence/i,   'city'],
+  [/^district$/i,                                    'district'],
+  [/^country$|nationality\s*country/i,               'country'],
+  [/postal|post\s*code|zip/i,                        'postalCode'],
   [/occupation|profession/i,                         'occupation'],
   [/institution|organization|organisation|company|workplace/i, 'organization'],
   [/designation|job\s*title|position/i,              'designation'],

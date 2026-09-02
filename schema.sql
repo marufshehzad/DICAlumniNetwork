@@ -59,7 +59,11 @@ CREATE TABLE IF NOT EXISTS alumni_profiles (
     city VARCHAR(100),
     district VARCHAR(100),
     division VARCHAR(100),
-    country VARCHAR(100) DEFAULT 'Bangladesh',
+    -- No DEFAULT. It was DEFAULT 'Bangladesh', which meant any INSERT that
+    -- omitted a country still recorded one — a fabrication in the schema
+    -- rather than in a query, where it is harder to notice. An unknown
+    -- location stays NULL.
+    country VARCHAR(100),
     postal_code VARCHAR(20),
     
     -- Academic

@@ -10,6 +10,8 @@ const crypto = require('crypto');
 const db = require('./db');
 const mailer = require('./mailer');
 const jobs = require('./jobs');
+const privacy = require('./privacy');
+const location = require('./location');
 const path = require('path');
 const fs = require('fs');
 
@@ -669,11 +671,15 @@ app.post('/api/auth/register', async (req, res) => {
     `, [email.trim().toLowerCase(), hashPassword(password), clean, initials, group]);
 
     const uid = userRes.rows[0].id;
+    /* Location is NOT written here. This INSERT used to end in
+       `'Dhaka','Bangladesh'`, so every account ever created was recorded as
+       living in Dhaka whether or not it did, and no editor existed to correct
+       it. An unknown location is stored as NULL and reads as "Location not
+       set"; a guess stored as fact is indistinguishable from a fact. */
     await client.query(`
       INSERT INTO alumni_profiles (user_id, student_id, batch, passing_year, department,
-                                   primary_email, mobile_number, blood_group, hsc_group,
-                                   city, country)
-      VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,'Dhaka','Bangladesh')
+                                   primary_email, mobile_number, blood_group, hsc_group)
+      VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8)
     `, [uid, year ? `DIC-${year}-${uid}` : `DIC-${uid}`, year, group,
         email.trim().toLowerCase(), (mobile || '').trim() || null,
         normalizeBloodGroup(bloodGroup), group]);
@@ -929,7 +935,7 @@ const ALUMNI_SORTS = {
 };
 
 app.get('/api/alumni', requireAuth, async (req, res) => {
-  const { search, dept, batch, domain, mentor, sort } = req.query;
+  const { search, dept, batch, domain, mentor, sort, country, city, placeId } = req.query;
   const limit = Math.min(parseInt(req.query.limit) || 12, 100);
   const offset = Math.max(parseInt(req.query.offset) || 0, 0);
 
@@ -939,15 +945,47 @@ app.get('/api/alumni', requireAuth, async (req, res) => {
   if (search && search.trim()) {
     params.push(`%${search.trim().toLowerCase()}%`);
     const p = `$${params.length}`;
+    /* City is no longer matched here. It was the only way to search by place,
+       which meant a member who marks their location private could still be
+       found by typing their city — a setting that hides a value while leaving
+       it searchable is not a setting. Place is a structured filter now
+       (?country=, ?city=, ?placeId=), and those honour the privacy level.
+       Country was never in this predicate at all, which is why the "UK" and
+       "USA" chips that fed it always returned nothing. */
     where.push(`(LOWER(u.full_name) LIKE ${p} OR LOWER(ap.current_company) LIKE ${p}
               OR LOWER(ap.skills) LIKE ${p} OR LOWER(ap.department) LIKE ${p}
-              OR LOWER(ap.job_title) LIKE ${p} OR LOWER(ap.city) LIKE ${p}
+              OR LOWER(ap.job_title) LIKE ${p}
               OR CAST(ap.batch AS TEXT) LIKE ${p})`);
   }
   if (dept)   { params.push(`%${dept.toLowerCase()}%`); where.push(`LOWER(ap.department) LIKE $${params.length}`); }
   if (batch)  { params.push(parseInt(batch));           where.push(`ap.batch = $${params.length}`); }
   if (domain) { params.push(domain.toLowerCase());      where.push(`LOWER(ap.industry) = $${params.length}`); }
   if (mentor === 'true') where.push('ap.can_mentor = TRUE');
+
+  /* Structured location filters, matching on the place reference rather than
+     on a free-text LIKE. The old UI offered "UK" and "USA" chips that fed the
+     general search box, which never looked at the country column at all, so
+     both returned nothing while looking like they worked.
+
+     Every location filter is additionally constrained to profiles whose
+     location is not private: a member who hides their city must not be
+     discoverable by filtering for that city, or the setting would be
+     decorative. */
+  if (country) {
+    params.push(String(country).toLowerCase());
+    where.push(`(LOWER(lp.country_code) = $${params.length} OR LOWER(lp.country) = $${params.length})`);
+    where.push(privacy.DIRECTORY_VISIBLE_SQL);
+  }
+  if (city) {
+    params.push(String(city).toLowerCase());
+    where.push(`LOWER(lp.city) = $${params.length}`);
+    where.push(privacy.DIRECTORY_VISIBLE_SQL);
+  }
+  if (placeId && Number.isInteger(parseInt(placeId, 10))) {
+    params.push(parseInt(placeId, 10));
+    where.push(`ap.place_id = $${params.length}`);
+    where.push(privacy.DIRECTORY_VISIBLE_SQL);
+  }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const orderSql = ALUMNI_SORTS[sort] || ALUMNI_SORTS.name;
@@ -956,6 +994,7 @@ app.get('/api/alumni', requireAuth, async (req, res) => {
     const countRes = await db.query(`
       SELECT COUNT(*)::int AS total
       FROM users u JOIN alumni_profiles ap ON u.id = ap.user_id
+      LEFT JOIN location_places lp ON lp.id = ap.place_id
       ${whereSql}
     `, params);
 
@@ -963,23 +1002,45 @@ app.get('/api/alumni', requireAuth, async (req, res) => {
       SELECT u.id, u.full_name AS name, u.initials, u.is_verified AS verified,
              ap.job_title AS role, ap.current_company AS company, ap.batch,
              ap.department AS dept, ap.industry AS domain,
-             NULLIF(CONCAT_WS(', ', ap.city, ap.country), '') AS location,
+             ap.place_id, ap.location_needs_confirmation,
+             lp.city AS place_city, lp.country AS place_country,
+             ap.city AS legacy_city, ap.country AS legacy_country,
+             ${privacy.DIRECTORY_VISIBLE_SQL} AS location_visible,
              ap.skills, ap.can_mentor AS mentor, ap.color, ap.student_id,
              ap.degree, ap.bio
       FROM users u JOIN alumni_profiles ap ON u.id = ap.user_id
+      LEFT JOIN location_places lp ON lp.id = ap.place_id
       ${whereSql}
       ORDER BY ${orderSql}
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `, [...params, limit, offset]);
 
-    // Contact details are intentionally excluded from list results; they are
-    // served per-profile by /api/alumni/:id subject to privacy settings.
-    const alumni = rowsRes.rows.map(r => ({
-      ...r,
-      color: r.color || '#00A859',
-      location: r.location || 'Location not set',
-      skills: r.skills ? r.skills.split(',').map(s => s.trim()).filter(Boolean) : []
-    }));
+    /* Contact details are intentionally excluded from list results; they are
+       served per-profile by /api/alumni/:id subject to privacy settings.
+
+       Location is resolved here rather than in SQL so the three cases stay
+       legible: a confirmed place, a value the pre-v13 hardcoded path wrote
+       (shown, but flagged, never presented as the member's own answer), and a
+       member who has marked their location private. */
+    const alumni = rowsRes.rows.map(r => {
+      const visible = r.location_visible === true;
+      const confirmed = r.place_id !== null;
+      const label = confirmed
+        ? [r.place_city, r.place_country].filter(Boolean).join(', ')
+        : [r.legacy_city, r.legacy_country].filter(Boolean).join(', ');
+      const {
+        place_id, location_needs_confirmation, place_city, place_country,
+        legacy_city, legacy_country, location_visible, ...rest
+      } = r;
+      return {
+        ...rest,
+        color: r.color || '#00A859',
+        location: visible ? (label || 'Location not set') : 'Not shared',
+        locationConfirmed: visible && confirmed,
+        locationNeedsConfirmation: visible ? location_needs_confirmation === true : false,
+        skills: r.skills ? r.skills.split(',').map(s => s.trim()).filter(Boolean) : []
+      };
+    });
 
     res.json({ alumni, total: countRes.rows[0].total, limit, offset });
   } catch (err) {
@@ -1004,10 +1065,13 @@ app.get('/api/alumni/:id', requireAuth, async (req, res) => {
     const result = await db.query(`
       SELECT ap.*,
              ap.id AS profile_id,
+             lp.city AS place_city, lp.country AS place_country,
+             lp.division AS place_division, lp.district AS place_district,
              u.full_name as name, u.email, u.role, u.initials, u.is_verified,
              u.id
       FROM users u
       LEFT JOIN alumni_profiles ap ON u.id = ap.user_id
+      LEFT JOIN location_places lp ON lp.id = ap.place_id
       WHERE u.id = $1
     `, [id]);
 
@@ -1020,10 +1084,26 @@ app.get('/api/alumni/:id', requireAuth, async (req, res) => {
     // Report what is actually stored. This previously substituted invented
     // constants ("Brain Station 23", "+880 1712-345678", a fixed skill list)
     // for every null column, so empty profiles looked fully populated.
-    const privacy = row.privacy_settings || {};
-    const isSelf = req.user && req.user.uid === row.id;
-    const isStaff = req.user && ['super_admin', 'univ_admin', 'dept_admin'].includes(req.user.role);
-    const canSee = (field) => isSelf || isStaff || privacy[field] !== 'private';
+    /* Gated by privacy.js, which the browser also builds its controls from, so
+       a field cannot be offered in the interface without being enforced here. */
+    const settings = row.privacy_settings || {};
+    const isSelf = !!(req.user && req.user.uid === row.id);
+    const ctx = { settings, isSelf, viewerRole: req.user && req.user.role };
+    const canSee = (field) => privacy.canSee(field, ctx);
+
+    /* Structured location wins; the free-text columns are only a fallback for
+       a profile that has not been confirmed since migration v13, and are
+       labelled unconfirmed rather than presented as fact. `location` is gated
+       — it was not before, so a member could not hide their city from anyone.
+
+       No address, postal code or hometown appears in this response for any
+       role. They are self-only, and `GET /api/profile/me` is where the owner
+       reads them. */
+    const confirmed = row.place_id !== null && row.place_id !== undefined;
+    const placeLabel = confirmed
+      ? [row.place_city, row.place_country].filter(Boolean).join(', ')
+      : [row.city, row.country].filter(Boolean).join(', ');
+    const locationVisible = canSee('location');
 
     res.json({
       id: row.id,
@@ -1036,11 +1116,13 @@ app.get('/api/alumni/:id', requireAuth, async (req, res) => {
       degree: row.degree,
       company: row.current_company,
       jobTitle: row.job_title,
-      location: [row.city, row.country].filter(Boolean).join(', ') || null,
-      // city and industry are returned alongside the joined location string so
-      // the profile view can say which attributes it shares with the viewer.
-      // location already exposes the city, so neither adds anything new.
-      city: row.city,
+      location: locationVisible ? (placeLabel || null) : null,
+      city: locationVisible ? (confirmed ? row.place_city : row.city) : null,
+      country: locationVisible ? (confirmed ? row.place_country : row.country) : null,
+      // Says whether the location above is a value this person confirmed, or
+      // one the pre-v13 hardcoded path wrote for them. The interface shows the
+      // difference rather than letting a fabricated value read as a fact.
+      locationConfirmed: locationVisible ? confirmed : null,
       industry: row.industry,
       bio: row.bio,
       skills: row.skills ? row.skills.split(',').map(s => s.trim()).filter(Boolean) : [],
@@ -1065,12 +1147,19 @@ app.get('/api/profile/me', requireAuth, async (req, res) => {
     const r = await db.query(`
       SELECT u.id, u.email, u.full_name, u.initials, u.role, u.role_label,
              u.department AS user_department, u.is_verified, u.must_change_password, u.created_via,
-             ap.*
-      FROM users u LEFT JOIN alumni_profiles ap ON ap.user_id = u.id
+             ap.*,
+             lp.id AS place_id_resolved, lp.city AS place_city, lp.country AS place_country,
+             lp.country_code AS place_country_code, lp.division AS place_division,
+             lp.district AS place_district
+      FROM users u
+      LEFT JOIN alumni_profiles ap ON ap.user_id = u.id
+      LEFT JOIN location_places lp ON lp.id = ap.place_id
       WHERE u.id = $1
     `, [req.user.uid]);
     if (!r.rows.length) return res.status(404).json({ error: 'Profile not found' });
-    res.json(r.rows[0]);
+    // The owner's own row, unmasked — privacy gates protect a profile from
+    // OTHER people, never from the person it describes.
+    res.json({ ...r.rows[0], privacy_settings: privacy.effective(r.rows[0].privacy_settings) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1096,8 +1185,13 @@ const EDITABLE_PROFILE_FIELDS = {
   mobile:           'mobile_number',
   bio:              'bio',
   skills:           'skills',
-  city:             'city',
-  country:          'country'
+  hometown:         'hometown',
+  postalCode:       'postal_code'
+  /* `city` and `country` are deliberately NOT here any more. Location is set
+     by choosing a place — see the placeId branch below — so there is one
+     writer and one source of truth. Accepting free text alongside a structured
+     reference is how the two drift apart, and drift is what made the old map
+     unfixable. */
 };
 
 app.put('/api/profile/me', requireAuth, async (req, res) => {
@@ -1121,38 +1215,45 @@ app.put('/api/profile/me', requireAuth, async (req, res) => {
      validated key by key rather than passed through the scalar whitelist above,
      which would let a caller put arbitrary JSON into the column.
 
-     The value set is a whitelist because the read side fails OPEN: canSee()
-     tests `!== 'private'`, so any value it does not recognise would reveal the
-     field rather than hide it. An unknown key or level is rejected outright —
-     a setting that appears to save and then does nothing is exactly the kind of
-     false assurance this release exists to remove.
-
-     Only 'email' and 'mobile' are offered, because they are the only two
-     fields canSee() actually gates. */
+     The whitelist, the levels and the defaults all come from privacy.js — the
+     same object the browser builds its controls from and the read side gates
+     against. Previously this list was maintained here by hand, the database
+     default carried four other keys, and the profile page rendered a fifth from
+     an undefined value; nothing agreed with anything. */
   if (req.body.privacySettings !== undefined) {
-    const PRIVACY_FIELDS = ['email', 'mobile'];
-    // 'alumni' is accepted as a legacy synonym for 'public' — it is what seeded
-    // rows hold, and the two are indistinguishable in this product because
-    // every viewer of a profile is already signed in.
-    const PRIVACY_LEVELS = ['public', 'alumni', 'private'];
-    const input = req.body.privacySettings;
-
-    if (input === null || typeof input !== 'object' || Array.isArray(input)) {
-      return res.status(400).json({ error: 'privacySettings must be an object' });
-    }
-    const clean = {};
-    for (const key of Object.keys(input)) {
-      if (!PRIVACY_FIELDS.includes(key)) {
-        return res.status(400).json({ error: `Unknown privacy field: ${key}` });
-      }
-      if (typeof input[key] !== 'string' || !PRIVACY_LEVELS.includes(input[key])) {
-        return res.status(400).json({ error: `Invalid privacy level for ${key}` });
-      }
-      clean[key] = input[key];
-    }
+    const checked = privacy.validateSettings(req.body.privacySettings);
+    if (!checked.ok) return res.status(400).json({ error: checked.error });
     // Merged, not replaced, so a partial payload cannot silently clear the rest.
-    vals.push(JSON.stringify(clean));
+    vals.push(JSON.stringify(checked.clean));
     sets.push(`privacy_settings = COALESCE(privacy_settings, '{}'::jsonb) || $${vals.length}::jsonb`);
+  }
+
+  /* Structured location. `placeId` is the only way to set a location, and it
+     must name a row of location_places — free text is not accepted, so the
+     directory filters and the map aggregate can rely on the value.
+
+     Writing a place also stamps the denormalised city/country and clears
+     location_needs_confirmation: the member has now said where they are, which
+     is precisely what the flag was waiting for. Passing null clears the
+     location outright, and clears the flag too — "I would rather not say" is a
+     confirmed answer, not an outstanding question. */
+  if (req.body.placeId !== undefined) {
+    if (req.body.placeId === null || req.body.placeId === '') {
+      sets.push('place_id = NULL', 'city = NULL', 'country = NULL',
+                'division = NULL', 'district = NULL',
+                'location_needs_confirmation = FALSE');
+    } else {
+      const place = await location.placeById(db, req.body.placeId);
+      if (!place) return res.status(400).json({ error: 'Unknown place' });
+      vals.push(place.id);            const pi = vals.length;
+      vals.push(place.city);          const pc = vals.length;
+      vals.push(place.country);       const pn = vals.length;
+      vals.push(place.division);      const pd = vals.length;
+      vals.push(place.district);      const pt = vals.length;
+      sets.push(`place_id = $${pi}`, `city = $${pc}`, `country = $${pn}`,
+                `division = $${pd}`, `district = $${pt}`,
+                'location_needs_confirmation = FALSE');
+    }
   }
 
   if (!sets.length) return res.status(400).json({ error: 'No editable fields supplied' });
@@ -1170,7 +1271,82 @@ app.put('/api/profile/me', requireAuth, async (req, res) => {
     if (req.body.name && req.body.name.trim()) {
       await db.query('UPDATE users SET full_name = $2 WHERE id = $1', [req.user.uid, req.body.name.trim()]);
     }
-    res.json({ success: true, profile: r.rows[0] });
+    res.json({
+      success: true,
+      profile: { ...r.rows[0], privacy_settings: privacy.effective(r.rows[0].privacy_settings) }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ─── LOCATION REFERENCE DATA ────────────────────────────────
+   The controlled list the profile editor and the directory filters are built
+   from. Reference data about places, not about people: no alumnus appears in
+   any response here, so it is readable by any signed-in member. */
+
+// Every active place, for the cascading Country → Division → City selector.
+app.get('/api/locations/places', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await db.query(`
+      SELECT id, country_code, country, division, district, city, latitude, longitude
+        FROM location_places WHERE is_active
+       ORDER BY country, division NULLS FIRST, city`);
+    const countries = [];
+    const byCountry = new Map();
+    for (const p of rows) {
+      if (!byCountry.has(p.country_code)) {
+        const entry = { code: p.country_code, country: p.country, divisions: [], cities: [] };
+        byCountry.set(p.country_code, entry);
+        countries.push(entry);
+      }
+      const entry = byCountry.get(p.country_code);
+      if (p.division && !entry.divisions.includes(p.division)) entry.divisions.push(p.division);
+      entry.cities.push({
+        id: p.id, city: p.city, division: p.division, district: p.district,
+        latitude: Number(p.latitude), longitude: Number(p.longitude)
+      });
+    }
+    res.json({ countries, total: rows.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* The privacy contract, so the browser renders exactly the fields and levels
+   the server enforces instead of a hand-maintained copy that drifts. */
+app.get('/api/profile/privacy-schema', requireAuth, (req, res) => {
+  res.json(privacy.schemaForClient());
+});
+
+/* Directory filter options, derived from the alumni who are actually there.
+   The chips used to be a hardcoded Dhaka / UK / USA, two of which matched
+   nothing because the search they drove never looked at the country column.
+   A place appears here only if somebody real is in it and has not marked their
+   location private, so an empty directory produces empty filters rather than
+   three confident buttons that return nothing.
+
+   Deliberately NOT under /api/alumni/... — `/api/alumni/:id` is declared
+   earlier and would match "location-filters" as an id. */
+app.get('/api/locations/filters', requireAuth, async (req, res) => {
+  try {
+    const [countries, cities] = await Promise.all([
+      db.query(`
+        SELECT lp.country_code AS code, lp.country, COUNT(*)::int AS n
+          FROM alumni_profiles ap
+          JOIN location_places lp ON lp.id = ap.place_id
+         WHERE ${privacy.DIRECTORY_VISIBLE_SQL}
+         GROUP BY lp.country_code, lp.country
+         ORDER BY n DESC, lp.country`),
+      db.query(`
+        SELECT lp.id AS place_id, lp.city, lp.country, lp.country_code AS code, COUNT(*)::int AS n
+          FROM alumni_profiles ap
+          JOIN location_places lp ON lp.id = ap.place_id
+         WHERE ${privacy.DIRECTORY_VISIBLE_SQL}
+         GROUP BY lp.id, lp.city, lp.country, lp.country_code
+         ORDER BY n DESC, lp.city`)
+    ]);
+    res.json({ countries: countries.rows, cities: cities.rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1594,8 +1770,17 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
     let withMissingOptional = 0;
     const missingFieldCounts = {};
     const OPTIONAL_FIELDS = ["mobile","hscPassingYear","hscGroup","hscVersion","bloodGroup",
-                             "presentAddress","occupation","organization","designation",
+                             "presentAddress","permanentAddress","hometown","postalCode",
+                             "city","district","country",
+                             "occupation","organization","designation",
                              "photoUrl","facebook"];
+    /* Rows whose location text could not be matched to a reference place. They
+       are imported without a location and listed back to the administrator, so
+       an unrecognised city is visible rather than silently replaced. The old
+       import wrote 'Dhaka','Bangladesh' onto every row regardless of what the
+       file said, and discarded the Country, District, Hometown and
+       PermanentAddress columns its own template asked for. */
+    const unresolvedLocations = [];
     const seenEmail = new Set(), seenMobile = new Set();
     const strategy = (req.body.dupResolution || "skip").toLowerCase();
     const batchPassword = generateImportPassword();
@@ -1645,6 +1830,24 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
       );
 
       const year = parseInt(r.hscPassingYear) || null;
+
+      /* Location, resolved against the reference places. Four outcomes, and
+         none of them is "assume Dhaka":
+           resolved      → the place is stored, and the row counts as confirmed
+                           because a person supplied it, not a default
+           empty         → no location in the file; stored as NULL
+           unknown/other → reported back to the administrator and stored as NULL
+         The free-text city/country are also stored so the operator can see what
+         the file actually said next to what could be matched. */
+      const loc = await location.resolvePlace(client, { country: r.country, city: r.city });
+      if (loc.status !== 'resolved' && loc.status !== 'empty') {
+        unresolvedLocations.push({
+          row: rowNo, name,
+          supplied: [location.clean(r.city), location.clean(r.country)].filter(Boolean).join(', '),
+          reason: loc.reason
+        });
+      }
+
       const profileVals = [
         year,                                   // batch + passing_year
         normalizeBloodGroup(r.bloodGroup),
@@ -1656,7 +1859,15 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
         (r.hscVersion || "").trim() || null,
         (r.photoUrl || "").trim() || null,
         (r.facebook || "").trim() || null,
-        (r.mobile || "").trim() || null
+        (r.mobile || "").trim() || null,
+        loc.placeId,                                            // $13 place_id
+        loc.place ? loc.place.city : null,                      // $14 city
+        loc.place ? loc.place.country : null,                   // $15 country
+        loc.place ? loc.place.division : null,                  // $16 division
+        loc.place ? loc.place.district : location.clean(r.district), // $17 district
+        (r.permanentAddress || "").trim() || null,              // $18
+        location.clean(r.hometown),                             // $19
+        (r.postalCode || "").trim() || null                     // $20
       ];
 
       if (existing.rows.length > 0) {
@@ -1673,6 +1884,15 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
              job_title = COALESCE($7, job_title), hsc_group = COALESCE($8, hsc_group),
              hsc_version = COALESCE($9, hsc_version), photo_url = COALESCE($10, photo_url),
              facebook = COALESCE($11, facebook), mobile_number = COALESCE($12, mobile_number),
+             place_id = COALESCE($13, place_id),
+             city = COALESCE($14, city), country = COALESCE($15, country),
+             division = COALESCE($16, division), district = COALESCE($17, district),
+             permanent_address = COALESCE($18, permanent_address),
+             hometown = COALESCE($19, hometown), postal_code = COALESCE($20, postal_code),
+             /* A row the institution supplied a matched location for is
+                confirmed; a blank leaves whatever state the profile was in. */
+             location_needs_confirmation = CASE WHEN $13::int IS NOT NULL
+                                                THEN FALSE ELSE location_needs_confirmation END,
              updated_at = CURRENT_TIMESTAMP
            WHERE user_id = $1`,
           [uid, ...profileVals]
@@ -1696,16 +1916,27 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
       if (userRes.rows.length === 0) { skippedDuplicate++; continue; }
       const uid = userRes.rows[0].id;
 
+      /* This INSERT used to end in `'Dhaka','Bangladesh'`, so every imported
+         alumnus was recorded as living in Dhaka whatever the file said. It now
+         stores what the file said, matched to a reference place, or nothing at
+         all. location_needs_confirmation stays FALSE for an imported location:
+         it came from the institution's own records, which is a source, unlike
+         a literal in a query. */
       await client.query(
         `INSERT INTO alumni_profiles
            (user_id, student_id, batch, passing_year, department, primary_email,
             blood_group, present_address, occupation, current_company, job_title,
-            hsc_group, hsc_version, photo_url, facebook, mobile_number, city, country)
-         VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'Dhaka','Bangladesh')`,
+            hsc_group, hsc_version, photo_url, facebook, mobile_number,
+            place_id, city, country, division, district,
+            permanent_address, hometown, postal_code)
+         VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+                 $16,$17,$18,$19,$20,$21,$22,$23)`,
         [uid, year ? `DIC-${year}-${uid}` : `DIC-${uid}`, year,
          normalizeHscGroup(r.hscGroup) || "General", email,
          profileVals[1], profileVals[2], profileVals[3], profileVals[4], profileVals[5],
-         profileVals[6], profileVals[7], profileVals[8], profileVals[9], profileVals[10]]
+         profileVals[6], profileVals[7], profileVals[8], profileVals[9], profileVals[10],
+         profileVals[11], profileVals[12], profileVals[13], profileVals[14], profileVals[15],
+         profileVals[16], profileVals[17], profileVals[18]]
       );
       created++;
     }
@@ -1737,6 +1968,12 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
       skipped: skippedDuplicate, duplicates: skippedDuplicate,
       rejected, rejectedRows: rejectedRows.slice(0, 100),
       withMissingOptional, missingFieldCounts,
+      /* Locations the file supplied that could not be matched to a reference
+         place. These rows imported fine, without a location. Reported in full
+         rather than counted, because "8 unrecognised cities" is not actionable
+         and "row 41: Chattogram Sadar" is. */
+      unresolvedLocations: unresolvedLocations.slice(0, 100),
+      unresolvedLocationCount: unresolvedLocations.length,
       // Shown once, to the administrator who ran this import, so they can pass
       // it on. Omitted when the batch created nobody.
       temporaryPassword: created > 0 ? batchPassword : null
@@ -1936,27 +2173,61 @@ app.get('/api/stats/analytics', requireRole(...MODERATOR_ROLES), async (req, res
 
 /* Where alumni actually are, from alumni_profiles.country / .city. The map used
    to draw fixed clusters totalling 12,847 people across 47 countries. */
+/* Alumni map data.
+   Aggregates only — a count attached to a city, never a row attached to a
+   person. Three properties hold by construction rather than by care:
+
+   - Coordinates come from location_places. There is no coordinate anywhere in
+     the system that describes where a person lives, so none can leak here.
+   - Only profiles whose location privacy is 'public' are counted. 'alumni'
+     means visible on a profile but not plotted; 'private' means neither.
+   - Nothing identifies anybody. No id, no name, no row — just how many.
+
+   `unconfirmed` is reported separately and is NOT plotted. Those are the rows
+   the pre-v13 hardcoded path wrote, and putting them on a map would republish
+   the fabrication this phase was opened to remove. The interface says how many
+   are waiting rather than quietly drawing them. */
 app.get('/api/stats/map', requireAuth, async (req, res) => {
   try {
-    const [countries, cities, totals] = await Promise.all([
-      db.query(`SELECT country, COUNT(*)::int AS n FROM alumni_profiles
-                WHERE country IS NOT NULL AND country <> ''
-                GROUP BY country ORDER BY n DESC, country`),
-      db.query(`SELECT country, city, COUNT(*)::int AS n FROM alumni_profiles
-                WHERE city IS NOT NULL AND city <> ''
-                GROUP BY country, city ORDER BY n DESC, city`),
+    const [cities, countries, totals] = await Promise.all([
+      db.query(`
+        SELECT lp.id AS place_id, lp.city, lp.country, lp.country_code,
+               lp.latitude::float8 AS latitude, lp.longitude::float8 AS longitude,
+               COUNT(*)::int AS n
+          FROM alumni_profiles ap
+          JOIN location_places lp ON lp.id = ap.place_id
+         WHERE ${privacy.MAP_VISIBLE_SQL}
+         GROUP BY lp.id, lp.city, lp.country, lp.country_code, lp.latitude, lp.longitude
+         ORDER BY n DESC, lp.city`),
+      db.query(`
+        SELECT lp.country, lp.country_code, COUNT(*)::int AS n
+          FROM alumni_profiles ap
+          JOIN location_places lp ON lp.id = ap.place_id
+         WHERE ${privacy.MAP_VISIBLE_SQL}
+         GROUP BY lp.country, lp.country_code
+         ORDER BY n DESC, lp.country`),
       db.query(`
         SELECT COUNT(*)::int AS profiles,
-               COUNT(*) FILTER (WHERE country IS NOT NULL AND country <> '')::int AS located,
-               COUNT(*) FILTER (WHERE country ILIKE 'bangladesh')::int            AS in_bangladesh,
-               COUNT(*) FILTER (WHERE country IS NOT NULL AND country <> ''
-                                  AND country NOT ILIKE 'bangladesh')::int        AS international
-        FROM alumni_profiles`)
+               COUNT(*) FILTER (WHERE ap.place_id IS NOT NULL)::int AS confirmed,
+               COUNT(*) FILTER (WHERE ap.place_id IS NOT NULL AND ${privacy.MAP_VISIBLE_SQL})::int AS mapped,
+               COUNT(*) FILTER (WHERE ap.location_needs_confirmation)::int AS unconfirmed,
+               COUNT(*) FILTER (WHERE ap.place_id IS NULL AND NOT ap.location_needs_confirmation)::int AS not_set
+          FROM alumni_profiles ap`)
     ]);
+
+    const t = totals.rows[0];
     res.json({
-      countries: countries.rows,
       cities: cities.rows,
-      ...totals.rows[0],
+      countries: countries.rows,
+      profiles: t.profiles,
+      confirmed: t.confirmed,
+      mapped: t.mapped,
+      unconfirmed: t.unconfirmed,
+      notSet: t.not_set,
+      in_bangladesh: countries.rows.filter(c => c.country_code === 'BD')
+                                   .reduce((a, c) => a + c.n, 0),
+      international: countries.rows.filter(c => c.country_code !== 'BD')
+                                   .reduce((a, c) => a + c.n, 0),
       chapters: (await db.query(
         `SELECT COUNT(*)::int AS n FROM chapters WHERE status = 'approved'`)).rows[0].n
     });

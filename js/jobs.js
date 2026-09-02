@@ -65,7 +65,9 @@ function showPostJobModal() {
             <option value="internship">Internship</option><option value="contract">Contract</option>
           </select></div>
         <div class="input-group"><label class="input-label">Location</label>
-          <input type="text" id="job-location" class="form-input" placeholder="Dhaka / Remote" value="Dhaka" /></div>
+          <!-- value="Dhaka" was prefilled, so an unedited posting recorded
+               Dhaka whether or not the role was there. Blank by default. -->
+          <input type="text" id="job-location" class="form-input" placeholder="e.g. Chattogram, or Remote" value="" /></div>
       </div>
       <div class="input-group"><label class="input-label">Salary Range</label>
         <input type="text" id="job-salary" class="form-input" placeholder="e.g. ৳80K–৳120K/mo" /></div>
@@ -99,6 +101,37 @@ function showReferralModal(jobId, jobTitle, postedBy) {
 
 // Updated renderJobs with Referral button
 // ─── JOBS (REQ-07) — served from PostgreSQL ───
+/* The job location dropdown, filled from the locations jobs are actually
+   posted in. It was a hardcoded Dhaka / Remote / UK / USA list, which meant a
+   role in Chattogram could not be filtered for at all, and listed "Remote"
+   among cities as though remote were a place.
+
+   Job location remains free text on `jobs.location` and is NOT joined to the
+   alumni location model: an employer's office and a member's home are
+   different things with different privacy weights, and merging them was
+   explicitly out of scope. Work mode (remote / hybrid / on-site) is still not
+   modelled — that limitation is recorded rather than papered over. */
+function populateJobLocationFilter() {
+  const el = document.getElementById('job-location-filter');
+  if (!el) return;
+  API.getJobs({}).then(all => {
+    if (apiFailed(all) || !Array.isArray(all)) return;
+    const seen = new Map();
+    for (const j of all) {
+      const loc = (j.location || '').trim();
+      if (!loc) continue;
+      const k = loc.toLowerCase();
+      seen.set(k, { label: loc, n: (seen.get(k)?.n || 0) + 1 });
+    }
+    const current = el.value;
+    el.innerHTML = '<option value="">All Locations</option>' +
+      [...seen.entries()]
+        .sort((a, b) => b[1].n - a[1].n || a[1].label.localeCompare(b[1].label))
+        .map(([k, v]) => `<option value="${escapeHtml(k)}" ${current === k ? 'selected' : ''}>` +
+                         `${escapeHtml(v.label)} (${v.n})</option>`).join('');
+  });
+}
+
 async function renderJobsEnhanced(filter = '') {
   const container = document.getElementById('jobs-list');
   if (!container) return;
@@ -106,6 +139,7 @@ async function renderJobsEnhanced(filter = '') {
   container.innerHTML = renderSkeletonCards(3, 'job');
   const q = { ...(filter ? { search: filter } : {}), ...(state.jobFilters || {}) };
   const jobs = await API.getJobs(q);
+  populateJobLocationFilter();
 
   if (apiFailed(jobs)) {
     container.innerHTML = renderErrorState(jobs?.error || 'Could not load the job board.', 'renderJobsEnhanced()');

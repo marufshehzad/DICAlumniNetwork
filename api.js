@@ -118,6 +118,7 @@ const API = {
 
   // Returns { alumni, total, limit, offset } or null when the request fails.
   async getAlumni({ search = '', dept = '', batch = '', domain = '', mentor = false,
+                    country = '', city = '', placeId = '',
                     sort = 'name', limit = 12, offset = 0 } = {}) {
     try {
       const qs = new URLSearchParams();
@@ -126,6 +127,11 @@ const API = {
       if (batch) qs.set('batch', batch);
       if (domain) qs.set('domain', domain);
       if (mentor) qs.set('mentor', 'true');
+      // Structured location filters. City used to be reachable only through
+      // the free-text search box, and country not at all.
+      if (country) qs.set('country', country);
+      if (city) qs.set('city', city);
+      if (placeId) qs.set('placeId', placeId);
       qs.set('sort', sort);
       qs.set('limit', limit);
       qs.set('offset', offset);
@@ -426,6 +432,15 @@ Object.assign(API, {
   getStatsOverview:     ()          => apiRequest('GET',    '/api/stats/overview'),
   getStatsAnalytics:    ()          => apiRequest('GET',    '/api/stats/analytics'),
   getStatsMap:          ()          => apiRequest('GET',    '/api/stats/map'),
+
+  // ─── LOCATION (Phase 5B) ───
+  // Reference places for the profile editor's Country → City selector.
+  getLocationPlaces:    ()          => apiRequest('GET',    '/api/locations/places'),
+  // Directory filter options, built from alumni who are actually there.
+  getLocationFilters:   ()          => apiRequest('GET',    '/api/locations/filters'),
+  // The field-privacy contract the server enforces, so the browser renders it
+  // rather than keeping its own copy that drifts out of step.
+  getPrivacySchema:     ()          => apiRequest('GET',    '/api/profile/privacy-schema'),
   getRbacMatrix:        ()          => apiRequest('GET',    '/api/stats/rbac'),
   getVerificationQueue: ()          => apiRequest('GET',    '/api/verification-queue'),
 

@@ -292,7 +292,7 @@
         <!-- Search Bar -->
         <div class="ai-search-bar glass-card">
           <span class="ai-search-icon"><i data-lucide="bot" class="ui-icon"></i></span>
-          <input type="text" class="ai-search-input" id="dir-search" placeholder="Search by name, company, skill, department or city" oninput="filterDirectory(this.value)" />
+          <input type="text" class="ai-search-input" id="dir-search" placeholder="Search by name, company, skill or department" oninput="filterDirectory(this.value)" />
           <button class="voice-btn" title="Voice Input"><i data-lucide="mic" class="ui-icon"></i></button>
           <div class="search-indicator" id="search-indicator" style="display:none;">
             <div class="typing-dots"><span></span><span></span><span></span></div>
@@ -311,10 +311,13 @@
           <button class="chip" onclick="toggleChip(this,'2018')">Batch 2018</button>
           <button class="chip" onclick="toggleChip(this,'tech')"><i data-lucide="laptop" class="ui-icon"></i> Tech</button>
           <button class="chip" onclick="toggleChip(this,'finance')"><i data-lucide="bar-chart-3" class="ui-icon"></i> Finance</button>
-          <button class="chip" onclick="toggleChip(this,'dhaka')"><i data-lucide="map-pin" class="ui-icon"></i> Dhaka</button>
-          <button class="chip" onclick="toggleChip(this,'uk')"><i data-lucide="flag" class="ui-icon"></i> UK</button>
-          <button class="chip" onclick="toggleChip(this,'usa')"><i data-lucide="flag" class="ui-icon"></i> USA</button>
         </div>
+        <!-- Location filters are built from the places alumni are actually in
+             (GET /api/locations/filters). They were three hardcoded chips —
+             Dhaka, UK, USA — that set the free-text search box; because the
+             search never looked at the country column, UK and USA matched
+             nothing while looking exactly as functional as Dhaka. -->
+        <div class="filter-chips" id="location-filter-chips"></div>
         <div class="directory-stats-bar">
           <span id="dir-count">Loading profiles…</span>
           <div class="sort-options">
@@ -508,12 +511,14 @@
                 <option value="internship">Internship</option>
                 <option value="contract">Contract</option>
               </select>
-              <select class="form-select" onchange="filterJobLocation(this.value)">
+              <!-- Was a hardcoded Dhaka / Remote / UK / USA list, so a job
+                   posted anywhere else could not be filtered for, and "Remote"
+                   sat among places as though it were one. The options are now
+                   the locations jobs are actually posted in; work mode is a
+                   separate question this phase does not model — see
+                   LOCATION_SYSTEM_AUDIT.md §14. -->
+              <select class="form-select" id="job-location-filter" onchange="filterJobLocation(this.value)">
                 <option value="">All Locations</option>
-                <option value="dhaka">Dhaka</option>
-                <option value="remote">Remote</option>
-                <option value="uk">UK</option>
-                <option value="usa">USA</option>
               </select>
             </div>
             <div id="jobs-list"></div>
@@ -651,14 +656,19 @@
         <div class="page-header">
           <div>
             <h1 class="page-title">Alumni Global Map</h1>
-            <p class="page-subtitle">Privacy-preserving regional clustering · Opt-in location</p>
+            <p class="page-subtitle">City-level aggregates · your street address is never shown</p>
           </div>
-          <div class="location-toggle">
-            <label class="toggle-label">Share My Location</label>
-            <div class="toggle-switch" onclick="this.classList.toggle('active')">
-              <div class="toggle-thumb"></div>
-            </div>
-          </div>
+          <!-- The "Share My Location" toggle that stood here did nothing at
+               all: onclick="this.classList.toggle('active')", no handler, no
+               endpoint, and navigator.geolocation appears nowhere in this
+               codebase. The subtitle claimed "Opt-in location" while both
+               account-creation paths wrote a hardcoded Dhaka.
+
+               Location is chosen in Edit Profile, from a list of cities, and
+               its visibility is a real setting the server enforces. -->
+          <a class="btn btn-outline btn-sm" onclick="showPage('profile')">
+            <i data-lucide="map-pin" class="ui-icon"></i> Set my city
+          </a>
         </div>
         <div class="map-container glass-card">
           <div class="map-canvas" id="alumni-map">

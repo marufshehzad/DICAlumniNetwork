@@ -231,7 +231,7 @@
         <!-- Search Bar -->
         <div class="ai-search-bar glass-card">
           <span class="ai-search-icon"><i data-lucide="bot" class="ui-icon"></i></span>
-          <input type="text" class="ai-search-input" id="dir-search" placeholder="Search by name, company, skill, department or city" oninput="filterDirectory(this.value)" />
+          <input type="text" class="ai-search-input" id="dir-search" placeholder="Search by name, company, skill or department" oninput="filterDirectory(this.value)" />
           <button class="voice-btn" title="Voice Input"><i data-lucide="mic" class="ui-icon"></i></button>
           <div class="search-indicator" id="search-indicator" style="display:none;">
             <div class="typing-dots"><span></span><span></span><span></span></div>
@@ -250,10 +250,9 @@
           <button class="chip" onclick="toggleChip(this,'2018')">Batch 2018</button>
           <button class="chip" onclick="toggleChip(this,'tech')"><i data-lucide="laptop" class="ui-icon"></i> Tech</button>
           <button class="chip" onclick="toggleChip(this,'finance')"><i data-lucide="bar-chart-3" class="ui-icon"></i> Finance</button>
-          <button class="chip" onclick="toggleChip(this,'dhaka')"><i data-lucide="map-pin" class="ui-icon"></i> Dhaka</button>
-          <button class="chip" onclick="toggleChip(this,'uk')"><i data-lucide="flag" class="ui-icon"></i> UK</button>
-          <button class="chip" onclick="toggleChip(this,'usa')"><i data-lucide="flag" class="ui-icon"></i> USA</button>
         </div>
+        <!-- Built from the places alumni are actually in; see index.html. -->
+        <div class="filter-chips" id="location-filter-chips"></div>
         <div class="directory-stats-bar">
           <span id="dir-count">Loading profiles…</span>
           <div class="sort-options">

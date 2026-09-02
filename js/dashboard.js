@@ -453,28 +453,24 @@ function switchAnalytics(type, btn) {
 /* The real queue: accounts where users.is_verified is false. It used to list the
    same two invented people — Rafiq Hossain and Sumaiya Zaman — on every install,
    and the dashboard badge above it always read 12. */
-const MAP_COUNTRY_POSITIONS = {
-  'bangladesh': { top: 42, left: 68 },
-  'india': { top: 45, left: 65 },
-  'pakistan': { top: 40, left: 62 },
-  'united kingdom': { top: 26, left: 45 },
-  'united states': { top: 34, left: 20 },
-  'canada': { top: 24, left: 20 },
-  'australia': { top: 74, left: 82 },
-  'germany': { top: 28, left: 48 },
-  'france': { top: 30, left: 46 },
-  'japan': { top: 36, left: 82 },
-  'singapore': { top: 56, left: 76 },
-  'malaysia': { top: 55, left: 75 },
-  'united arab emirates': { top: 44, left: 58 },
-  'saudi arabia': { top: 44, left: 55 },
-  'qatar': { top: 44, left: 57 },
-  'italy': { top: 32, left: 49 },
-  'sweden': { top: 20, left: 50 },
-  'south korea': { top: 35, left: 80 },
-  'china': { top: 36, left: 74 },
-  'new zealand': { top: 80, left: 88 }
-};
+/* MAP_COUNTRY_POSITIONS is gone. It was a hand-written table of twenty
+   countries with `top`/`left` percentages — screen positions someone chose by
+   eye, not coordinates — and any country outside the twenty could not be drawn
+   at all. Pins are now projected from the real latitude and longitude the
+   server sends with each city, so every place on earth has a correct position
+   and no lookup table can fall behind the data.
+
+   The projection is equirectangular (plate carrée): longitude maps linearly to
+   x, latitude linearly to y. It is the projection the graticule below is drawn
+   for, it needs no library, and it is exact for what this map claims — where a
+   city is relative to the grid it is drawn on. */
+const MAP_VIEW = { width: 900, height: 450 };
+
+function projectLatLng(lat, lng) {
+  const x = (Number(lng) + 180) / 360 * MAP_VIEW.width;
+  const y = (90 - Number(lat)) / 180 * MAP_VIEW.height;
+  return { x, y };
+}
 
 // A pin's size band reflects how many alumni it stands for, matching the legend.
 function mapClusterSize(n) {
@@ -482,6 +478,50 @@ function mapClusterSize(n) {
   if (n >= 100) return 'lg';
   if (n >= 10) return 'md';
   return 'sm';
+}
+
+/* The reference grid the pins are plotted on.
+
+   `<svg id="world-map-svg">` shipped empty in both portals and nothing ever
+   populated it: the "map" was a dark gradient rectangle with circles placed at
+   percentages someone had chosen by eye. This draws the graticule the
+   equirectangular projection is actually defined against — meridians every 30°,
+   parallels every 30°, with the equator and prime meridian picked out — so a
+   reader can see that a pin's position means something.
+
+   It is deliberately not a basemap. Adding coastlines would mean either a tile
+   provider (a new dependency, an API key and a licence) or hand-authored
+   country outlines, and geography drawn from memory is its own kind of
+   fabrication. What is drawn here is exact; what is missing is absent rather
+   than approximated. */
+function drawMapGraticule() {
+  const svg = document.getElementById('world-map-svg');
+  if (!svg) return;
+  const { width: W, height: H } = MAP_VIEW;
+  const parts = [];
+
+  for (let lng = -180; lng <= 180; lng += 30) {
+    const { x } = projectLatLng(0, lng);
+    const prime = lng === 0;
+    parts.push(`<line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${H}" ` +
+      `stroke="currentColor" stroke-width="${prime ? 1.4 : 0.6}" opacity="${prime ? 0.55 : 0.28}" />`);
+    if (lng !== -180 && lng !== 180) {
+      parts.push(`<text x="${(x + 4).toFixed(1)}" y="${H - 6}" font-size="11" ` +
+        `fill="currentColor" opacity="0.5">${lng}°</text>`);
+    }
+  }
+  for (let lat = -60; lat <= 60; lat += 30) {
+    const { y } = projectLatLng(lat, 0);
+    const equator = lat === 0;
+    parts.push(`<line x1="0" y1="${y.toFixed(1)}" x2="${W}" y2="${y.toFixed(1)}" ` +
+      `stroke="currentColor" stroke-width="${equator ? 1.4 : 0.6}" opacity="${equator ? 0.55 : 0.28}" />`);
+    parts.push(`<text x="6" y="${(y - 5).toFixed(1)}" font-size="11" ` +
+      `fill="currentColor" opacity="0.5">${lat}°</text>`);
+  }
+
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.innerHTML = parts.join('');
 }
 
 async function renderMapClusters() {
@@ -498,36 +538,54 @@ async function renderMapClusters() {
     return;
   }
 
+  const cities = res.cities || [];
   const countries = res.countries || [];
   set('map-stat-countries', String(countries.length));
-  set('map-stat-mapped', Number(res.located || 0).toLocaleString('en-IN'));
+  set('map-stat-mapped', Number(res.mapped || 0).toLocaleString('en-IN'));
   set('map-stat-bd', Number(res.in_bangladesh || 0).toLocaleString('en-IN'));
   set('map-stat-intl', Number(res.international || 0).toLocaleString('en-IN'));
   set('map-stat-chapters', String(res.chapters ?? 0));
 
-  const placed = [];
-  const unplaced = [];
-  countries.forEach(c => {
-    const pos = MAP_COUNTRY_POSITIONS[String(c.country).trim().toLowerCase()];
-    (pos ? placed : unplaced).push({ ...c, pos });
-  });
+  drawMapGraticule();
 
-  container.innerHTML = placed.map(c => `
-    <div class="map-cluster ${mapClusterSize(c.n)}" style="top:${c.pos.top}%;left:${c.pos.left}%"
-         title="${escapeHtml(c.country)}: ${c.n} alumni">${c.n}</div>
-  `).join('');
+  /* One pin per CITY, positioned from the coordinates the server sent with it.
+     Those coordinates belong to the city record, not to any alumnus — there is
+     no per-person coordinate anywhere in this system to plot. */
+  container.innerHTML = cities.map(c => {
+    const { x, y } = projectLatLng(c.latitude, c.longitude);
+    const left = (x / MAP_VIEW.width) * 100;
+    const top = (y / MAP_VIEW.height) * 100;
+    const label = `${c.city}, ${c.country}`;
+    return `
+      <div class="map-cluster ${mapClusterSize(c.n)}" style="top:${top.toFixed(2)}%;left:${left.toFixed(2)}%"
+           title="${escapeHtml(label)}: ${c.n} alumni"
+           role="img" aria-label="${escapeHtml(label)}, ${c.n} alumni">${c.n}</div>
+      <div class="map-city-label" style="top:${top.toFixed(2)}%;left:${left.toFixed(2)}%">${escapeHtml(c.city)}</div>`;
+  }).join('');
 
-  // Honest caption under the map: what is drawn, and what is real but not drawn.
+  /* Honest caption: what is drawn, and what is real but deliberately not drawn.
+     `unconfirmed` are the profiles whose location the pre-v13 hardcoded path
+     wrote. Plotting them would republish a fabrication, so they are counted
+     here and left off the map. */
   const note = document.getElementById('map-note');
   if (note) {
-    if (!countries.length) {
-      note.textContent = 'No alumni profile records a country yet, so there is nothing to place on the map.';
-    } else if (unplaced.length) {
-      note.textContent = `${placed.length} of ${countries.length} countries are shown. ` +
-        `Not positioned on this map: ${unplaced.map(c => `${c.country} (${c.n})`).join(', ')}.`;
+    const parts = [];
+    if (!cities.length) {
+      parts.push('No alumni have shared a city on the map yet, so there is nothing to plot.');
     } else {
-      note.textContent = `Showing every country with a recorded alumni location (${countries.length}).`;
+      parts.push(`${cities.length} ${cities.length === 1 ? 'city' : 'cities'}, ` +
+                 `${res.mapped} alumni who chose to appear on the map.`);
     }
+    if (res.unconfirmed) {
+      parts.push(`${res.unconfirmed} profile${res.unconfirmed === 1 ? '' : 's'} carry a location ` +
+                 `recorded automatically before it could be confirmed; ` +
+                 `${res.unconfirmed === 1 ? 'it is' : 'they are'} not shown here.`);
+    }
+    const hidden = (res.confirmed || 0) - (res.mapped || 0);
+    if (hidden > 0) {
+      parts.push(`${hidden} chose to keep their location off the map.`);
+    }
+    note.textContent = parts.join(' ');
   }
 }
 
@@ -595,8 +653,12 @@ async function generateGeoHeatmap() {
   const countries = res.countries || [];
   if (!countries.length) {
     el.innerHTML = renderEmptyState('<i data-lucide="globe" class="ui-icon"></i>',
-      'No locations recorded yet',
-      'Countries appear here once alumni profiles carry a country.');
+      'No locations shared yet',
+      res.unconfirmed
+        ? `${res.unconfirmed} profile(s) carry a location recorded automatically ` +
+          'before it could be confirmed. Countries appear here once alumni ' +
+          'choose their city and allow it on the map.'
+        : 'Countries appear here once alumni choose their city and allow it on the map.');
     if (window.lucide) lucide.createIcons();
     return;
   }

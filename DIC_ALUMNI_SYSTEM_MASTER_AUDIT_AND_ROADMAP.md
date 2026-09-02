@@ -135,7 +135,7 @@ Status legend: **REAL** (end-to-end working) · **PARTIAL** · **MOCK** (UI thea
 | Broadcasts | ✅ | ✅ | ✅ | ✅ in-app; SMS/Push/Email chips are metadata only | — | ✅ | **PARTIAL** |
 | Segmentation (audience count preview) | ✅ | ✅ | ✅ | ✅; not connected to broadcast | — | ✅ | **REAL** (scoped) |
 | Analytics / stats | ✅ | ✅ | ✅ | ✅ live numbers; no PDF/Excel export (buttons removed — grep: zero `exportPDF|exportExcel`) | partly | ✅ | **REAL** (narrow) |
-| Alumni map | ✅ | ✅ | ✅ | ✅ country-level; `cities` computed and never rendered | ✅ | — | **REAL** (narrow) |
+| Alumni map | ✅ | ✅ | ✅ | ⚠️ **superseded — see the Location Addendum at the end of this file** | ✅ | — | ~~**REAL** (narrow)~~ → **was FABRICATED**, rebuilt in Phase 5B |
 | Admin portal shell / nav / role gating | ✅ | ✅ | ✅ | ✅ | — | ✅ | **REAL** |
 | Administrator management (provision/edit/suspend/reset) | ✅ | ✅ | ✅ | ✅ | — | super only | **REAL** |
 | Moderation queue (chapters/stories) | ✅ | ✅ | ✅ | ✅ | — | ✅ | **REAL** |
@@ -762,3 +762,73 @@ The system may honestly be called **"DIC Alumni Platform — Production Ready"**
 ---
 
 *End of master audit. Companion deep-dive (original-PRD traceability, requirement-by-requirement) lives in the published "DIC Alumni TPRD" document from the same review series.*
+
+---
+
+# Location Addendum
+
+*Added 2026-09-02, after the dedicated location audit
+(`LOCATION_SYSTEM_AUDIT.md`) and the Phase 5B rebuild. The body of this audit is
+otherwise unchanged; only the row in §"Alumni map" is annotated.*
+
+## The correction
+
+This audit recorded the Alumni Map as:
+
+> **Previous:** "country-level; `cities` computed and never rendered" — classified **REAL (narrow)**.
+
+That description was accurate about the rendering and **materially understated
+the defect**. It read as a display gap in an otherwise working feature. The
+dedicated audit established something different:
+
+> **Actual:** Location was never collected from alumni at all. Both
+> account-creation paths — self-registration and bulk import — wrote a hardcoded
+> `'Dhaka','Bangladesh'` into every profile, the `country` column additionally
+> carried `DEFAULT 'Bangladesh'`, and no city or country input existed anywhere
+> in the product. The map was rendering a constant and presenting it as where
+> alumni live.
+
+The classification should have been **FABRICATED**, not REAL (narrow) — the same
+category this audit applied elsewhere to invented metrics. Supporting findings:
+the world map `<svg>` shipped empty and nothing populated it; pins were placed
+from a hand-written table of twenty countries with percentages chosen by eye;
+"Share My Location" was `onclick="this.classList.toggle('active')"` with no
+handler; two of the three location filter chips returned zero rows because
+`country` was not in any query; and there was no location privacy control.
+
+**Why it was missed:** the audit verified that the map's numbers matched the
+database, and they did. It did not ask where the database values came from. A
+figure can reconcile perfectly against a column that was itself fabricated —
+checking the pipeline is not the same as checking the source.
+
+## Current architecture (Phase 5B)
+
+| Element | State |
+|---|---|
+| Collection | City chosen from a controlled list in the profile editor; no free text |
+| Reference data | `location_places` — 99 cities (30 Bangladeshi, 69 international) with real coordinates |
+| Person coordinates | **None.** No `latitude`/`longitude` column exists on `alumni_profiles`, and a migration check enforces it |
+| Place coordinates | On `location_places` only — public knowledge about a city, not about a person |
+| Legacy data | Preserved, flagged `location_needs_confirmation`, excluded from the map, marked `(unconfirmed)` in the directory |
+| Privacy | `public` (visible + on the map) / `alumni` (visible, not mapped) / `private` (nobody). No staff bypass |
+| Address | Self-only, unconditionally; not a configurable setting |
+| Map | Equirectangular projection of real city coordinates over a drawn graticule. No library, no tiles, no API key, no licence |
+| Filters | `?country=`, `?city=`, `?placeId=`, all privacy-aware; chips built from real data |
+| Import | Resolves location against the reference list; reports unmatched rows; never substitutes a default |
+
+Full detail in `LOCATION_SYSTEM_AUDIT.md` and the Phase 5B entry of
+`PHASE_LOG.md`. Verified by `tests/phase5b_location.js` (122 checks).
+
+## A method note for future audits
+
+The general lesson is worth carrying forward beyond location: **for any
+user-supplied field, verify that a user can actually supply it.** This audit's
+source-of-truth suite compared every displayed figure against the database and
+found 65 of 65 matching — which was true, and did not reveal that one of the
+underlying columns was written by a constant. The check that would have caught
+it is asking, for each stored field, which code path writes it and whether a
+person is ever involved.
+
+Fields worth re-checking against that standard, none of which this addendum
+claims are defective: `industry`, `department`, `employment_type`,
+`current_status`, and the `color` assigned to each profile.

@@ -156,7 +156,7 @@ function showPage(page) {
 
   const ON_ENTER = {
     dashboard:      () => render(window.renderDashboard),
-    directory:      () => render(window.renderAlumniGrid),
+    directory:      () => { render(window.renderAlumniGrid); render(window.renderLocationFilters); },
     mentorship:     () => render(window.renderMentorships),
     donations:      () => { render(window.renderCampaignsEnhanced); render(window.renderMyDonations); },
     events:         () => render(window.renderEventsPage),

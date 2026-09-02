@@ -29,7 +29,13 @@ INSERT INTO alumni_profiles (
     'Alumni & Tech Lead', '1998-08-14', 'Male', 'O+', 'Full-stack software architect specializing in cloud systems, React, Node.js, and enterprise security.',
     'mohiuddin@dic.edu.bd', 'mohiuddin.dev@gmail.com', '+880 1712-345678', '+880 1812-345678',
     'Abdur Rahman', '+880 1912-345678', 'Father', 'House 42, Road 11, Dhanmondi, Dhaka-1209', 'Comilla, Bangladesh',
-    'Comilla', 'Dhaka', 'Comilla', 'Chittagong', 'Bangladesh', '1209', 'BSc in Computer Science & Engineering', '3.92 / 4.00', 2016,
+    -- hometown, city, district, division, country, postal_code.
+    -- city/district/division/country are seeded NULL on purpose. This row used
+    -- to carry 'Dhaka','Comilla','Chittagong','Bangladesh', which meant a
+    -- re-seed reintroduced exactly the fabricated location Phase 5B removed
+    -- from the registration and import paths. A demo profile may have a
+    -- hometown and an address; it should not claim a current city nobody chose.
+    'Comilla', NULL, NULL, NULL, NULL, '1209', 'BSc in Computer Science & Engineering', '3.92 / 4.00', 2016,
     'DIC Computer Club (President), Robotics Club', 'DIC Chairman Merit Scholarship (100% Waiver)', '1st Runner Up - National Programming Contest 2019',
     'AI-Based Crop Disease Detection (IEEE 2020)', 'Brain Station 23', 'Senior Software Engineer', 'Full-time',
     'Software & Tech', '5 Years', 'React, Node.js, PostgreSQL, AWS, Docker', 'AWS Certified Solutions Architect',

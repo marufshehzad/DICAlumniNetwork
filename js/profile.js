@@ -199,15 +199,44 @@ async function viewAlumniProfile(id) {
 function showEditProfile() { showToast('✏ Profile editor loading…'); }
 
 // ─── 6. COMPREHENSIVE 10-SECTION USER PROFILE HUB ─────────────
-/* Only the two fields the server actually gates. GET /api/alumni/:id applies
-   canSee() to email and mobile and to nothing else, so listing address, cgpa,
-   linkedin, github and company here described protections that did not exist.
-   Loaded from the profile row in hydrateUserProfile; these are only the
-   fallbacks for an account that has never saved a preference. */
-let PROFILE_PRIVACY_SETTINGS = {
-  mobile: 'private',
-  email: 'alumni'
-};
+/* The fields the server gates, and the levels it accepts, are no longer
+   restated here. PRIVACY_SCHEMA is fetched from GET /api/profile/privacy-schema
+   — the same privacy.js object the server validates writes against and gates
+   reads with — and every control on this page is rendered from it. A field
+   cannot appear in the interface unless the server enforces it, which is what
+   went wrong before: this file listed address, cgpa, linkedin and github as
+   protected when nothing gated them, and the address badge read an undefined
+   key and always printed "Alumni Only".
+
+   Values live in PROFILE_PRIVACY_SETTINGS, loaded from the profile row in
+   hydrateUserProfile(); the schema supplies the fallback for an account that
+   has never saved a preference. */
+let PRIVACY_SCHEMA = null;
+let PROFILE_PRIVACY_SETTINGS = {};
+
+/* Reference places for the Country → City selector, loaded once. */
+let LOCATION_PLACES = null;
+
+async function loadPrivacySchema() {
+  if (PRIVACY_SCHEMA) return PRIVACY_SCHEMA;
+  const res = await API.getPrivacySchema();
+  if (apiFailed(res)) return null;
+  PRIVACY_SCHEMA = res;
+  for (const f of res.fields) {
+    if (PROFILE_PRIVACY_SETTINGS[f.name] === undefined) {
+      PROFILE_PRIVACY_SETTINGS[f.name] = f.default;
+    }
+  }
+  return PRIVACY_SCHEMA;
+}
+
+async function loadLocationPlaces() {
+  if (LOCATION_PLACES) return LOCATION_PLACES;
+  const res = await API.getLocationPlaces();
+  if (apiFailed(res)) return null;
+  LOCATION_PLACES = res;
+  return LOCATION_PLACES;
+}
 
 /* This object used to be a complete, invented alumnus — Mohiuddin Rahman, ID
    DIC-2020-0847, born 14 August 1998, blood group O+, living at House 42 Road 11
@@ -292,8 +321,20 @@ async function hydrateUserProfile() {
     website: v(p.website)
   });
 
+  /* Structured location. place_id is the confirmed answer; the free-text
+     city/country beside it may still be a value the pre-v13 hardcoded path
+     wrote, which is what location_needs_confirmation records. */
+  Object.assign(FULL_USER_PROFILE, {
+    placeId: p.place_id === null || p.place_id === undefined ? '' : String(p.place_id),
+    placeCity: v(p.place_city),
+    placeCountry: v(p.place_country),
+    placeCountryCode: v(p.place_country_code),
+    locationNeedsConfirmation: p.location_needs_confirmation === true
+  });
+
   /* Field privacy comes from the row. Without this the controls always showed
      the defaults, so a saved preference looked lost on the next page load. */
+  await loadPrivacySchema();
   if (p.privacy_settings && typeof p.privacy_settings === 'object') {
     Object.assign(PROFILE_PRIVACY_SETTINGS, p.privacy_settings);
   }
@@ -372,9 +413,34 @@ function render10SectionProfile(filterSection = 'all') {
       <div class="profile-section-card">
         <div class="profile-section-header">
           <div class="profile-section-title"><i data-lucide="map-pin" class="ui-icon"></i> Section 3: Address &amp; Geographical Location</div>
-          <span class="privacy-badge ${priv.address}">${priv.address === 'private' ? '<i data-lucide="lock" class="ui-icon"></i> Private' : '<i data-lucide="users" class="ui-icon"></i> Alumni Only'}</span>
+          <!-- Two badges, because two different rules apply. The city is
+               governed by a setting the member controls; the address is not
+               governed by a setting at all - it is self-only, always, and the
+               badge states that instead of implying a switch. This slot used to
+               render the address privacy key, which nothing defined, so it
+               silently printed "Alumni Only" over a section nobody could see. -->
+          <span class="privacy-badge ${escapeHtml(PROFILE_PRIVACY_SETTINGS.location || 'alumni')}">
+            ${PROFILE_PRIVACY_SETTINGS.location === 'private'
+              ? '<i data-lucide="lock" class="ui-icon"></i> City private'
+              : PROFILE_PRIVACY_SETTINGS.location === 'public'
+                ? '<i data-lucide="globe" class="ui-icon"></i> City on the map'
+                : '<i data-lucide="users" class="ui-icon"></i> City to members'}
+          </span>
+          <span class="privacy-badge private"><i data-lucide="lock" class="ui-icon"></i> Address only you</span>
         </div>
+        ${p.locationNeedsConfirmation ? `
+          <div class="ev-callout mb-16" style="border-left:3px solid var(--amber);padding:10px 12px">
+            <strong>Please confirm your location.</strong>
+            The city on this profile was filled in automatically by an earlier
+            version of the platform, not by you, so it may well be wrong.
+            Choose your city in <em>Edit Profile</em> and it will be used on the
+            alumni map. Until you do, it is not counted anywhere.
+          </div>` : ''}
         <div class="field-grid-2 mb-16">
+          <div class="profile-field-row"><div><div class="field-label">Current City</div><div class="field-val">${
+            p.placeCity ? escapeHtml([p.placeCity, p.placeCountry].filter(Boolean).join(', '))
+                        : '<span style="color:var(--text-secondary)">Not set</span>'
+          }</div></div></div>
           <div class="profile-field-row"><div><div class="field-label">Present Address</div><div class="field-val">${p.presentAddress}</div></div></div>
           <div class="profile-field-row"><div><div class="field-label">Permanent Address</div><div class="field-val">${p.permanentAddress}</div></div></div>
           <div class="profile-field-row"><div><div class="field-label">Hometown &amp; District</div><div class="field-val">${p.hometown}, ${p.district}</div></div></div>
@@ -685,9 +751,56 @@ const OCCUPATION_OPTIONS = ['Student','Job','Business','Others'];
 const HSC_GROUP_OPTIONS = ['Science','Business Studies','Humanities'];
 const HSC_VERSION_OPTIONS = ['Bangla','English'];
 
+/* Country → City selector options, built from the reference places.
+   A city is chosen, not typed: that is what lets the map aggregate, the
+   directory filter and the import all mean the same thing by "Dhaka". */
+function locationSelectOptions(places, selectedId) {
+  if (!places || !places.countries || !places.countries.length) return '';
+  return places.countries.map(c => `
+    <optgroup label="${escapeHtml(c.country)}">
+      ${c.cities.map(city => `
+        <option value="${city.id}" ${String(selectedId) === String(city.id) ? 'selected' : ''}>
+          ${escapeHtml(city.city)}${city.division && city.division !== city.city
+            ? ' — ' + escapeHtml(city.division) : ''}
+        </option>`).join('')}
+    </optgroup>`).join('');
+}
+
+/* Privacy controls, rendered from the server's schema rather than a list kept
+   here. Adding a field on the server makes it appear here; removing one makes
+   it disappear. Neither side can describe a protection the other does not. */
+function privacyControlsMarkup() {
+  if (!PRIVACY_SCHEMA || !PRIVACY_SCHEMA.fields) return '';
+  const controls = PRIVACY_SCHEMA.fields.map(f => {
+    const current = PROFILE_PRIVACY_SETTINGS[f.name] ?? f.default;
+    return `
+      <div class="input-group">
+        <label class="input-label" for="pf-priv-${escapeHtml(f.name)}">Who can see my ${escapeHtml(f.label.toLowerCase())}</label>
+        <select id="pf-priv-${escapeHtml(f.name)}" class="form-select" data-privacy-field="${escapeHtml(f.name)}">
+          ${f.levels.map(l => `
+            <option value="${escapeHtml(l)}" ${current === l ? 'selected' : ''}>
+              ${escapeHtml((f.optionLabels && f.optionLabels[l]) || l)}
+            </option>`).join('')}
+        </select>
+        ${f.help ? `<div class="field-hint" style="font-size:12px;color:var(--text-secondary);margin-top:4px">${escapeHtml(f.help)}</div>` : ''}
+      </div>`;
+  }).join('');
+  return controls + `
+    <div class="field-hint" style="font-size:12px;color:var(--text-secondary);margin-top:8px">
+      <i data-lucide="lock" class="ui-icon"></i> ${escapeHtml(PRIVACY_SCHEMA.selfOnlyNote || '')}
+    </div>`;
+}
+
 async function showEditProfileV2() {
   const p = await API.getMyProfile();
   if (apiFailed(p)) { showToast(`⚠ ${p?.error || 'Could not load your profile.'}`); return; }
+
+  // Both are needed before the form is built, and both are cached after the
+  // first open.
+  const [places] = await Promise.all([loadLocationPlaces(), loadPrivacySchema()]);
+  if (p.privacy_settings && typeof p.privacy_settings === 'object') {
+    Object.assign(PROFILE_PRIVACY_SETTINGS, p.privacy_settings);
+  }
 
   const sel = (id, label, options, value, allowBlank = true) => `
     <div class="input-group">
@@ -728,28 +841,43 @@ async function showEditProfileV2() {
       ${txt('pf-organization', 'Current Organization / Institution', p.current_company, 'text', 'e.g. NZ Tex Group')}
       ${txt('pf-designation', 'Current Designation', p.job_title, 'text', 'e.g. AGM')}
 
+      <!-- Location. Until Phase 5B there was no city or country input on this
+           form at all: the value came from a hardcoded 'Dhaka','Bangladesh' in
+           the registration and import queries, and nobody could correct it. -->
+      <div class="modal-section-title mt-16">Location</div>
+      ${p.location_needs_confirmation ? `
+        <div class="ev-callout mb-16" style="border-left:3px solid var(--amber);padding:10px 12px;font-size:13px">
+          The city currently on your profile${p.city ? ` (<strong>${escapeHtml(p.city)}</strong>)` : ''}
+          was filled in automatically by an earlier version of this platform,
+          not by you. Please choose your actual city below.
+        </div>` : ''}
+      <div class="input-group">
+        <label class="input-label" for="pf-placeId">Current City</label>
+        <select id="pf-placeId" class="form-select">
+          <option value="">Prefer not to say</option>
+          ${locationSelectOptions(places, p.place_id)}
+        </select>
+        <div class="field-hint" style="font-size:12px;color:var(--text-secondary);margin-top:4px">
+          Your current city helps us show alumni distribution on the map.
+          Your street address is never shown to anyone.
+        </div>
+      </div>
+      <div class="field-grid-2">
+        ${txt('pf-hometown', 'Hometown', p.hometown, 'text', 'e.g. Cumilla')}
+        ${txt('pf-postalCode', 'Postal Code', p.postal_code, 'text', 'e.g. 1209')}
+      </div>
+
       <div class="modal-section-title mt-16">Contact &amp; Links</div>
       ${txt('pf-presentAddress', 'Present Address', p.present_address)}
+      ${txt('pf-permanentAddress', 'Permanent Address', p.permanent_address)}
       ${txt('pf-facebook', 'Facebook Profile Link', p.facebook, 'url')}
       ${txt('pf-linkedin', 'LinkedIn', p.linkedin, 'url')}
 
-      <!-- Field privacy. Two fields and two levels, because those are the ones
-           GET /api/alumni/:id enforces. "Members" rather than "public": there is
-           no anonymous access to a profile, so every viewer is signed in. -->
-      <div class="input-group">
-        <label class="input-label">Who can see my email address</label>
-        <select id="pf-priv-email" class="form-select">
-          <option value="public" ${PROFILE_PRIVACY_SETTINGS.email !== 'private' ? 'selected' : ''}>Signed-in DIC members</option>
-          <option value="private" ${PROFILE_PRIVACY_SETTINGS.email === 'private' ? 'selected' : ''}>Only me and administrators</option>
-        </select>
-      </div>
-      <div class="input-group">
-        <label class="input-label">Who can see my mobile number</label>
-        <select id="pf-priv-mobile" class="form-select">
-          <option value="public" ${PROFILE_PRIVACY_SETTINGS.mobile !== 'private' ? 'selected' : ''}>Signed-in DIC members</option>
-          <option value="private" ${PROFILE_PRIVACY_SETTINGS.mobile === 'private' ? 'selected' : ''}>Only me and administrators</option>
-        </select>
-      </div>
+      <!-- Field privacy, rendered from GET /api/profile/privacy-schema — the
+           same definition the server validates against and gates reads with.
+           These were three hand-maintained copies before, and they disagreed. -->
+      <div class="modal-section-title mt-16">Privacy</div>
+      ${privacyControlsMarkup()}
 
       <div class="login-error hidden" id="pf-error" role="alert"></div>
       <button type="submit" class="btn btn-primary btn-full mt-16">Save Profile</button>
@@ -772,14 +900,24 @@ async function handleSaveProfileV2(e) {
     organization: v('pf-organization'),
     designation: v('pf-designation'),
     presentAddress: v('pf-presentAddress'),
+    permanentAddress: v('pf-permanentAddress'),
+    hometown: v('pf-hometown'),
+    postalCode: v('pf-postalCode'),
+    /* Empty string means "prefer not to say", which the server turns into a
+       cleared location rather than leaving the old value in place — otherwise
+       a member could never withdraw a location once given. */
+    placeId: v('pf-placeId') === '' ? null : v('pf-placeId'),
     facebook: v('pf-facebook'),
     linkedin: v('pf-linkedin'),
-    // Validated server-side against a whitelist of fields and levels; an
-    // unknown key or value is rejected rather than silently dropped.
-    privacySettings: {
-      email: v('pf-priv-email') || PROFILE_PRIVACY_SETTINGS.email,
-      mobile: v('pf-priv-mobile') || PROFILE_PRIVACY_SETTINGS.mobile
-    }
+    /* Collected from whatever controls the schema rendered, so a field added
+       on the server is sent without this function being touched. Validated
+       server-side against the same schema; an unknown key or value is rejected
+       rather than silently dropped. */
+    privacySettings: Object.fromEntries(
+      [...document.querySelectorAll('[data-privacy-field]')]
+        .map(el => [el.dataset.privacyField, el.value])
+        .filter(([, value]) => value)
+    )
   });
 
   if (apiFailed(res)) {

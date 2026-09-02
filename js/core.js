@@ -229,6 +229,7 @@ function initApp() {
 
   // Shared between both portals.
   warm(window.renderAlumniGrid);
+  warm(window.renderLocationFilters);
   warm(window.renderMentorships);
   warm(window.renderCampaignsEnhanced);
   warm(window.renderEventsPage);

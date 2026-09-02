@@ -1489,8 +1489,29 @@ body.password-change-required .topbar-actions {
   background-image: radial-gradient(circle at 30% 40%, rgba(11, 56, 151,0.1) 0%, transparent 50%),
     radial-gradient(circle at 70% 60%, rgba(0,212,170,0.08) 0%, transparent 50%);
 }
-.world-svg { width: 100%; height: 100%; opacity: 0.2; }
+/* The graticule is drawn with stroke="currentColor" by drawMapGraticule(), so
+   the colour is set here rather than in the script. It inherited the page text
+   colour before, which is dark, and the grid was invisible on the dark map
+   canvas. Opacity is applied per-line in the script so the equator and prime
+   meridian can be emphasised. */
+.world-svg { width: 100%; height: 100%; color: #7fb2ff; }
+/* Marks a location the old hardcoded path wrote rather than the member. */
+.loc-unconfirmed { color: var(--amber); font-size: 11px; font-weight: 600; }
+
 .map-clusters { position: absolute; inset: 0; }
+/* City name beside each pin. Pins are positioned by projecting the city's real
+   latitude and longitude, so the label sits where the place actually is. */
+.map-city-label {
+  position: absolute;
+  transform: translate(14px, -50%);
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.82);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+  white-space: nowrap;
+  pointer-events: none;
+}
+@media (max-width: 640px) { .map-city-label { display: none; } }
 .map-cluster {
   position: absolute;
   border-radius: 50%;
