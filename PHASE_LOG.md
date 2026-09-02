@@ -868,3 +868,97 @@ profile API across 11 cities in 7 countries, then deleted (0 remaining;
 ### Next phase
 
 **Phase 5C has not been started.**
+
+---
+
+## Phase 5C — Whole-system post-location audit
+
+**Status:** COMPLETE (audit only)
+**Date:** 2026-09-02
+**Commit:** `PHASE_5C_COMMIT`
+**Parent:** `5cfbc5e`
+**Code changed:** none. **Schema changed:** none. **Migrations run:** none.
+**Business data changed:** none.
+**Output:** `POST_PHASE5B_WHOLE_SYSTEM_AUDIT.md`
+
+One side effect is disclosed rather than glossed: establishing the role matrix
+required signing in as all five roles, which stamps `last_login_at` and resets
+failed-login counters on those seeded accounts, and the rate-limit probe
+recorded five failed sign-ins for a non-existent address. Nothing else was
+written.
+
+### Why
+
+To establish the current truth across all fifty subsystems after Phases 5A and
+5B, without trusting earlier phase reports — including this log.
+
+### Method
+
+Repository and schema inspection; extraction of all **138 routes** with their
+guards; a live **6-role × 29-endpoint** authorization matrix; IDOR,
+privilege-escalation, SQL-injection and parameter-tampering probes; table- and
+column-level dead-code sweeps; a data-honesty trace of every displayed number to
+its source; the full regression battery; and browser inspection of both portals
+at 360/390/430/768/1024/1280.
+
+### What it found
+
+**24 findings: 2 P0, 6 P1, 10 P2, 6 P3.**
+
+Seventeen of eighteen Master Audit findings are **resolved and verified live**,
+not merely claimed — including the deletion purge, observed erasing a real user,
+and the scheduler and backup, observed running.
+
+Two findings block handover:
+
+- **`P5C-001` — stored XSS in the bulk-import preview.** Fifteen CSV field
+  interpolations render into `innerHTML` with no escaping, in an ADMIN_ROLES
+  session. Proved live with a benign `<em>` marker, which became a DOM element.
+  No previous phase caught this.
+- **`P5C-002` — the README documents a product that does not exist.** All 21
+  claimed profile fields are absent from the 64 real columns, and three claimed
+  privacy levels ("Same Batch", "Connections", "Teachers") exist nowhere. Phase
+  3 corrected this file's payment and production claims but never revisited its
+  feature list.
+
+Authorization itself is sound: **36 of 36** probes behaved correctly, injection
+returned zero rows, `limit` is capped and negative `offset` clamped, and rate
+limiting returns 429 from the sixth failed sign-in.
+
+### Tests run
+
+All green, unchanged by this audit: phase0_sec 40, phase0_role 9, acceptance 90,
+qa1 87, qa2 129, qa3 37, portal 21, phase2b 61, phase2c 72, phase3 124, phase4
+147, phase5a 76, tamper 53, `tests/phase5a_security.js` 70,
+`tests/phase5b_location.js` 142 — **1,158 checks, 0 failed** — plus 78 + 33
+source-truth metrics with 0 mismatches, and `verify-audit-chain` PASS through
+852 entries.
+
+### Browser verification
+
+Both portals at six widths. No horizontal document overflow anywhere, zero
+console errors, all 11 alumni and 15 staff pages rendering. One real defect:
+the events "All" filter chip is unreachable at 360 px (`P5C-013`).
+
+Two intermediate measurements were discarded because browser-pane geometry reads
+as zero when a tab is backgrounded; they were re-taken with an explicit viewport
+and only the re-taken figures are recorded.
+
+### Deliberately not done
+
+No fix was implemented, including for `P5C-001`. This was an audit phase, and
+mixing a security fix into it would have made the audit's own baseline moving.
+The recommended next phase is a small one closing `P5C-001`, `P5C-002`,
+`P5C-003` and `P5C-018`.
+
+### Readiness
+
+**Not ready for handover:** two engineering items, both small, estimated under a
+day. After those, the remaining gap is institutional — SMTP, domains, secrets
+and named people, all in `PRODUCTION_DEPENDENCIES.md` Part 2 — and cannot be
+closed from inside the repository.
+
+### Next phase
+
+**Phase 5D has not been started.** Its recommended contents are in the audit's
+prioritised roadmap.
