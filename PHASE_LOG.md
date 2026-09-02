@@ -391,7 +391,7 @@ test scans — was recorded and **left in place**.
 
 **Status:** COMPLETE
 **Date:** 2026-09-02
-**Commit:** `PHASE_5B_COMMIT`
+**Commit:** `d07c516` (`d07c516733ed95d5544c04019f7b4bb5b78ca1f2`) — recorded by the follow-up commit, since a commit cannot contain its own hash
 **Parent:** `b9c881a` (Phase 5A + location audit)
 
 ### Why location became a phase of its own
