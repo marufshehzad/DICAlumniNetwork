@@ -269,15 +269,15 @@
         </div>
       
         <div class="glass-card mt-16">
-          <div class="card-header"><h3 class="card-title">Verification Queue</h3></div>
+          <div class="card-header"><h2 class="card-title">Verification Queue</h2></div>
           <div id="verification-queue"></div>
         </div>
         <div class="glass-card mt-16">
-          <div class="card-header"><h3 class="card-title">Bulk Import</h3></div>
+          <div class="card-header"><h2 class="card-title">Bulk Import</h2></div>
           <div id="bulk-import-panel"></div>
         </div>
         <div class="glass-card mt-16">
-          <div class="card-header"><h3 class="card-title">Custom Profile Fields</h3></div>
+          <div class="card-header"><h2 class="card-title">Custom Profile Fields</h2></div>
           <div id="custom-field-manager"></div>
         </div>
       </div>
@@ -369,7 +369,7 @@
                  holds - requests that previously had no read path at all. -->
             <div class="jobs-sidebar">
               <div class="glass-card">
-                <div class="card-header"><h3 class="card-title">Referral Requests</h3></div>
+                <div class="card-header"><h2 class="card-title">Referral Requests</h2></div>
                 <div id="job-referrals-list"></div>
               </div>
             </div>
@@ -395,7 +395,7 @@
           <div class="mentorship-main">
             <div class="glass-card">
               <div class="card-header">
-                <h3 class="card-title">My Active Connections</h3>
+                <h2 class="card-title">My Active Connections</h2>
                 <!-- read a literal 4 against a mentorships table holding no rows -->
                 <span class="badge-count" id="mentorship-active-count">&mdash;</span>
               </div>
@@ -403,7 +403,7 @@
             </div>
             <div class="glass-card mt-16">
               <div class="card-header">
-                <h3 class="card-title">Pending Requests</h3>
+                <h2 class="card-title">Pending Requests</h2>
                 <!-- read a literal "3 pending" -->
                 <span class="card-badge amber" id="mentorship-pending-count">&mdash;</span>
               </div>
@@ -419,7 +419,7 @@
                  actually run are listed now. -->
             <div class="glass-card mt-16">
               <div class="card-header">
-                <h3 class="card-title">How mentors are suggested</h3>
+                <h2 class="card-title">How mentors are suggested</h2>
                 <span class="card-badge indigo">4 comparisons</span>
               </div>
               <div class="matching-criteria" id="matching-criteria"></div>
@@ -429,7 +429,7 @@
           <div class="mentorship-sidebar">
             <div class="glass-card">
               <div class="card-header">
-                <h3 class="card-title">Suggested Mentors</h3>
+                <h2 class="card-title">Suggested Mentors</h2>
                 <span class="card-badge teal">By shared profile</span>
               </div>
               <div id="suggested-mentors"></div>
@@ -440,7 +440,7 @@
                  numbers were invented. Replaced by the caller's real counts. -->
             <div class="glass-card mt-16">
               <div class="card-header">
-                <h3 class="card-title">My mentorship activity</h3>
+                <h2 class="card-title">My mentorship activity</h2>
               </div>
               <div id="mentorship-activity"></div>
             </div>
@@ -486,7 +486,7 @@
         </div>
         <div class="campaigns-grid" id="campaigns-grid"></div>
         <div class="glass-card mt-16">
-          <div class="card-header"><h3 class="card-title"><i data-lucide="receipt" class="ui-icon"></i> My pledges &amp; donations</h3></div>
+          <div class="card-header"><h2 class="card-title"><i data-lucide="receipt" class="ui-icon"></i> My pledges &amp; donations</h2></div>
           <div id="my-donations"></div>
         </div>
       </div>
@@ -504,7 +504,7 @@
         </div>
         <div class="chapters-layout">
           <div class="chapters-tree glass-card">
-            <div class="card-header"><h3 class="card-title">Chapter Hierarchy</h3></div>
+            <div class="card-header"><h2 class="card-title">Chapter Hierarchy</h2></div>
             <div id="chapter-tree"></div>
           </div>
           <div class="chapter-detail glass-card" id="chapter-detail">
@@ -538,16 +538,16 @@
         <!-- Analytics content panels -->
         <div id="analytics-panel-main" class="analytics-grid">
           <div class="glass-card span-2 analytics-chart-card">
-            <div class="card-header"><h3 class="card-title">Engagement Trend</h3></div>
+            <div class="card-header"><h2 class="card-title">Engagement Trend</h2></div>
             <div class="chart-frame"><canvas id="analytics-chart" height="200"></canvas></div>
           </div>
           <div class="glass-card analytics-metrics-card">
-            <div class="card-header"><h3 class="card-title">Key Metrics</h3></div>
+            <div class="card-header"><h2 class="card-title">Key Metrics</h2></div>
             <div id="analytics-metrics"></div>
           </div>
           <div class="glass-card mt-16 span-3">
             <div class="card-header">
-              <h3 class="card-title">Alumni Geographic Distribution</h3>
+              <h2 class="card-title">Alumni Geographic Distribution</h2>
               <span class="card-badge teal">Global</span>
             </div>
             <div class="geo-heatmap" id="geo-heatmap"></div>
@@ -556,23 +556,23 @@
         <!-- Mentorship Health panel -->
         <div id="analytics-panel-mentorship" class="hidden">
           <div class="glass-card" style="margin-bottom:16px">
-            <div class="card-header"><h3 class="card-title">Mentorship Health Scorecard</h3><span class="card-badge teal" id="mentorship-pair-count">—</span></div>
+            <div class="card-header"><h2 class="card-title">Mentorship Health Scorecard</h2><span class="card-badge teal" id="mentorship-pair-count">—</span></div>
             <div id="mentorship-health-grid"></div>
           </div>
           <div class="analytics-grid analytics-split-2">
-            <div class="glass-card"><div class="card-header"><h3 class="card-title">Session Frequency</h3></div><canvas id="session-freq-chart" height="180"></canvas></div>
-            <div class="glass-card"><div class="card-header"><h3 class="card-title">Outcome Distribution</h3></div><div id="outcome-distribution"></div></div>
+            <div class="glass-card"><div class="card-header"><h2 class="card-title">Session Frequency</h2></div><canvas id="session-freq-chart" height="180"></canvas></div>
+            <div class="glass-card"><div class="card-header"><h2 class="card-title">Outcome Distribution</h2></div><div id="outcome-distribution"></div></div>
           </div>
         </div>
         <!-- Event ROI panel -->
         <div id="analytics-panel-eventROI" class="hidden">
           <div class="glass-card" style="margin-bottom:16px">
-            <div class="card-header"><h3 class="card-title">Event ROI Analysis</h3><span class="card-badge indigo">FY 2026</span></div>
+            <div class="card-header"><h2 class="card-title">Event ROI Analysis</h2><span class="card-badge indigo">FY 2026</span></div>
             <div id="event-roi-table"></div>
           </div>
           <div class="analytics-grid analytics-split-2">
-            <div class="glass-card"><div class="card-header"><h3 class="card-title">Revenue vs Cost</h3></div><canvas id="roi-chart" height="200"></canvas></div>
-            <div class="glass-card"><div class="card-header"><h3 class="card-title">ROI Summary</h3></div><div id="roi-summary"></div></div>
+            <div class="glass-card"><div class="card-header"><h2 class="card-title">Revenue vs Cost</h2></div><canvas id="roi-chart" height="200"></canvas></div>
+            <div class="glass-card"><div class="card-header"><h2 class="card-title">ROI Summary</h2></div><div id="roi-summary"></div></div>
           </div>
         </div>
       </div>
@@ -623,7 +623,7 @@
         </div>
         <div class="compliance-grid" id="compliance-grid"></div>
         <div class="glass-card mt-16">
-          <div class="card-header"><h3 class="card-title">Identity Vault</h3></div>
+          <div class="card-header"><h2 class="card-title">Identity Vault</h2></div>
           <div id="nid-vault-panel"></div>
         </div>
       </div>
@@ -660,7 +660,7 @@
           </div>
         </div>
         <div class="glass-card">
-          <div class="card-header"><h3 class="card-title">Hash-Chained Audit Trail</h3><span class="card-badge teal">Append-Only</span></div>
+          <div class="card-header"><h2 class="card-title">Hash-Chained Audit Trail</h2><span class="card-badge teal">Append-Only</span></div>
           <!-- Distinct from the dashboard's own #audit-log panel: two elements
                sharing that id left this page permanently empty. -->
           <div id="audit-log-page"></div>

@@ -70,7 +70,7 @@ function renderStaffElsewhereNotice(page) {
       </div>
     </div>
     <div class="glass-card">
-      <div class="card-header"><h3 class="card-title"><i data-lucide="shield" class="ui-icon"></i> Staff tools are on the staff portal</h3></div>
+      <div class="card-header"><h2 class="card-title"><i data-lucide="shield" class="ui-icon"></i> Staff tools are on the staff portal</h2></div>
       <p style="font-size:13px;color:var(--text-secondary);margin:0 0 14px">
         This is the alumni site. Administration, moderation, event management,
         reports and compliance are on the staff portal, which is a separate
@@ -116,21 +116,21 @@ function renderAlumniDashboard(page) {
     <div class="dashboard-split">
       <div class="dashboard-left">
         <div class="glass-card">
-          <div class="card-header"><h3 class="card-title"><i data-lucide="handshake" class="ui-icon"></i> Recommended DIC Alumni Connections</h3></div>
+          <div class="card-header"><h2 class="card-title"><i data-lucide="handshake" class="ui-icon"></i> Recommended DIC Alumni Connections</h2></div>
           <div id="dash-alumni-grid" class="alumni-grid"></div>
         </div>
         <div class="glass-card mt-16">
-          <div class="card-header"><h3 class="card-title"><i data-lucide="calendar" class="ui-icon"></i> Upcoming DIC Events</h3></div>
+          <div class="card-header"><h2 class="card-title"><i data-lucide="calendar" class="ui-icon"></i> Upcoming DIC Events</h2></div>
           <div id="dash-events-grid" class="events-grid"></div>
         </div>
       </div>
       <div class="dashboard-right">
         <div class="glass-card">
-          <div class="card-header"><h3 class="card-title"><i data-lucide="trophy" class="ui-icon"></i> Top Donors</h3></div>
+          <div class="card-header"><h2 class="card-title"><i data-lucide="trophy" class="ui-icon"></i> Top Donors</h2></div>
           <div id="donor-leaderboard"></div>
         </div>
         <div class="glass-card mt-16">
-          <div class="card-header"><h3 class="card-title"><i data-lucide="vote" class="ui-icon"></i> DIC Live Poll</h3></div>
+          <div class="card-header"><h2 class="card-title"><i data-lucide="vote" class="ui-icon"></i> DIC Live Poll</h2></div>
           <div id="dash-active-poll"></div>
         </div>
       </div>
@@ -437,8 +437,8 @@ function initAnalyticsChart() {
         }
       },
       scales: {
-        x: { grid: { color: 'rgba(11, 56, 151, 0.08)' }, ticks: { color: '#64748B', font: { size: 11, family: 'Inter' } } },
-        y: { grid: { color: 'rgba(11, 56, 151, 0.08)' }, ticks: { color: '#64748B', font: { size: 11, family: 'Inter' } } }
+        x: { grid: { color: 'rgba(11, 56, 151, 0.08)' }, ticks: { color: '#5D6B7F', font: { size: 11, family: 'Inter' } } },
+        y: { grid: { color: 'rgba(11, 56, 151, 0.08)' }, ticks: { color: '#5D6B7F', font: { size: 11, family: 'Inter' } } }
       }
     }
   });

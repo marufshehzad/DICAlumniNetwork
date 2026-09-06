@@ -31,13 +31,13 @@ function renderModeratorDashboard(page) {
     <div class="dashboard-split">
       <div class="dashboard-left">
         <div class="glass-card">
-          <div class="card-header"><h3 class="card-title"><i data-lucide="search" class="ui-icon"></i> Pending Alumni Verification Queue</h3></div>
+          <div class="card-header"><h2 class="card-title"><i data-lucide="search" class="ui-icon"></i> Pending Alumni Verification Queue</h2></div>
           <div id="verification-queue"></div>
         </div>
       </div>
       <div class="dashboard-right">
         <div class="glass-card">
-          <div class="card-header"><h3 class="card-title"><i data-lucide="clipboard-list" class="ui-icon"></i> Moderation Queue</h3></div>
+          <div class="card-header"><h2 class="card-title"><i data-lucide="clipboard-list" class="ui-icon"></i> Moderation Queue</h2></div>
           <div id="dash-moderation-queue"></div>
         </div>
       </div>
@@ -108,13 +108,13 @@ function renderDeptAdminDashboard(page) {
     <div class="dashboard-split">
       <div class="dashboard-left">
         <div class="glass-card">
-          <div class="card-header"><h3 class="card-title"><i data-lucide="users" class="ui-icon"></i> Alumni by Department</h3></div>
+          <div class="card-header"><h2 class="card-title"><i data-lucide="users" class="ui-icon"></i> Alumni by Department</h2></div>
           <div id="dept-breakdown"></div>
         </div>
       </div>
       <div class="dashboard-right">
         <div class="glass-card">
-          <div class="card-header"><h3 class="card-title"><i data-lucide="clipboard-list" class="ui-icon"></i> Verification Queue</h3></div>
+          <div class="card-header"><h2 class="card-title"><i data-lucide="clipboard-list" class="ui-icon"></i> Verification Queue</h2></div>
           <div id="verification-queue"></div>
         </div>
       </div>
@@ -186,13 +186,13 @@ function renderUnivAdminDashboard(page) {
     <div class="dashboard-split mt-16">
       <div class="dashboard-left">
         <div class="glass-card">
-          <div class="card-header"><h3 class="card-title"><i data-lucide="chart-column" class="ui-icon"></i> Alumni by Batch</h3></div>
+          <div class="card-header"><h2 class="card-title"><i data-lucide="chart-column" class="ui-icon"></i> Alumni by Batch</h2></div>
           <div id="univ-batch-breakdown"></div>
         </div>
       </div>
       <div class="dashboard-right">
         <div class="glass-card">
-          <div class="card-header"><h3 class="card-title"><i data-lucide="trophy" class="ui-icon"></i> Top Benefactors</h3></div>
+          <div class="card-header"><h2 class="card-title"><i data-lucide="trophy" class="ui-icon"></i> Top Benefactors</h2></div>
           <div id="donor-leaderboard"></div>
         </div>
       </div>
@@ -236,13 +236,13 @@ function renderSuperAdminDashboard(page) {
     <div class="dashboard-split mt-16">
       <div class="dashboard-left">
         <div class="glass-card">
-          <div class="card-header"><h3 class="card-title"><i data-lucide="scroll-text" class="ui-icon"></i> Hash-Chained Security Audit Trail</h3><button class="btn btn-outline btn-sm" onclick="showPage('audit')">View Full Audit Log</button></div>
+          <div class="card-header"><h2 class="card-title"><i data-lucide="scroll-text" class="ui-icon"></i> Hash-Chained Security Audit Trail</h2><button class="btn btn-outline btn-sm" onclick="showPage('audit')">View Full Audit Log</button></div>
           <div id="audit-log"></div>
         </div>
       </div>
       <div class="dashboard-right">
         <div class="glass-card">
-          <div class="card-header"><h3 class="card-title"><i data-lucide="database" class="ui-icon"></i> Platform Totals</h3></div>
+          <div class="card-header"><h2 class="card-title"><i data-lucide="database" class="ui-icon"></i> Platform Totals</h2></div>
           <div id="super-totals"></div>
         </div>
       </div>
@@ -413,7 +413,7 @@ async function renderOfflineSyncPanel() {
   el.innerHTML = `
     <div class="glass-card">
       <div class="card-header">
-        <h3 class="card-title">Sync Ledger</h3>
+        <h2 class="card-title">Sync Ledger</h2>
         <span class="card-badge teal">sync_mutations</span>
       </div>
       <p style="font-size:12px;color:var(--text-secondary);margin:0 0 12px">
@@ -427,7 +427,7 @@ async function renderOfflineSyncPanel() {
       </div>
     </div>
     <div class="glass-card">
-      <div class="card-header"><h3 class="card-title">Recorded Mutations</h3><span class="badge-count">${rows.length}</span></div>
+      <div class="card-header"><h2 class="card-title">Recorded Mutations</h2><span class="badge-count">${rows.length}</span></div>
       ${rows.length === 0
         ? renderEmptyState('<i data-lucide="refresh-cw" class="ui-icon"></i>', 'No mutations recorded yet',
             'Rows appear here as registrations and check-ins are submitted.')
@@ -520,7 +520,7 @@ function renderBulkImportPanel() {
     <div class="glass-card">
       <div class="card-header">
         <div>
-          <h3 class="card-title"><i data-lucide="download" class="ui-icon"></i> Bulk User Import &amp; Automatic Profile Generation</h3>
+          <h2 class="card-title"><i data-lucide="download" class="ui-icon"></i> Bulk User Import &amp; Automatic Profile Generation</h2>
           <!-- "or Excel" and "email notifications" were both untrue: the parser
                accepts CSV only (README says so), and no email is sent by an
                import — every account signs in with the batch temporary
@@ -554,7 +554,7 @@ function renderBulkImportPanel() {
     <!-- HISTORICAL IMPORT AUDIT LOG -->
     <div class="glass-card mt-16">
       <div class="card-header">
-        <h3 class="card-title"><i data-lucide="scroll-text" class="ui-icon"></i> Import Activity History &amp; Audit Trail</h3>
+        <h2 class="card-title"><i data-lucide="scroll-text" class="ui-icon"></i> Import Activity History &amp; Audit Trail</h2>
         <span class="card-badge teal">Append-Only</span>
       </div>
       <div class="table-scroll">
@@ -1029,7 +1029,7 @@ async function renderSegmentationPanel() {
   el.innerHTML = `
     <div class="glass-card">
       <div class="card-header">
-        <h3 class="card-title"><i data-lucide="target" class="ui-icon"></i> Alumni Audience Segmentation</h3>
+        <h2 class="card-title"><i data-lucide="target" class="ui-icon"></i> Alumni Audience Segmentation</h2>
         <span class="card-badge teal">${opt.total.toLocaleString('en-IN')} profiles</span>
       </div>
       <p style="font-size:12px;color:var(--text-secondary);margin:0 0 12px">
@@ -1151,7 +1151,7 @@ async function renderModerationPanel() {
   el.innerHTML = `
     <div class="glass-card mb-16">
       <div class="card-header">
-        <h3 class="card-title"><i data-lucide="school" class="ui-icon"></i> Pending Chapter Creation Approvals (${pendingChapters.length})</h3>
+        <h2 class="card-title"><i data-lucide="school" class="ui-icon"></i> Pending Chapter Creation Approvals (${pendingChapters.length})</h2>
         <span class="card-badge ${pendingChapters.length > 0 ? 'amber' : 'teal'}">${pendingChapters.length} Pending Review</span>
       </div>
       ${pendingChapters.length === 0 ? `
@@ -1185,7 +1185,7 @@ async function renderModerationPanel() {
 
     <div class="glass-card">
       <div class="card-header">
-        <h3 class="card-title"><i data-lucide="pen-line" class="ui-icon"></i> Pending Story &amp; News Approvals (${pendingStories.length})</h3>
+        <h2 class="card-title"><i data-lucide="pen-line" class="ui-icon"></i> Pending Story &amp; News Approvals (${pendingStories.length})</h2>
         <span class="card-badge ${pendingStories.length > 0 ? 'amber' : 'teal'}">${pendingStories.length} Pending Review</span>
       </div>
       ${pendingStories.length === 0 ? `

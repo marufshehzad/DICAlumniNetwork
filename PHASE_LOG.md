@@ -2564,6 +2564,72 @@ not claimed. It is unchanged code that was already correct on inspection.
 - **Two "Icon Emoji" fields** — chapters and news let a user pick an emoji as
   content. That is a product feature, not UI chrome.
 
+### Follow-up: the design hook's findings
+
+A design-lint hook raised 54 findings after the phase commit. Triaged rather
+than taken at face value — but unlike the emoji and modal reports earlier in
+this phase, **most of the substantive ones were real**, and they were real for
+a reason worth recording: the browser sweep measures what is *rendered and
+visible*, so anything living in a state the sweep never reached was invisible
+to it.
+
+Fixed:
+
+- **`.cipher-box` was a dark panel.** Teal ink on `rgba(0,0,0,0.4)` over a
+  light card — about **1.06:1**, and a dark panel besides, which section 2
+  rules out. It only renders once an identity value has been encrypted, which
+  is why the Compliance page measured clean. Now a light panel at **4.92:1**.
+- **The mobile bottom navigation was 9px, and 10px at two other breakpoints.**
+  An earlier phase set a 12px mobile floor but exempted "nav labels … they
+  carry no reading text". Home / Directory / Mentorship / Events / Profile are
+  exactly reading text, and they are the primary navigation on a phone. All
+  breakpoints now sit at the 11px functional floor; the five items still fit
+  across 360px with nothing clipped. My own new test caught the two extra
+  breakpoints after I had fixed only the one the hook rendered.
+- **Every page skipped a heading level.** Both portals went `h1.page-title`
+  straight to `h3.card-title`, with **no `<h2>` anywhere** — 68 card titles
+  across six files. They are now `h2`. `.card-title` is styled by class, so
+  nothing moved visually, and Event v5's own headings were left alone because
+  `.ev-review-head h3` depends on the tag.
+- **Nine infinite animations ignored `prefers-reduced-motion`.** The two
+  existing blocks covered only Event v5 and the toast. Decorative motion — the
+  login orbs, the ID hologram, the progress shimmer, three status dots — now
+  stops. Spinners and skeletons deliberately keep moving: "this is working" is
+  information, not decoration.
+- **`--text-muted` (#64748B) failed on every off-white panel**: 4.47:1 on
+  `#F6F8FB`, 4.34:1 on `--bg-deep`. Darkened to **#5D6B7F**, which clears 4.5:1
+  on all four grounds in use. Event v5 had **already made this exact change**
+  for itself — `--ev-ink-muted: #5B6B7F`, with the same 4.34:1 measurement in
+  its comment — which is good evidence the token was the problem rather than
+  any one rule. Two hardcoded copies (`.world-svg`, the Chart.js tick labels)
+  were pointed at the token.
+- **`--purple` as 11–12px ink** on the RBAC table ground, 4.44:1 →
+  `--purple-text` at 5.76:1.
+- **Four large accent figures cleared the 3:1 large-text bar by 0.01**
+  (3.01:1). Earlier in this phase I argued they should keep their vivid colour
+  because the 3:1 threshold applies and they pass. A 0.3% margin is not a pass
+  worth defending, so they take the text-weight teal too. The same applies to
+  the `.brand-name` wordmark's lighter gradient stop.
+
+Both portals were re-measured afterwards: **25 pages, zero contrast failures,
+zero horizontal overflow.** `tests/phase7a_ui.js` grew to **69 checks** pinning
+all of the above, and the suite total is **1,742 passed, 0 failed across 24
+suites**.
+
+Recorded as sanctioned exceptions in `.impeccable/config.json`, each with its
+reason: `tiny-text` (the house 12px-mobile / 11px-desktop-metadata policy,
+with the stricter functional-text rule left active and now reporting zero),
+`cramped-padding` (the topbar centres its children by height, not padding),
+`clipped-overflow-container` (`overflow-x` only, plus the login orbs),
+`gradient-text` (two brand wordmarks, not headings), `radial-spotlight-glow`,
+`pulsing-dot` and `marquee` (all now reduced-motion aware), and
+`layout-transition` (`scaleX` would distort the funnel bar's inner label).
+
+Four findings were deliberately **not** suppressed, because they are judgements
+about the app's established visual and prose identity rather than defects, and
+changing them would mean redesigning it: `codex-grid-background`, `dark-glow`,
+`gpt-thin-border-wide-shadow` and `em-dash-overuse`.
+
 ### Next phase
 
 **Phase 7B.** Phase 7A's remit was consistency, accessibility, mobile and

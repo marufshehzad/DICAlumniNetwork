@@ -49,7 +49,7 @@ async function renderAdministrationPage() {
 
     <div class="glass-card">
       <div class="card-header">
-        <h3 class="card-title"><i data-lucide="users" class="ui-icon"></i> Administrators</h3>
+        <h2 class="card-title"><i data-lucide="users" class="ui-icon"></i> Administrators</h2>
         <button class="btn btn-primary btn-sm" onclick="showCreateAdministrator()">+ Create Administrator</button>
       </div>
       ${_adminDirectory.length === 0

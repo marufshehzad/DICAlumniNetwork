@@ -48,12 +48,13 @@
   --teal-text: #00786A;
   --amber-text: #92400E;
   --green-text: #047857;
-  --red-text: #B91C1C;   /* 5.3-5.9:1 on the red tints; --red measured 3.97-4.38 */
+  --red-text: #B91C1C;
+  --purple-text: #7E22CE;  /* --purple measured 4.44:1 on the RBAC table ground */   /* 5.3-5.9:1 on the red tints; --red measured 3.97-4.38 */
   --red: #DC2626;
 
   --text-primary: #0F172A;
   --text-secondary: #334155;
-  --text-muted: #64748B;
+  --text-muted: #5D6B7F;  /* #64748B measured 4.47:1 on the #F6F8FB panels and 4.34:1 on --bg-deep */
 
   --bkash: #E2136E;
   --nagad: #FF6B00;
@@ -402,7 +403,7 @@ body {
   box-shadow: 0 0 20px rgba(11, 56, 151,0.3);
 }
 .brand-logo-circle.small { width: 36px; height: 36px; border-radius: 10px; }
-.brand-name { font-size: 24px; font-weight: 800; background: linear-gradient(135deg, var(--primary-light), var(--teal)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.brand-name { font-size: 24px; font-weight: 800; background: linear-gradient(135deg, var(--primary-light), var(--teal-text)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
 .brand-tag { font-size: 10px; font-weight: 700; color: var(--text-muted); letter-spacing: 1px; text-transform: uppercase; }
 
 .login-card { width: 100%; }
@@ -1469,7 +1470,7 @@ body.password-change-required .topbar-actions {
 .chapter-detail-sub { font-size: 13px; color: var(--text-secondary); }
 .chapter-stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
 .chapter-stat { text-align: center; padding: 14px; background: var(--bg-glass); border: 1px solid var(--border-glass); border-radius: var(--radius-sm); }
-.chapter-stat-val { font-size: 22px; font-weight: 800; color: var(--teal); }
+.chapter-stat-val { font-size: 22px; font-weight: 800; color: var(--teal-text); }
 .chapter-stat-lab { font-size: 11px; color: var(--text-muted); }
 .chapter-member { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border-glass); font-size: 13px; }
 .chapter-member:last-child { border-bottom: none; }
@@ -1535,7 +1536,7 @@ body.password-change-required .topbar-actions {
 /* The graticule is drawn with stroke="currentColor" by drawMapGraticule(), so
    the colour is set here rather than in the script. Opacity is applied
    per-line so the equator and prime meridian can be emphasised. */
-.world-svg { width: 100%; height: 100%; color: #64748b; }
+.world-svg { width: 100%; height: 100%; color: var(--text-muted); }
 
 /* Marks a location the old hardcoded path wrote rather than the member. */
 .loc-unconfirmed { color: var(--amber-text); font-size: 11px; font-weight: 600; }
@@ -1681,7 +1682,7 @@ body.password-change-required .topbar-actions {
 .map-stats { display: grid; grid-template-columns: repeat(5, 1fr); text-align: center; }
 .map-stat-item { padding: 16px; border-right: 1px solid var(--border-glass); }
 .map-stat-item:last-child { border-right: none; }
-.map-stat-val { font-size: 22px; font-weight: 800; color: var(--teal); }
+.map-stat-val { font-size: 22px; font-weight: 800; color: var(--teal-text); }
 .map-stat-lab { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 
 /* .location-toggle / .toggle-switch / .toggle-thumb / .toggle-label were the
@@ -1782,7 +1783,7 @@ body.password-change-required .topbar-actions {
 .perm-view { color: var(--text-muted); font-weight: 600; font-size: 11px; }
 .perm-none { color: rgba(255,255,255,0.15); font-size: 11px; }
 .perm-limited { color: var(--amber-text); font-weight: 600; font-size: 11px; }
-.perm-audit { color: var(--purple); font-weight: 700; font-size: 11px; }
+.perm-audit { color: var(--purple-text); font-weight: 700; font-size: 11px; }
 .perm-donate { color: var(--primary-light); font-weight: 600; font-size: 11px; }
 .rbac-table tr:hover td { background: rgba(255,255,255,0.02); }
 
@@ -1919,7 +1920,7 @@ textarea.form-input { resize: vertical; min-height: 100px; }
 }
 .bottom-nav-item.active { color: var(--primary-light); }
 .bnav-icon { font-size: 20px; }
-.bnav-label { font-size: 10px; }
+.bnav-label { font-size: 11px; }  /* 11px is the floor for functional text */
 
 /* ─── EMPTY STATE ─── */
 .empty-state { text-align: center; padding: 40px; }
@@ -2093,7 +2094,7 @@ textarea.form-input { resize: vertical; min-height: 100px; }
     gap: 3px;
     color: var(--text-secondary);
     text-decoration: none;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 600;
     min-height: 48px;
     transition: var(--transition);
@@ -2971,9 +2972,13 @@ textarea.form-input { resize: vertical; min-height: 100px; }
   .otp-box { width: 38px; height: 42px; font-size: 16px; }
 
   /* ── Bottom Nav ── */
-  .bottom-nav-item { font-size: 9px; }
+  /* 9px on the primary mobile navigation. The 12px floor below exempts
+     "nav labels" as carrying no reading text, but these are words a person
+     reads to navigate. 11px is the floor for functional text; the five
+     items still fit across 360px. */
+  .bottom-nav-item { font-size: 11px; }
   .bnav-icon { font-size: 16px; }
-  .bnav-label { font-size: 9px; }
+  .bnav-label { font-size: 11px; }
 
   /* ── Amount Grid: 2 columns ── */
   .amount-grid { grid-template-columns: repeat(2, 1fr); }
@@ -3039,7 +3044,7 @@ textarea.form-input { resize: vertical; min-height: 100px; }
   border: 1px solid rgba(192,132,252,0.25);
   border-radius: var(--radius-sm);
   font-size: 12px;
-  color: var(--purple);
+  color: var(--purple-text);
   font-weight: 600;
   margin-bottom: 12px;
   animation: fadeIn 0.3s ease;
@@ -3232,7 +3237,7 @@ textarea.form-input { resize: vertical; min-height: 100px; }
 .offline-sync-panel { display: flex; flex-direction: column; gap: 16px; }
 .sync-overview-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .sync-stat-card { background: var(--bg-glass); border: 1px solid var(--border-glass); border-radius: var(--radius-sm); padding: 16px; text-align: center; }
-.sync-stat-val { font-size: 24px; font-weight: 800; color: var(--teal); }
+.sync-stat-val { font-size: 24px; font-weight: 800; color: var(--teal-text); }
 .sync-stat-label { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 
 .sync-payload-bar-wrap { margin: 8px 0; }
@@ -3429,9 +3434,10 @@ textarea.form-input { resize: vertical; min-height: 100px; }
 .vault-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .vault-title { font-size: 14px; font-weight: 700; color: var(--text-primary); }
 .cipher-box {
-  font-family: monospace; font-size: 11px; color: var(--teal);
-  background: rgba(0,0,0,0.4); padding: 10px 14px; border-radius: 6px;
-  border: 1px dashed rgba(0,212,170,0.3); word-break: break-all; margin: 8px 0;
+  /* was teal on a 40% black panel: about 1.06:1, and a dark panel at that. */
+  font-family: monospace; font-size: 11px; color: var(--teal-text);
+  background: var(--bg-deep); padding: 10px 14px; border-radius: 6px;
+  border: 1px dashed rgba(0,120,106,0.35); word-break: break-all; margin: 8px 0;
 }
 .vault-meta { display: flex; gap: 16px; font-size: 11px; color: var(--text-muted); }
 
@@ -3453,7 +3459,7 @@ textarea.form-input { resize: vertical; min-height: 100px; }
   border: 1px solid rgba(0,212,170,0.25); border-radius: var(--radius-sm);
   display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;
 }
-.target-val { font-size: 24px; font-weight: 900; color: var(--teal); }
+.target-val { font-size: 24px; font-weight: 900; color: var(--teal-text); }
 .target-label { font-size: 12px; color: var(--text-secondary); }
 
 /* ─── EVENT WAITLIST ─── */
@@ -5829,3 +5835,30 @@ textarea.form-input { resize: vertical; min-height: 100px; }
   white-space: nowrap;
 }
 .role-display.drawer { width: 100%; justify-content: center; }
+
+/* ─── REDUCED MOTION ─────────────────────────────────────────
+   Decorative motion stops here. The two blocks further up cover Event v5
+   and the toast; everything else in the app animated regardless of the
+   preference. Spinners and skeletons are deliberately left running: they
+   report that work is in flight, which is information rather than
+   decoration. Status dots keep their colour and their label and simply
+   stop pulsing. */
+@media (prefers-reduced-motion: reduce) {
+  .login-orb,
+  .id-hologram,
+  .progress-fill::after,
+  .live-dot,
+  .tenant-dot,
+  .typing-dots span,
+  .campaign-live-indicator,
+  .nav-badge.new {
+    animation: none !important;
+  }
+  /* Nothing should slide, grow or fade across the page on its own. */
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* …but keep the two that report work in progress. */
+  .sis-spinner, .skeleton-line, .ev-chrome-skeleton { animation-play-state: running; }
+}

@@ -344,6 +344,48 @@ head('=== I. One name per concept ===');
        .every(r => map[0].includes(r + ':')));
 }
 
+/* ─── J. the design hook's real findings ───────────────────── */
+head('=== J. Legibility, motion and outline (design hook follow-up) ===');
+{
+  // the primary mobile navigation was 9px
+  const navSizes = [...CSS.matchAll(/\.(?:bottom-nav-item|bnav-label)\s*\{[^}]*font-size:\s*(\d+(?:\.\d+)?)px/g)]
+    .map(m => parseFloat(m[1]));
+  ok('mobile navigation labels are at or above the 11px functional floor',
+     navSizes.length > 0 && navSizes.every(s => s >= 11), navSizes.join(','));
+
+  // --text-muted is used on off-white panels, not just on white
+  const muted = toRGB(vars['--text-muted']);
+  for (const ground of ['#FFFFFF', '#F8FAFC', '#F6F8FB', '#F1F5F9']) {
+    const r = ratio(muted, toRGB(ground));
+    ok(`--text-muted clears 4.5:1 on ${ground}`, r >= 4.5, r.toFixed(2));
+  }
+
+  // the cipher box was a dark panel with teal ink on a light card
+  const cipher = CSS.match(/\.cipher-box\s*\{[^}]*\}/);
+  ok('the cipher box is a light panel', !!cipher && !/rgba\(0,0,0,0\.[34]\)/.test(cipher[0]));
+
+  // decorative motion answers the preference
+  const rm = [...CSS.matchAll(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/g)]
+    .map(m => m[1]).join('\n');
+  ok('there is a reduced-motion block beyond the Event v5 ones', /login-orb/.test(rm));
+  for (const sel of ['.login-orb', '.id-hologram', '.progress-fill::after', '.live-dot', '.tenant-dot'])
+    ok(`${sel} stops under prefers-reduced-motion`, rm.includes(sel));
+  ok('spinners and skeletons keep moving, because they report work in flight',
+     /animation-play-state:\s*running/.test(rm) && /\.sis-spinner/.test(rm));
+
+  // heading levels must not skip: the page h1 is followed by h2 cards
+  for (const f of ['index.html', 'admin.html']) {
+    const s = src(f);
+    ok(`${f} has no h3 card title jumping the h1`, !/<h3\s+class="card-title"/.test(s));
+    ok(`${f} uses h2 for its cards`, /<h2\s+class="card-title"/.test(s));
+  }
+  const jsSkips = ['js/admin.js', 'js/administration.js', 'js/dashboard.js', 'js/operations.js']
+    .filter(f => /<h3\s+class="card-title"/.test(src(f)));
+  ok('no rendered card title is an h3', jsSkips.length === 0, jsSkips.join(' '));
+  // Event v5 keeps its own headings, and .ev-review-head h3 depends on the tag
+  ok('Event v5 headings were left alone', /<h3 class="ev-subhead">/.test(src('js/events.js')));
+}
+
 /* ─── result ───────────────────────────────────────────────── */
 console.log('\n' + '='.repeat(60));
 console.log(`  ${pass} passed, ${fail} failed`);

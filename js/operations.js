@@ -102,7 +102,7 @@ async function renderOperationsPanel() {
 
   el.innerHTML = `
     <div class="glass-card">
-      <div class="card-header"><h3 class="card-title"><i data-lucide="timer" class="ui-icon"></i> Scheduled jobs</h3></div>
+      <div class="card-header"><h2 class="card-title"><i data-lucide="timer" class="ui-icon"></i> Scheduled jobs</h2></div>
       ${s.scheduler && s.scheduler.configured ? '' :
         `<div class="login-note" style="display:block;margin-bottom:10px">
            <strong>No scheduler credential is configured.</strong> Nothing can trigger these jobs,
@@ -115,12 +115,12 @@ async function renderOperationsPanel() {
     </div>
 
     <div class="glass-card mt-16">
-      <div class="card-header"><h3 class="card-title"><i data-lucide="database-backup" class="ui-icon"></i> Backup</h3></div>
+      <div class="card-header"><h2 class="card-title"><i data-lucide="database-backup" class="ui-icon"></i> Backup</h2></div>
       ${backupCard}
     </div>
 
     <div class="glass-card mt-16">
-      <div class="card-header"><h3 class="card-title"><i data-lucide="mail" class="ui-icon"></i> Email delivery</h3></div>
+      <div class="card-header"><h2 class="card-title"><i data-lucide="mail" class="ui-icon"></i> Email delivery</h2></div>
       <div class="broadcast-entry">
         <div style="flex:1">
           <div style="font-weight:700;font-size:13px">Password reset delivery</div>
@@ -136,7 +136,7 @@ async function renderOperationsPanel() {
     </div>
 
     <div class="glass-card mt-16">
-      <div class="card-header"><h3 class="card-title"><i data-lucide="user-x" class="ui-icon"></i> Account deletions</h3></div>
+      <div class="card-header"><h2 class="card-title"><i data-lucide="user-x" class="ui-icon"></i> Account deletions</h2></div>
       <div class="broadcast-entry">
         <div style="flex:1">
           <div style="font-weight:700;font-size:13px">${d.pending} request(s) in their grace period</div>

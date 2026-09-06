@@ -8,6 +8,78 @@
         "value": "inter",
         "createdAt": "2026-09-02T11:41:19.593Z",
         "reason": "Pre-existing platform typography: Inter predates all remediation phases, is loaded via a deliberate async media=print swap with a noscript fallback, and is Daffodil International College's branding. Changing the institution's typeface is not mine to decide inside a location-system phase."
+      },
+      {
+        "rule": "tiny-text",
+        "value": "*",
+        "files": [
+          "*.html"
+        ],
+        "createdAt": "2026-09-06T16:52:08.058Z",
+        "reason": "House type policy from an earlier phase: 12px floor on mobile (enforced with !important lifts at styles.css:4229+), 11px for desktop secondary metadata only. The stricter undersized-ui-text rule stays active and now reports 0, so no functional text sits below the 11px floor."
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "*.html"
+        ],
+        "createdAt": "2026-09-06T16:52:09.230Z",
+        "reason": "False positive: .topbar sets padding 0 24px but has a fixed height with align-items:center, so children are vertically centred, not flush against the border. Confirmed visually."
+      },
+      {
+        "rule": "clipped-overflow-container",
+        "value": "*",
+        "files": [
+          "*.html"
+        ],
+        "createdAt": "2026-09-06T16:52:10.457Z",
+        "reason": "Two cases, both deliberate: body sets overflow-x:hidden only (the standard horizontal-scroll guard; vertical overflow stays visible so popovers escape), and .login-screen clips its two decorative .login-orb gradients. Zero horizontal overflow measured at all seven widths."
+      },
+      {
+        "rule": "gradient-text",
+        "value": "*",
+        "files": [
+          "*.html"
+        ],
+        "createdAt": "2026-09-06T16:52:11.723Z",
+        "reason": "The two uses are brand wordmarks (.brand-name, .id-logo), not headings or metrics. Both now paint dark stops, #0B3897 to #00786A, measured 5.39:1 at the lighter end."
+      },
+      {
+        "rule": "radial-spotlight-glow",
+        "value": "*",
+        "files": [
+          "*.html"
+        ],
+        "createdAt": "2026-09-06T16:52:12.910Z",
+        "reason": "The two login-screen orbs are pre-existing brand visuals, not a Phase 7A addition, and are now disabled under prefers-reduced-motion."
+      },
+      {
+        "rule": "pulsing-dot",
+        "value": "*",
+        "files": [
+          "*.html"
+        ],
+        "createdAt": "2026-09-06T16:52:14.095Z",
+        "reason": "Live, tenant and typing indicators. The state they report is also carried by colour and by the adjacent label, and all three now stop under prefers-reduced-motion."
+      },
+      {
+        "rule": "marquee",
+        "value": "*",
+        "files": [
+          "*.html"
+        ],
+        "createdAt": "2026-09-06T16:52:15.325Z",
+        "reason": "The .progress-fill shimmer is decorative and now stops under prefers-reduced-motion."
+      },
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "*.html"
+        ],
+        "createdAt": "2026-09-06T16:52:16.568Z",
+        "reason": "All six are progress and funnel fills. transform:scaleX would distort .funnel-fill's left-padded inner label and its gradient, so animating width is the correct implementation here."
       }
     ]
   }
