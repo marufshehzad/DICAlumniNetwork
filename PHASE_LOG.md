@@ -2371,7 +2371,7 @@ hosting model, work through the checklist, and commission the review.
 
 **Status:** **COMPLETE**
 **Date:** 2026-09-06
-**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Commit:** `b6d1e8c`
 **Parent:** `e2d22b3`
 
 Scope was the interface only. No route, guard, role, permission, event, ticket,
