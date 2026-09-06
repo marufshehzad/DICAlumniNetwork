@@ -43,8 +43,8 @@ async function renderAdministrationPage() {
   el.innerHTML = `
     <div class="sync-overview-grid mb-16">
       <div class="sync-stat-card"><div class="sync-stat-val">${_adminDirectory.length}</div><div class="sync-stat-label">Administrators</div></div>
-      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--teal)">${active}</div><div class="sync-stat-label">Active</div></div>
-      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--amber)">${suspended}</div><div class="sync-stat-label">Suspended</div></div>
+      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--teal-text)">${active}</div><div class="sync-stat-label">Active</div></div>
+      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--amber-text)">${suspended}</div><div class="sync-stat-label">Suspended</div></div>
     </div>
 
     <div class="glass-card">
@@ -84,7 +84,7 @@ function adminRow(a) {
       <td>${escapeHtml(a.phone || '—')}</td>
       <td><span class="card-badge ${isSuper ? 'amber' : 'teal'}">${escapeHtml(a.roleLabel || a.role)}</span></td>
       <td><span class="card-badge ${a.status === 'active' ? 'teal' : ''}"
-                style="${a.status === 'suspended' ? 'background:rgba(255,140,66,0.18);color:var(--amber)' : ''}">
+                style="${a.status === 'suspended' ? 'background:rgba(255,140,66,0.18);color:var(--amber-text)' : ''}">
             ${a.status === 'active' ? 'Active' : 'Suspended'}</span>
           ${a.mustChangePassword ? '<div style="font-size:10px;color:var(--text-muted);margin-top:3px">must change password</div>' : ''}</td>
       <td style="font-size:11px">${a.lastLoginAt ? escapeHtml(formatRelativeTime(a.lastLoginAt)) : '<span style="color:var(--text-muted)">never</span>'}</td>
@@ -140,25 +140,25 @@ function showCreateAdministrator() {
     </div>
     <form onsubmit="submitCreateAdministrator(event)">
       <div class="field-grid-2">
-        <div class="input-group"><label class="input-label">Full name *</label>
+        <div class="input-group"><label class="input-label" for="na-name">Full name *</label>
           <input type="text" id="na-name" class="form-input" required /></div>
-        <div class="input-group"><label class="input-label">Designation *</label>
+        <div class="input-group"><label class="input-label" for="na-designation">Designation *</label>
           <input type="text" id="na-designation" class="form-input" placeholder="e.g. Vice Principal" required /></div>
       </div>
       <div class="field-grid-2">
-        <div class="input-group"><label class="input-label">Email *</label>
+        <div class="input-group"><label class="input-label" for="na-email">Email *</label>
           <input type="email" id="na-email" class="form-input" required /></div>
-        <div class="input-group"><label class="input-label">Phone</label>
+        <div class="input-group"><label class="input-label" for="na-phone">Phone</label>
           <input type="tel" id="na-phone" class="form-input" placeholder="+880 …" /></div>
       </div>
       <div class="field-grid-2">
-        <div class="input-group"><label class="input-label">Department</label>
+        <div class="input-group"><label class="input-label" for="na-department">Department</label>
           <input type="text" id="na-department" class="form-input" placeholder="DIC Administration" /></div>
-        <div class="input-group"><label class="input-label">Photo URL</label>
+        <div class="input-group"><label class="input-label" for="na-photo">Photo URL</label>
           <input type="url" id="na-photo" class="form-input" placeholder="https://…" /></div>
       </div>
       <div class="input-group">
-        <label class="input-label">Permission role *</label>
+        <label class="input-label" for="na-role">Permission role *</label>
         <select id="na-role" class="form-select" required>
           <option value="">Choose a permission role…</option>${roles}
         </select>
@@ -206,12 +206,12 @@ function showTemporaryPassword(name, password, note) {
       For <strong>${escapeHtml(name)}</strong>. ${escapeHtml(note)}
     </p>
     <div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:18px;font-weight:700;
-                letter-spacing:1px;margin:12px 0;color:var(--teal);user-select:all;word-break:break-all">${escapeHtml(password)}</div>
+                letter-spacing:1px;margin:12px 0;color:var(--teal-text);user-select:all;word-break:break-all">${escapeHtml(password)}</div>
     <div class="chapter-empty-note">
       Shown once. It is not stored anywhere you can read it back, and closing
       this dialog loses it. Pass it to the holder over a channel you trust.
     </div>
-  `, { dismissable: true });
+  `);
 }
 
 /* ─── EDIT ───────────────────────────────────────────────── */
@@ -228,19 +228,19 @@ function showEditAdministrator(id) {
     </div>
     <form onsubmit="submitEditAdministrator(event, ${a.id})">
       <div class="field-grid-2">
-        <div class="input-group"><label class="input-label">Full name *</label>
+        <div class="input-group"><label class="input-label" for="ea-name">Full name *</label>
           <input type="text" id="ea-name" class="form-input" value="${escapeHtml(a.name)}" required /></div>
-        <div class="input-group"><label class="input-label">Designation *</label>
+        <div class="input-group"><label class="input-label" for="ea-designation">Designation *</label>
           <input type="text" id="ea-designation" class="form-input" value="${escapeHtml(a.designation || '')}" required /></div>
       </div>
       <div class="field-grid-2">
-        <div class="input-group"><label class="input-label">Phone</label>
+        <div class="input-group"><label class="input-label" for="ea-phone">Phone</label>
           <input type="tel" id="ea-phone" class="form-input" value="${escapeHtml(a.phone || '')}" /></div>
-        <div class="input-group"><label class="input-label">Department</label>
+        <div class="input-group"><label class="input-label" for="ea-department">Department</label>
           <input type="text" id="ea-department" class="form-input" value="${escapeHtml(a.department || '')}" /></div>
       </div>
       <div class="input-group">
-        <label class="input-label">Permission role *</label>
+        <label class="input-label" for="ea-role">Permission role *</label>
         <select id="ea-role" class="form-select" required>${roles}</select>
       </div>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">

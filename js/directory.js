@@ -249,7 +249,7 @@ function renderAlumniCard(a) {
     <div class="alumni-card" onclick="viewAlumniProfile(${a.id})">
       <div class="alumni-card-top">
         <div class="alumni-avatar ${a.verified ? 'verified-ring' : ''}" style="background: linear-gradient(135deg, ${color}40, ${color}20);">
-          <span style="color:${color}">${escapeHtml(a.initials)}</span>
+          <span style="color:${readableInk(color)}">${escapeHtml(a.initials)}</span>
           ${a.verified ? '<div class="verified-badge-icon"><i data-lucide="check" class="ui-icon"></i></div>' : ''}
         </div>
         <div class="alumni-card-info">

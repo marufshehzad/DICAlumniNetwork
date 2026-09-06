@@ -25,7 +25,7 @@ function setLoginBusy(busy) {
   const btn = document.getElementById('login-submit-btn');
   if (!btn) return;
   btn.disabled = busy;
-  btn.textContent = busy ? 'Signing in…' : 'Sign In to DIC →';
+  btn.textContent = busy ? 'Signing in…' : 'Sign In to DIC';
 }
 
 async function handleLoginSubmit(e) {
@@ -329,7 +329,7 @@ async function handleSignupSubmit(e) {
     bloodGroup: document.getElementById('signup-blood-group').value
   });
 
-  btn.disabled = false; btn.textContent = 'Create Account →';
+  btn.disabled = false; btn.textContent = 'Create Account';
 
   if (!result || result.error) { showSignupError(result?.error || 'Registration failed.'); return; }
 
@@ -352,15 +352,15 @@ function showChangePasswordModal(forced = false) {
       Please choose your own before continuing.</p>` : ''}
     <form onsubmit="handleChangePassword(event)">
       <div class="input-group">
-        <label class="input-label">Current Password</label>
+        <label class="input-label" for="cp-current">Current Password</label>
         <input type="password" id="cp-current" class="form-input" autocomplete="current-password" required />
       </div>
       <div class="input-group">
-        <label class="input-label">New Password</label>
+        <label class="input-label" for="cp-new">New Password</label>
         <input type="password" id="cp-new" class="form-input" autocomplete="new-password" minlength="8" required />
       </div>
       <div class="input-group">
-        <label class="input-label">Confirm New Password</label>
+        <label class="input-label" for="cp-new2">Confirm New Password</label>
         <input type="password" id="cp-new2" class="form-input" autocomplete="new-password" minlength="8" required />
       </div>
       <div class="login-error hidden" id="cp-error" role="alert"></div>

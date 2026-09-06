@@ -72,7 +72,7 @@ async function renderSpotlightAlumni() {
 
   el.innerHTML = spotlights.map(a => `
     <div class="spotlight-card">
-      <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,${a.color}40,${a.color}20);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:${a.color};flex-shrink:0">${escapeHtml(a.initials)}</div>
+      <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,${a.color}40,${a.color}20);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:${readableInk(a.color)};flex-shrink:0">${escapeHtml(a.initials)}</div>
       <div class="spotlight-info">
         <div class="spotlight-name">${escapeHtml(a.name)}</div>
         <div class="spotlight-sub">${escapeHtml(a.company || "—")} · Batch ${a.batch || "—"}</div>
@@ -98,10 +98,10 @@ function showCreateNewsModal() {
       <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
     </div>
     <form onsubmit="handleCreateStorySubmit(event)">
-      <div class="input-group"><label class="input-label">Headline / Title</label><input type="text" id="story-create-title" class="form-input" placeholder="e.g., DIC AI Lab Launch 2026" required /></div>
-      <div class="input-group"><label class="input-label">Category</label><select id="story-create-category" class="form-select"><option>Alumni Spotlight</option><option>Achievement</option><option>Announcement</option><option>Career News</option></select></div>
-      <div class="input-group"><label class="input-label">Emoji Icon</label><input type="text" id="story-create-emoji" class="form-input" value="🌟" required /></div>
-      <div class="input-group"><label class="input-label">Story Content</label><textarea id="story-create-content" class="form-input" rows="5" placeholder="Write your story here…" required></textarea></div>
+      <div class="input-group"><label class="input-label" for="story-create-title">Headline / Title</label><input type="text" id="story-create-title" class="form-input" placeholder="e.g., DIC AI Lab Launch 2026" required /></div>
+      <div class="input-group"><label class="input-label" for="story-create-category">Category</label><select id="story-create-category" class="form-select"><option>Alumni Spotlight</option><option>Achievement</option><option>Announcement</option><option>Career News</option></select></div>
+      <div class="input-group"><label class="input-label" for="story-create-emoji">Emoji Icon</label><input type="text" id="story-create-emoji" class="form-input" value="🌟" required /></div>
+      <div class="input-group"><label class="input-label" for="story-create-content">Story Content</label><textarea id="story-create-content" class="form-input" rows="5" placeholder="Write your story here…" required></textarea></div>
       <button type="submit" class="btn btn-primary btn-full mt-16"> Submit Story for Review</button>
     </form>
   `);

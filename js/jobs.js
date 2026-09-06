@@ -62,25 +62,25 @@ function showPostJobModal(job) {
       <i data-lucide="lock" class="ui-icon"></i> Alumni-only posting — visible to verified DIC alumni.
     </div>
     <form onsubmit="handlePostJobSubmit(event, ${editing ? job.id : 'null'})">
-      <div class="input-group"><label class="input-label">Job Title</label>
+      <div class="input-group"><label class="input-label" for="job-title">Job Title</label>
         <input type="text" id="job-title" class="form-input" placeholder="e.g. Senior Software Engineer" value="${editing ? escapeHtml(job.title) : ''}" required /></div>
-      <div class="input-group"><label class="input-label">Company</label>
+      <div class="input-group"><label class="input-label" for="job-company">Company</label>
         <input type="text" id="job-company" class="form-input" placeholder="Your company name" value="${editing ? escapeHtml(job.company) : ''}" required /></div>
       <div class="field-grid-2">
-        <div class="input-group"><label class="input-label">Type</label>
+        <div class="input-group"><label class="input-label" for="job-type">Type</label>
           <select id="job-type" class="form-select">
             ${['fulltime:Full-time','parttime:Part-time','internship:Internship','contract:Contract']
               .map(o => { const [v,l] = o.split(':');
                 return `<option value="${v}" ${editing && job.type === v ? 'selected' : ''}>${l}</option>`; }).join('')}
           </select></div>
-        <div class="input-group"><label class="input-label">Location</label>
+        <div class="input-group"><label class="input-label" for="job-location">Location</label>
           <!-- value="Dhaka" was prefilled, so an unedited posting recorded
                Dhaka whether or not the role was there. Blank by default. -->
           <input type="text" id="job-location" class="form-input" placeholder="e.g. Chattogram, or Remote" value="${editing ? escapeHtml(job.location || '') : ''}" /></div>
       </div>
-      <div class="input-group"><label class="input-label">Salary Range</label>
+      <div class="input-group"><label class="input-label" for="job-salary">Salary Range</label>
         <input type="text" id="job-salary" class="form-input" placeholder="e.g. ৳80K–৳120K/mo" value="${editing ? escapeHtml(job.salary || '') : ''}" /></div>
-      <div class="input-group"><label class="input-label">Skill Tags (comma separated)</label>
+      <div class="input-group"><label class="input-label" for="job-tags">Skill Tags (comma separated)</label>
         <input type="text" id="job-tags" class="form-input" placeholder="React, Node.js, PostgreSQL" value="${editing ? escapeHtml((job.tags || []).join(', ')) : ''}" /></div>
       <button type="submit" class="btn btn-primary btn-full">${editing ? 'Save changes' : 'Post Job'}</button>
     </form>
@@ -100,7 +100,7 @@ function showReferralModal(jobId, jobTitle, postedBy) {
       ${postedBy ? `<div style="font-size:12px;color:var(--text-secondary);margin-top:2px">Posted by ${escapeHtml(postedBy)}</div>` : ''}
     </div>
     <div class="input-group">
-      <label class="input-label">Your message</label>
+      <label class="input-label" for="referral-message">Your message</label>
       <textarea id="referral-message" class="form-input" rows="5" placeholder="Introduce yourself and explain why you are a strong fit for this role…"></textarea>
     </div>
     <button class="btn btn-primary btn-full" onclick="submitReferralRequest(${jobId})"><i data-lucide="handshake" class="ui-icon"></i> Send Referral Request</button>
@@ -176,7 +176,7 @@ async function renderJobsEnhanced(filter = '') {
         <div class="job-meta">
           <span class="job-meta-item"><i data-lucide="map-pin" class="ui-icon"></i> ${escapeHtml(j.location || '—')}</span>
           <span class="job-meta-item"><i data-lucide="user" class="ui-icon"></i> ${escapeHtml(j.posted_by_name || 'DIC Alumni')}</span>
-          <span class="job-meta-item">🕒 ${escapeHtml(formatRelativeTime(j.created_at))}</span>
+          <span class="job-meta-item"><i data-lucide="clock" class="ui-icon" aria-hidden="true"></i> ${escapeHtml(formatRelativeTime(j.created_at))}</span>
           <span class="job-meta-item"><i data-lucide="download" class="ui-icon"></i> ${j.applicants} applicant${j.applicants === 1 ? '' : 's'}</span>
         </div>
         <div class="job-tags">${tags.map(t => `<span class="job-tag">${escapeHtml(t)}</span>`).join('')}</div>
@@ -189,7 +189,7 @@ async function renderJobsEnhanced(filter = '') {
             ? `<button class="apply-btn" onclick="showJobApplicants(${j.id}, ${titleArg})"><i data-lucide="users" class="ui-icon"></i> Applicants (${j.applicants})</button>
                <button class="referral-btn" onclick="editJobPrompt(${j.id})"><i data-lucide="pen-line" class="ui-icon"></i> Edit</button>
                <button class="referral-btn" onclick="deleteJobPrompt(${j.id}, ${titleArg})"><i data-lucide="trash-2" class="ui-icon"></i> Delete</button>`
-            : `<button class="apply-btn" ${j.has_applied ? 'disabled' : ''} onclick="applyJob(${j.id}, ${titleArg})">${j.has_applied ? '<i data-lucide="check" class="ui-icon"></i> Applied' : 'Apply →'}</button>
+            : `<button class="apply-btn" ${j.has_applied ? 'disabled' : ''} onclick="applyJob(${j.id}, ${titleArg})">${j.has_applied ? '<i data-lucide="check" class="ui-icon"></i> Applied' : 'Apply'}</button>
                <button class="referral-btn" onclick="showReferralModal(${j.id}, ${titleArg}, ${jsArg(j.posted_by_name)})"><i data-lucide="handshake" class="ui-icon"></i> Referral</button>`}
         </div>
       </div>
@@ -215,7 +215,7 @@ async function renderJobsEnhanced(filter = '') {
 async function renderJobReferrals() {
   const el = document.getElementById('job-referrals-list');
   if (!el) return;
-  el.innerHTML = '<div class="queue-sub" style="padding:12px">Loading…</div>';
+  el.innerHTML = renderSkeletonCards(3);
 
   const rows = await API.getJobReferrals();
   if (apiFailed(rows)) {
@@ -254,11 +254,11 @@ async function applyJob(jobId, title) {
     </div>
     <form onsubmit="submitJobApplication(event, ${jobId})">
       <div class="input-group">
-        <label class="input-label">Cover note</label>
+        <label class="input-label" for="apply-note">Cover note</label>
         <textarea id="apply-note" class="form-input" rows="4" placeholder="Why are you a good fit for this role?"></textarea>
       </div>
       <div class="input-group">
-        <label class="input-label">Resume / portfolio URL (optional)</label>
+        <label class="input-label" for="apply-resume">Resume / portfolio URL (optional)</label>
         <input type="url" id="apply-resume" class="form-input" placeholder="https://…" />
       </div>
       <button type="submit" class="btn btn-primary btn-full">Submit Application</button>

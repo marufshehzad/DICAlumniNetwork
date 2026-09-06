@@ -60,15 +60,15 @@
           <p class="login-subtitle">Administrator sign-in. Alumni use the main site.</p>
           <form onsubmit="handleLoginSubmit(event)">
             <div class="input-group">
-              <label class="input-label">DIC Email Address</label>
+              <label class="input-label" for="login-email">DIC Email Address</label>
               <input type="email" id="login-email" class="form-input" inputmode="email" autocomplete="email" placeholder="you@dic.edu.bd" required />
             </div>
             <div class="input-group">
-              <label class="input-label">Password</label>
+              <label class="input-label" for="login-password">Password</label>
               <input type="password" id="login-password" class="form-input" autocomplete="current-password" placeholder="••••••••" required />
             </div>
             <div class="login-error hidden" id="login-error" role="alert"></div>
-            <button type="submit" class="btn btn-primary btn-full" id="login-submit-btn">Sign In to DIC →</button>
+            <button type="submit" class="btn btn-primary btn-full" id="login-submit-btn">Sign In to DIC</button>
               <button type="button" class="link-btn" onclick="showForgotPassword()">Forgot your password?</button>
           </form>
           <p class="login-footer" style="margin-top:16px">Staff accounts are provisioned by a super admin. There is no self-registration here.</p>
@@ -83,7 +83,7 @@
               <p class="login-subtitle">We will issue a single-use link that expires in 30 minutes.</p>
               <form onsubmit="handleForgotSubmit(event)">
                 <div class="input-group">
-                  <label class="input-label">Email address</label>
+                  <label class="input-label" for="forgot-email">Email address</label>
                   <input type="email" id="forgot-email" class="form-input" inputmode="email"
                          autocomplete="email" required />
                 </div>
@@ -102,12 +102,12 @@
               <p class="login-subtitle">This link can be used once. Signing in again will need the new password.</p>
               <form onsubmit="handleResetSubmit(event)">
                 <div class="input-group">
-                  <label class="input-label">New password</label>
+                  <label class="input-label" for="reset-password">New password</label>
                   <input type="password" id="reset-password" class="form-input"
                          autocomplete="new-password" minlength="8" required />
                 </div>
                 <div class="input-group">
-                  <label class="input-label">Confirm new password</label>
+                  <label class="input-label" for="reset-password2">Confirm new password</label>
                   <input type="password" id="reset-password2" class="form-input"
                          autocomplete="new-password" minlength="8" required />
                 </div>
@@ -180,7 +180,7 @@
       </div>
       <div class="topbar-search">
         <span class="search-icon"><i data-lucide="search" class="ui-icon"></i></span>
-        <input type="text" class="topbar-search-input" placeholder="Search alumni by name, company, skill or batch…" id="global-search" oninput="handleGlobalSearch(this.value)" />
+        <input type="text" class="topbar-search-input" placeholder="Search alumni by name, company, skill or batch…" id="global-search" aria-label="Search alumni" oninput="handleGlobalSearch(this.value)" />
       </div>
       <div class="topbar-actions">
         <!-- Role is decided by the authenticated server-side user record and is
@@ -231,8 +231,7 @@
         <!-- Search Bar -->
         <div class="ai-search-bar glass-card">
           <span class="ai-search-icon"><i data-lucide="bot" class="ui-icon"></i></span>
-          <input type="text" class="ai-search-input" id="dir-search" placeholder="Search by name, company, skill or department" oninput="filterDirectory(this.value)" />
-          <button class="voice-btn" title="Voice Input"><i data-lucide="mic" class="ui-icon"></i></button>
+          <input type="text" class="ai-search-input" id="dir-search" aria-label="Search the alumni directory" placeholder="Search by name, company, skill or department" oninput="filterDirectory(this.value)" />
           <div class="search-indicator" id="search-indicator" style="display:none;">
             <div class="typing-dots"><span></span><span></span><span></span></div>
             <span>Searching…</span>
@@ -256,7 +255,7 @@
         <div class="directory-stats-bar">
           <span id="dir-count">Loading profiles…</span>
           <div class="sort-options">
-            <select class="form-select sm" onchange="sortDirectory(this.value)">
+            <select class="form-select sm" onchange="sortDirectory(this.value)" aria-label="Sort the directory">
               <option value="relevance">Most Relevant</option>
               <option value="recent">Recently Active</option>
               <option value="batch">Batch Year</option>
@@ -343,14 +342,14 @@
         <div class="jobs-layout">
           <div class="jobs-main">
             <div class="jobs-filters">
-              <input type="text" class="form-input" placeholder="Search jobs, companies…" id="job-search" oninput="filterJobs(this.value)" />
-              <select class="form-select" onchange="filterJobType(this.value)">
+              <input type="text" class="form-input" placeholder="Search jobs, companies…" id="job-search" aria-label="Search jobs" oninput="filterJobs(this.value)" />
+              <select class="form-select" onchange="filterJobType(this.value)" aria-label="Filter by job type">
                 <option value="">All Types</option>
                 <option value="fulltime">Full-time</option>
                 <option value="internship">Internship</option>
                 <option value="contract">Contract</option>
               </select>
-              <select class="form-select" onchange="filterJobLocation(this.value)">
+              <select class="form-select" aria-label="Filter by location" onchange="filterJobLocation(this.value)">
                 <option value="">All Locations</option>
                 <option value="dhaka">Dhaka</option>
                 <option value="remote">Remote</option>
@@ -598,7 +597,7 @@
             <h1 class="page-title">Broadcasts</h1>
             <p class="page-subtitle">In-app announcements, with the size of the audience they reached</p>
           </div>
-          <button class="btn btn-primary" onclick="showBroadcastModal()"><i data-lucide="megaphone" class="ui-icon"></i> New Broadcast</button>
+          <button class="btn btn-primary" onclick="showBroadcastModal()"><i data-lucide="megaphone" class="ui-icon"></i> Create Broadcast</button>
         </div>
         <div class="glass-card"><div id="broadcast-history"></div></div>
       </div>

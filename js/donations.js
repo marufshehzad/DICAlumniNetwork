@@ -39,7 +39,7 @@ function showDonateModal(campaignId, campaignName) {
           `<button class="amount-btn" onclick="selectAmount(this, ${a})">৳${a.toLocaleString()}</button>`).join('')}
       </div>
       <div class="input-group mt-16">
-        <label class="input-label">Or enter a custom amount</label>
+        <label class="input-label" for="custom-amount">Or enter a custom amount</label>
         <input type="number" id="custom-amount" class="form-input" min="1" placeholder="e.g. 7500" inputmode="numeric" />
       </div>
     </div>
@@ -152,7 +152,7 @@ async function renderCampaignsEnhanced() {
         </div>
         <div style="display:flex;gap:6px">
           ${canManage ? `<button class="btn btn-ghost btn-sm" onclick="deleteCampaignPrompt(${c.id}, ${nameArg})"><i data-lucide="trash-2" class="ui-icon"></i></button>` : ''}
-          <button class="donate-btn" onclick="showDonateModal(${c.id}, ${nameArg})">Pledge →</button>
+          <button class="donate-btn" onclick="showDonateModal(${c.id}, ${nameArg})">Pledge</button>
         </div>
       </div>
     </div>`;
@@ -391,17 +391,17 @@ function showCreateCampaign() {
       <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
     </div>
     <form onsubmit="handleCreateCampaignSubmit(event)">
-      <div class="input-group"><label class="input-label">Campaign Name</label>
+      <div class="input-group"><label class="input-label" for="campaign-name">Campaign Name</label>
         <input type="text" id="campaign-name" class="form-input" placeholder="e.g. Science Lab Fund 2026" required /></div>
-      <div class="input-group"><label class="input-label">Description</label>
+      <div class="input-group"><label class="input-label" for="campaign-desc">Description</label>
         <textarea id="campaign-desc" class="form-input" rows="3" placeholder="Describe the impact of this campaign…"></textarea></div>
       <div class="field-grid-2">
-        <div class="input-group"><label class="input-label">Goal Amount (৳)</label>
+        <div class="input-group"><label class="input-label" for="campaign-goal">Goal Amount (৳)</label>
           <input type="number" id="campaign-goal" class="form-input" min="1" value="1500000" required /></div>
-        <div class="input-group"><label class="input-label">Days to run</label>
+        <div class="input-group"><label class="input-label" for="campaign-days">Days to run</label>
           <input type="number" id="campaign-days" class="form-input" min="1" value="30" /></div>
       </div>
-      <div class="input-group"><label class="input-label">Category</label>
+      <div class="input-group"><label class="input-label" for="campaign-tag">Category</label>
         <select id="campaign-tag" class="form-select">
           <option value="scholarship">Scholarship</option><option value="education">Education</option>
           <option value="infrastructure">Infrastructure</option><option value="sports">Sports</option>

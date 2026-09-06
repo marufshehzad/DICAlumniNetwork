@@ -141,10 +141,10 @@ function showCreateChapterModal() {
       <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
     </div>
     <form onsubmit="handleCreateChapterSubmit(event)">
-      <div class="input-group"><label class="input-label">Chapter Name</label><input type="text" id="chap-create-name" class="form-input" placeholder="e.g., Sylhet Regional Chapter" required /></div>
-      <div class="input-group"><label class="input-label">Type</label><select id="chap-create-type" class="form-select"><option value="regional">Regional</option><option value="batch">Batch</option><option value="interest">Interest</option></select></div>
-      <div class="input-group"><label class="input-label">Icon Emoji</label><input type="text" id="chap-create-icon" class="form-input" value="🏫" required /></div>
-      <div class="input-group"><label class="input-label">Description</label><textarea id="chap-create-desc" class="form-input" rows="3" placeholder="What is this chapter for?"></textarea></div>
+      <div class="input-group"><label class="input-label" for="chap-create-name">Chapter Name</label><input type="text" id="chap-create-name" class="form-input" placeholder="e.g., Sylhet Regional Chapter" required /></div>
+      <div class="input-group"><label class="input-label" for="chap-create-type">Type</label><select id="chap-create-type" class="form-select"><option value="regional">Regional</option><option value="batch">Batch</option><option value="interest">Interest</option></select></div>
+      <div class="input-group"><label class="input-label" for="chap-create-icon">Icon Emoji</label><input type="text" id="chap-create-icon" class="form-input" value="🏫" required /></div>
+      <div class="input-group"><label class="input-label" for="chap-create-desc">Description</label><textarea id="chap-create-desc" class="form-input" rows="3" placeholder="What is this chapter for?"></textarea></div>
       <button type="submit" class="btn btn-primary btn-full mt-16"><i data-lucide="rocket" class="ui-icon"></i> Submit Chapter for Moderation</button>
     </form>
   `);

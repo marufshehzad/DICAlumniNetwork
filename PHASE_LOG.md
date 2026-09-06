@@ -2364,3 +2364,207 @@ repository has ever run on a DIC server" appears at the top of it.
 
 None. Phase 7 has not been started. The next actions are DIC's: decide the
 hosting model, work through the checklist, and commission the review.
+
+---
+
+## Phase 7A — Final UI/UX, accessibility and mobile polish
+
+**Status:** **COMPLETE**
+**Date:** 2026-09-06
+**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Parent:** `e2d22b3`
+
+Scope was the interface only. No route, guard, role, permission, event, ticket,
+QR signature, task rule or audit behaviour was touched, and the API surface is
+byte-identical. What changed is what a person sees.
+
+### Tests
+
+```
+24 suites                     1,723 passed, 0 failed
+  of which phase7a_ui               50   (new)
+  the 23 pre-existing suites     1,673   unchanged, still 0 failed
+```
+
+The Phase 6.5 baseline was re-run before any edit and again after every set of
+them. It never moved off 1,673/0, so nothing here was bought by weakening an
+existing expectation.
+
+### What the audit actually found, after the false positives were removed
+
+The first mechanical pass reported 74 emoji rendered as UI, 95 untyped buttons,
+107 unlabelled inputs and a modal system with "no role=dialog, no Escape
+handler, no focus restoration". **Most of that was wrong**, and reading the
+source rather than trusting the greps is what made the difference:
+
+- `showModal()` already set `role="dialog"`, `aria-modal` and
+  `aria-labelledby`, already normalised every `.modal-close` to
+  `type="button"` with an accessible name, already trapped Tab, already
+  restored focus and already made the backdrop **opt-in**. The regexes missed
+  it because those attributes are applied with `setAttribute`, not written
+  as literal markup.
+- Of **112** emoji occurrences, only **13 actually reached the DOM**; the
+  other 99 are lookup keys. `emojiIcon()` maps a glyph to a Lucide icon and
+  `showToast()` strips a leading mapped glyph, swapping in an icon element.
+  The navigation tables — the "priority" finding — were already compliant.
+  The 13 that did render were ten `→`, two `←` and one `🕒`, and all are
+  gone; Event v5, which the brief names as the quality bar, uses no
+  decorative arrow in any call to action.
+- All 166 untyped buttons sit **outside any `<form>`**, where the type
+  attribute changes nothing. Zero were inside one. That whole class of "fix"
+  would have been a large diff and no change in behaviour.
+
+The counts below are what survived that filtering.
+
+### Fixed, with the measurement beside it
+
+**Contrast (WCAG 2.1 AA).** One shape accounted for nearly all of it: a badge
+drawn as *a 10–20% tint of a colour as the ground, and that same colour at full
+strength as the text*. For `--teal`, `--amber`, `--green` and `--red` that
+lands between **2.30:1 and 2.90:1**. The grounds were fine and were left alone;
+four text-weight variants were added and swapped in wherever a token inked its
+own tint. Static analysis of the stylesheet went **54 failing rules → 6**, and
+all six remaining are exempt: five are light-on-dark components the analyser
+composites over white (the navy topbar and its controls), and one is a disabled
+button, which 1.4.3 does not apply to. In the browser, across every page of
+both portals: **25 pages, 0 failures**.
+
+**The digital ID card was unreadable.** It was the last component still carrying
+a dark ground from before the light theme, and its text never declared a colour,
+so once the body ink turned dark the card became dark-on-dark: the member's name
+measured **1.01:1**, the institution 1.15:1, the role badge 1.64:1. Section 2 of
+the brief is explicit that the system stays light with no dark card, so the
+ground was lightened rather than the ink. Its rows now measure **5.11:1 to
+16.93:1**. It keeps its shape, its brand sweep, the hologram and the teal
+accents.
+
+**Four avatars left dark ink on a dark gradient.** `.user-avatar-sm`,
+`.sis-avatar` and `.id-avatar` painted a blue-to-teal gradient and declared no
+colour at all, so the initials inherited the dark body text — **1.71:1**. Their
+sibling `.topbar-avatar` had always set white explicitly; the others were simply
+never given one. `.news-author-avatar` had the same omission. Now white ink on a
+darkened gradient, **5.39:1 to 10.44:1**.
+
+**Member avatars inked themselves invisible.** The directory, news and
+mentorship avatars use a member's own colour for both a 25% tint ground and the
+initials on top, which for the lighter hues is **1.58:1**. A `readableInk()`
+helper now darkens the ink — and only the ink — until it clears 4.5:1 against
+that exact ground, so every hue in the palette keeps its identity: measured
+4.57 to 6.50 across the seven colours in use. A colour already dark enough is
+returned unchanged.
+
+**Every loading state in the application was invisible.** `.skeleton-line` was
+a white-on-white gradient, another pre-light-theme leftover, so
+`renderSkeletonCards()` drew empty boxes at all **29 call sites**. It now uses
+the same light shimmer as Event v5's `.ev-chrome-skeleton`, so the two read as
+one system. Confirmed by rendering it and looking.
+
+**The super admin's audit trail rendered unstyled.** The markup emitted
+`audit-entry / audit-icon / audit-action / audit-meta / audit-hash`; the
+stylesheet defines none of those. The complete design lives under
+`audit-log-item / -icon / -body / -action / -meta / -hash`, so every row was
+`display:block` instead of a flex row and the icon's green background stretched
+the full card width as a bar. The JS was moved back onto the class names that
+carry the style. Two further defects in the same six lines: the hash chip read
+`l.hash`, which the endpoint always returns as `null` — the real column is
+`entry_hash`, so the chip was permanently empty — and its background was
+`rgba(255,255,255,0.04)`, a white film on a white card.
+
+**A dialog could destroy an unrecoverable credential.** `showTemporaryPassword`
+was `dismissable: true` while its own copy reads *"Shown once… closing this
+dialog loses it"*, so a stray backdrop click discarded a password nothing can
+retrieve. It is no longer dismissable. The other five opt-in dialogs were
+checked and are correct: a detail view, two confirmations where the backdrop
+means cancel, a ticket and a public preview — none holds anything to lose.
+
+**A control that did nothing.** Both portals carried a "Voice Input" button with
+`cursor: pointer` and a tooltip and no handler anywhere in the codebase.
+Implementing voice search would be a new feature, which section 25 rules out, so
+the affordance was removed — the same treatment `simulateOffline()` received
+for the same reason.
+
+**97 fields had no accessible name.** The house pattern put the label beside the
+field rather than around it, with no `for`, so screen readers announced them
+blank and clicking a label did not focus its input. **83** now carry a native
+`for=`; the **14** that have no visible label to associate — the search boxes
+and filter selects — carry `aria-label`. Native association was preferred over
+ARIA everywhere it was possible, per section 7.
+
+**Two loading idioms became one.** `renderSkeletonCards()` was already the house
+style at 20 call sites, but nine places still wrote their own `Loading…` string,
+so the same application showed two different things while waiting. All nine now
+use the helper.
+
+**Terminology.** `showBroadcastModal()` was labelled "New Broadcast" on one page
+and "Open broadcast composer" on another — one action, two names; both are now
+"Create Broadcast", matching the app's dominant *Create X* verb. `dept_admin`
+rendered as "Dept Admin" in the badge map but "Department Admin Center" as a
+page title; spelled out in both. One badge read "Verified Alumnus" where the
+rest of the app says Alumni.
+
+### The role label mapping, as required by section 14
+
+The UI name for a role is **not** hardcoded — it is the per-user `role_label`
+column, which an administrator can edit. What is seeded today:
+
+| Backend role | Shown as | Note |
+|---|---|---|
+| `super_admin` | Super Admin | |
+| `univ_admin` | **College Admin** | the deliberate rename; "univ" is never shown |
+| `dept_admin` | Dept Admin (CSE) | data, not a constant — carries a department |
+| `moderator` | Moderator | |
+| `alumni` | Alumni Member | |
+
+`js/admin.js` also holds a constant fallback map used for badges, which now
+reads *Alumni · Moderator · Department Admin · College Admin · Super Admin*.
+**No backend role name was changed**, and none of these labels affects a
+permission check.
+
+### Verified in a browser, not asserted
+
+Five roles, both portals, seven widths — 360, 390, 430, 768, 1024, 1280, 1440.
+
+| Role | Pages | Widths | Overflow | Console errors |
+|---|---|---|---|---|
+| alumni | 10 | 7 | 0 | 0 |
+| super_admin | 15 | 7 | 0 | 0 |
+| univ_admin | 14 | 3 | 0 | 0 |
+| dept_admin | 7 | 2 | 0 | 0 |
+| moderator | 6 | 2 | 0 | 0 |
+
+Navigation scoping is right per role: administration is super-admin only, and
+each role sees exactly the modules its permissions allow.
+
+Dialog behaviour was exercised by dispatching real events rather than reading
+the source. On the create-administrator form: typing a value and clicking the
+backdrop **left the dialog open with the value intact**; Tab from the last of
+its nine focusable elements wrapped to the first and Shift+Tab wrapped back;
+the body scroll lock applied and released; Escape closed it; focus returned to
+the element that opened it; and a dialog that *does* opt into dismissal closed
+on a backdrop click, as it should.
+
+### Honestly not verified
+
+The initial move of focus **into** a dialog is scheduled inside
+`requestAnimationFrame`, and this environment's browser pane runs with
+`visibilityState: "hidden"`, where rAF never fires. Everything else about the
+dialog was confirmed by dispatched events; that one step could not be, and is
+not claimed. It is unchanged code that was already correct on inspection.
+
+### What was deliberately left alone
+
+- **Event v5** — no architecture or behaviour touched. The single change inside
+  it is one hover text colour at 3.96:1, a value, not a behaviour. Its prose
+  arrow in "Advanced → Budget" is typography in a sentence and stays.
+- **Large accent figures** — seven rules where a KPI number is 22–48px. Large
+  text needs 3:1, which the vivid accents clear, so the numbers keep their
+  colour rather than being flattened for a threshold that does not apply.
+- **`role_label` data** — a per-user column an administrator owns, not a
+  constant to be rewritten from here.
+- **Two "Icon Emoji" fields** — chapters and news let a user pick an emoji as
+  content. That is a product feature, not UI chrome.
+
+### Next phase
+
+**Phase 7B.** Phase 7A's remit was consistency, accessibility, mobile and
+interaction quality; it added no business feature and changed no permission.

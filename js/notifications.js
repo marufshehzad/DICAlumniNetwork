@@ -192,11 +192,11 @@ function showBroadcastModal() {
       <div class="modal-title"><i data-lucide="megaphone" class="ui-icon"></i> Send Broadcast</div>
       <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
     </div>
-    <div class="input-group"><label class="input-label">Title</label>
+    <div class="input-group"><label class="input-label" for="broadcast-title">Title</label>
       <input type="text" id="broadcast-title" class="form-input" placeholder="e.g. Reunion registration now open" required /></div>
-    <div class="input-group"><label class="input-label">Message</label>
+    <div class="input-group"><label class="input-label" for="broadcast-body">Message</label>
       <textarea id="broadcast-body" class="form-input" rows="4" placeholder="Write your announcement…" required></textarea></div>
-    <div class="input-group"><label class="input-label">Audience</label>
+    <div class="input-group"><label class="input-label" for="broadcast-target">Audience</label>
       <select id="broadcast-target" class="form-select">
         <option value="all">Everyone</option>
         <option value="alumni">Alumni only</option>

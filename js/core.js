@@ -145,6 +145,26 @@ function emojiIcon(rawEmoji, fallbackIconName) {
   return `<i data-lucide="${name}" class="ui-icon" aria-hidden="true"></i>`;
 }
 
+/* Darkens a member colour until it is legible as the initials drawn on a
+   tint of itself. The avatar keeps its hue -- only the ink moves, and only
+   as far as 4.5:1 requires. Anything that is not a #rrggbb falls back to
+   the body colour rather than guessing. */
+function readableInk(hex, tintAlpha = 0.25) {
+  const m = String(hex || '').trim().match(/^#?([0-9a-fA-F]{6})$/);
+  if (!m) return 'var(--text-primary)';
+  let r = parseInt(m[1].slice(0, 2), 16),
+      g = parseInt(m[1].slice(2, 4), 16),
+      b = parseInt(m[1].slice(4, 6), 16);
+  const chan = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  const lum = (r, g, b) => 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b);
+  const t = tintAlpha, w = 1 - t;
+  const groundL = lum(r * t + 255 * w, g * t + 255 * w, b * t + 255 * w);
+  const ratio = () => (groundL + 0.05) / (lum(r, g, b) + 0.05);
+  for (let i = 0; i < 24 && ratio() < 4.5; i++) { r *= 0.88; g *= 0.88; b *= 0.88; }
+  const h = v => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0');
+  return '#' + h(r) + h(g) + h(b);
+}
+
 function formatDate(value) {
   if (!value) return '';
   const s = String(value);

@@ -108,8 +108,8 @@ function renderAlumniDashboard(page) {
 
     <div class="sync-overview-grid mb-16">
       <div class="sync-stat-card"><div class="sync-stat-val" data-stat="my_registrations">—</div><div class="sync-stat-label">My Event Registrations</div></div>
-      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--teal)" data-stat="my_connections">—</div><div class="sync-stat-label">My Connections</div></div>
-      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--amber)" data-stat="my_chapters">—</div><div class="sync-stat-label">My Chapters</div></div>
+      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--teal-text)" data-stat="my_connections">—</div><div class="sync-stat-label">My Connections</div></div>
+      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--amber-text)" data-stat="my_chapters">—</div><div class="sync-stat-label">My Chapters</div></div>
       <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--primary-light)" data-stat="my_unread_notifications">—</div><div class="sync-stat-label">Unread Notifications</div></div>
     </div>
 
@@ -230,15 +230,15 @@ function renderSystemStatus() {
     }
     if (h.status !== 'ok') {
       el.innerHTML = `
-        <div class="server-card"><div class="server-val" style="color:var(--amber)">Degraded</div><div class="server-label">API status</div></div>
+        <div class="server-card"><div class="server-val" style="color:var(--amber-text)">Degraded</div><div class="server-label">API status</div></div>
         <div class="server-card"><div class="server-val" style="color:var(--danger);font-size:15px">Unreachable</div><div class="server-label">Database</div></div>`;
       return;
     }
     const dbOk = h.database === 'ok';
     const latency = Number.isFinite(h.latencyMs) ? `${h.latencyMs} ms` : '—';
     el.innerHTML = `
-      <div class="server-card"><div class="server-val" style="color:var(--teal)">Online</div><div class="server-label">API status</div></div>
-      <div class="server-card"><div class="server-val" style="font-size:15px;color:${dbOk ? 'var(--teal)' : 'var(--danger)'}">${dbOk ? 'Reachable' : 'Unreachable'}</div><div class="server-label">Database</div></div>
+      <div class="server-card"><div class="server-val">Online</div><div class="server-label">API status</div></div>
+      <div class="server-card"><div class="server-val" style="font-size:15px${dbOk ? '' : ';color:var(--danger)'}">${dbOk ? 'Reachable' : 'Unreachable'}</div><div class="server-label">Database</div></div>
       <div class="server-card"><div class="server-val" style="font-size:15px">${escapeHtml(latency)}</div><div class="server-label">Health check latency</div></div>`;
   });
 }
@@ -554,7 +554,7 @@ function drawMapGraticule() {
       `stroke="currentColor" stroke-width="${prime ? 1.3 : 0.7}" opacity="${prime ? 0.5 : 0.22}" />`);
     if (Math.abs(lng) !== 180) {
       parts.push(`<text x="${(x + 4).toFixed(1)}" y="${H - 7}" font-size="10" ` +
-        `fill="currentColor" opacity="0.45">${lng}°</text>`);
+        `fill="#475569" opacity="0.9">${lng}°</text>`);
     }
   }
   for (let lat = -80; lat <= 80; lat += step) {
@@ -564,7 +564,7 @@ function drawMapGraticule() {
     parts.push(`<line x1="0" y1="${y.toFixed(1)}" x2="${W}" y2="${y.toFixed(1)}" ` +
       `stroke="currentColor" stroke-width="${equator ? 1.3 : 0.7}" opacity="${equator ? 0.5 : 0.22}" />`);
     parts.push(`<text x="6" y="${(y - 5).toFixed(1)}" font-size="10" ` +
-      `fill="currentColor" opacity="0.45">${lat}°</text>`);
+      `fill="#475569" opacity="0.9">${lat}°</text>`);
   }
 
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
@@ -956,7 +956,7 @@ async function renderAnalyticsMetrics() {
   const el = document.getElementById('analytics-metrics');
   if (!el) return;
 
-  el.innerHTML = '<div class="analytics-metric-item"><div class="analytics-metric-label">Loading…</div></div>';
+  el.innerHTML = renderSkeletonCards(1);
   const res = await API.getStatsAnalytics();
 
   if (apiFailed(res)) {

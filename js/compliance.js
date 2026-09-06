@@ -97,7 +97,7 @@ async function decryptVaultField(vaultId, ownerName) {
       and a timestamp are written to the immutable access log.
     </p>
     <div class="input-group">
-      <label class="input-label">Reason for access (required)</label>
+      <label class="input-label" for="vault-reason">Reason for access (required)</label>
       <input type="text" id="vault-reason" class="form-input" placeholder="e.g. Scholarship eligibility verification" required />
     </div>
     <button class="btn btn-primary btn-full" onclick="performVaultReveal(${vaultId})"><i data-lucide="unlock" class="ui-icon"></i> Decrypt & Log Access</button>
@@ -146,13 +146,13 @@ function showStoreIdentityModal() {
       The value is encrypted with AES-256-GCM in the application layer before it reaches PostgreSQL.
       Only the last four digits are stored separately for display.
     </p>
-    <div class="input-group"><label class="input-label">Field type</label>
+    <div class="input-group"><label class="input-label" for="vault-field-type">Field type</label>
       <select id="vault-field-type" class="form-select">
         <option value="nid">National ID (NID)</option>
         <option value="brc">Birth Registration (BRC)</option>
         <option value="passport">Passport</option>
       </select></div>
-    <div class="input-group"><label class="input-label">Value</label>
+    <div class="input-group"><label class="input-label" for="vault-field-value">Value</label>
       <input type="text" id="vault-field-value" class="form-input" placeholder="Enter the identity number" autocomplete="off" required /></div>
     <button class="btn btn-primary btn-full" onclick="storeIdentityField()"><i data-lucide="lock-keyhole" class="ui-icon"></i> Encrypt & Store</button>
   `);

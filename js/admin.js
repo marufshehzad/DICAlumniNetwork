@@ -23,8 +23,8 @@ function renderModeratorDashboard(page) {
 
     <div class="sync-overview-grid mb-16">
       <div class="sync-stat-card"><div class="sync-stat-val" data-stat="pending_verifications">—</div><div class="sync-stat-label">Unverified Accounts</div></div>
-      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--amber)" data-stat="pending_stories">—</div><div class="sync-stat-label">Stories Awaiting Review</div></div>
-      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--teal)" data-stat="pending_chapters">—</div><div class="sync-stat-label">Chapters Awaiting Review</div></div>
+      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--amber-text)" data-stat="pending_stories">—</div><div class="sync-stat-label">Stories Awaiting Review</div></div>
+      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--teal-text)" data-stat="pending_chapters">—</div><div class="sync-stat-label">Chapters Awaiting Review</div></div>
       <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--primary-light)" data-stat="pending_events">—</div><div class="sync-stat-label">Events Awaiting Approval</div></div>
     </div>
 
@@ -55,7 +55,7 @@ function renderModeratorDashboard(page) {
 function renderDashModerationQueue() {
   const el = document.getElementById('dash-moderation-queue');
   if (!el) return;
-  el.innerHTML = '<div class="queue-sub" style="padding:12px">Loading…</div>';
+  el.innerHTML = renderSkeletonCards(3);
   API.getModerationQueue().then(res => {
     if (apiFailed(res)) {
       el.innerHTML = renderEmptyState('<i data-lucide="shield-off" class="ui-icon"></i>',
@@ -100,8 +100,8 @@ function renderDeptAdminDashboard(page) {
 
     <div class="sync-overview-grid">
       <div class="sync-stat-card"><div class="sync-stat-val" id="dept-alumni-count">—</div><div class="sync-stat-label">Alumni in ${escapeHtml(u.dept || 'your department')}</div></div>
-      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--teal)" data-stat="events_upcoming">—</div><div class="sync-stat-label">Upcoming Events</div></div>
-      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--amber)" data-stat="my_assigned_tasks">—</div><div class="sync-stat-label">Tasks Assigned to Me</div></div>
+      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--teal-text)" data-stat="events_upcoming">—</div><div class="sync-stat-label">Upcoming Events</div></div>
+      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--amber-text)" data-stat="my_assigned_tasks">—</div><div class="sync-stat-label">Tasks Assigned to Me</div></div>
       <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--primary-light)" data-stat="moderation_pending">—</div><div class="sync-stat-label">Items Awaiting Review</div></div>
     </div>
 
@@ -178,8 +178,8 @@ function renderUnivAdminDashboard(page) {
 
     <div class="sync-overview-grid mt-16">
       <div class="sync-stat-card"><div class="sync-stat-val" data-stat="profiles_total">—</div><div class="sync-stat-label">Alumni Profiles</div></div>
-      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--teal)" data-stat="registrations_total">—</div><div class="sync-stat-label">Event Registrations</div></div>
-      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--amber)" data-stat="jobs_total">—</div><div class="sync-stat-label">Job Postings</div></div>
+      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--teal-text)" data-stat="registrations_total">—</div><div class="sync-stat-label">Event Registrations</div></div>
+      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--amber-text)" data-stat="jobs_total">—</div><div class="sync-stat-label">Job Postings</div></div>
       <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--primary-light)" data-stat="chapter_memberships_total">—</div><div class="sync-stat-label">Chapter Memberships</div></div>
     </div>
 
@@ -228,15 +228,15 @@ function renderSuperAdminDashboard(page) {
 
     <div class="sync-overview-grid mt-16">
       <div class="sync-stat-card"><div class="sync-stat-val" data-stat="users_total">—</div><div class="sync-stat-label">User Accounts</div></div>
-      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--teal)" data-stat="events_total">—</div><div class="sync-stat-label">Events</div></div>
-      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--amber)" data-stat="audit_entries">—</div><div class="sync-stat-label">Audit Log Entries</div></div>
+      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--teal-text)" data-stat="events_total">—</div><div class="sync-stat-label">Events</div></div>
+      <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--amber-text)" data-stat="audit_entries">—</div><div class="sync-stat-label">Audit Log Entries</div></div>
       <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--primary-light)" data-stat="custom_fields_total">—</div><div class="sync-stat-label">Custom Fields</div></div>
     </div>
 
     <div class="dashboard-split mt-16">
       <div class="dashboard-left">
         <div class="glass-card">
-          <div class="card-header"><h3 class="card-title"><i data-lucide="scroll-text" class="ui-icon"></i> Hash-Chained Security Audit Trail</h3><button class="btn btn-outline btn-sm" onclick="showPage('audit')">View Full Audit Log →</button></div>
+          <div class="card-header"><h3 class="card-title"><i data-lucide="scroll-text" class="ui-icon"></i> Hash-Chained Security Audit Trail</h3><button class="btn btn-outline btn-sm" onclick="showPage('audit')">View Full Audit Log</button></div>
           <div id="audit-log"></div>
         </div>
       </div>
@@ -262,7 +262,7 @@ async function renderVerificationQueue() {
   const container = document.getElementById('verification-queue');
   if (!container) return;
 
-  container.innerHTML = '<div class="queue-sub" style="padding:12px">Loading…</div>';
+  container.innerHTML = renderSkeletonCards(3);
   const rows = await API.getVerificationQueue();
 
   if (apiFailed(rows)) {
@@ -331,13 +331,13 @@ async function renderAuditLog(targetId = 'audit-log') {
   }
 
   el.innerHTML = rows.map(l => `
-    <div class="audit-entry">
-      <div class="audit-icon" style="background:${escapeHtml(l.bg_color || 'rgba(0,168,89,0.15)')}">${emojiIcon(l.icon, 'shield')}</div>
-      <div style="flex:1;min-width:0">
-        <div class="audit-action">${escapeHtml(l.action)}</div>
-        <div class="audit-meta">${escapeHtml(l.meta)} · ${escapeHtml(formatRelativeTime(l.created_at))}</div>
+    <div class="audit-log-item">
+      <div class="audit-log-icon" style="background:${escapeHtml(l.bg_color || 'rgba(0,168,89,0.15)')}">${emojiIcon(l.icon, 'shield')}</div>
+      <div class="audit-log-body">
+        <div class="audit-log-action">${escapeHtml(l.action)}</div>
+        <div class="audit-log-meta">${escapeHtml(l.meta)} · ${escapeHtml(formatRelativeTime(l.created_at))}</div>
       </div>
-      <div class="audit-hash" title="Hash-chained to the previous entry">${escapeHtml(l.hash)}</div>
+      <div class="audit-log-hash" title="Hash-chained to the previous entry">${escapeHtml(String(l.entry_hash || '').slice(0, 8))}</div>
     </div>`).join('');
 }
 
@@ -360,7 +360,7 @@ async function renderRBACTableV2() {
   }
 
   const label = (r) => ({
-    alumni: 'Alumni', moderator: 'Moderator', dept_admin: 'Dept Admin',
+    alumni: 'Alumni', moderator: 'Moderator', dept_admin: 'Department Admin',
     univ_admin: 'College Admin', super_admin: 'Super Admin'
   }[r] || r);
 
@@ -400,7 +400,7 @@ async function renderOfflineSyncPanel() {
   const el = document.getElementById('offline-sync-panel');
   if (!el) return;
 
-  el.innerHTML = '<div class="glass-card"><div style="padding:16px;color:var(--text-muted);font-size:12px">Loading…</div></div>';
+  el.innerHTML = renderSkeletonCards(2);
   const res = await API.getSyncMutations();
 
   if (apiFailed(res)) {
@@ -422,8 +422,8 @@ async function renderOfflineSyncPanel() {
       </p>
       <div class="sync-overview-grid">
         <div class="sync-stat-card"><div class="sync-stat-val">${res.total ?? 0}</div><div class="sync-stat-label">Recorded Mutations</div></div>
-        <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--teal)">${res.applied ?? 0}</div><div class="sync-stat-label">Applied</div></div>
-        <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--amber)">${res.unapplied ?? 0}</div><div class="sync-stat-label">Not Applied</div></div>
+        <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--teal-text)">${res.applied ?? 0}</div><div class="sync-stat-label">Applied</div></div>
+        <div class="sync-stat-card"><div class="sync-stat-val" style="color:var(--amber-text)">${res.unapplied ?? 0}</div><div class="sync-stat-label">Not Applied</div></div>
       </div>
     </div>
     <div class="glass-card">
@@ -585,7 +585,7 @@ function renderBulkImportPanel() {
 function renderWizardStepContent() {
   if (currentImportState.step === 1) {
     return `
-      <input type="file" id="import-file-input" accept=".csv,text/csv" style="display:none"
+      <input type="file" id="import-file-input" aria-label="Choose a CSV file to import" accept=".csv,text/csv" style="display:none"
              onchange="handleImportFileSelected(this)" />
       <div class="dropzone" onclick="document.getElementById('import-file-input').click()">
         <div class="dropzone-icon"><i data-lucide="file-text" class="ui-icon"></i></div>
@@ -596,7 +596,7 @@ function renderWizardStepContent() {
 
       <div class="field-grid-2" style="margin-top:16px">
         <div class="input-group">
-          <label class="input-label">Initial Password Policy</label>
+          <label class="input-label" for="password-strategy-select">Initial Password Policy</label>
           <select class="form-select" id="password-strategy-select" onchange="currentImportState.strategy = this.value">
             <option value="generated">Generate a temporary password for this batch</option>
           </select>
@@ -607,8 +607,8 @@ function renderWizardStepContent() {
           </div>
         </div>
         <div class="input-group">
-          <label class="input-label">If an account already exists</label>
-          <select class="form-select" onchange="currentImportState.dupResolution = this.value">
+          <label class="input-label" for="import-dup-resolution">If an account already exists</label>
+          <select id="import-dup-resolution" class="form-select" onchange="currentImportState.dupResolution = this.value">
             <option value="update">Update / enrich the existing profile (recommended)</option>
             <option value="skip">Skip the duplicate</option>
           </select>
@@ -633,12 +633,12 @@ function renderWizardStepContent() {
     return `
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
         <div style="font-weight:700;font-size:14px"><i data-lucide="file-text" class="ui-icon"></i> ${escapeHtml(filename)} — ${totalRows} rows, ${headers.length} columns</div>
-        <button class="btn btn-outline btn-sm" onclick="resetImportWizard()">← Choose a different file</button>
+        <button class="btn btn-outline btn-sm" onclick="resetImportWizard()"><i data-lucide="arrow-left" class="ui-icon" aria-hidden="true"></i> Choose a different file</button>
       </div>
 
       <div class="validation-summary-bar mb-16">
         <div class="vstat-card"><div class="vstat-num">${totalRows}</div><div class="vstat-label">Rows</div></div>
-        <div class="vstat-card"><div class="vstat-num" style="color:var(--teal)">${mappedCount}</div><div class="vstat-label">Mapped</div></div>
+        <div class="vstat-card"><div class="vstat-num" style="color:var(--teal-text)">${mappedCount}</div><div class="vstat-label">Mapped</div></div>
         <div class="vstat-card"><div class="vstat-num" style="color:var(--text-muted)">${ignoredCount}</div><div class="vstat-label">Excluded</div></div>
       </div>
 
@@ -654,8 +654,8 @@ function renderWizardStepContent() {
               <div class="mapping-header">${escapeHtml(h)}</div>
               <div class="mapping-sample">${sample ? 'e.g. ' + escapeHtml(sample) : 'empty'}</div>
             </div>
-            <div class="mapping-arrow">→</div>
-            <select class="form-select" onchange="setImportMapping(${i}, this.value)">
+            <div class="mapping-arrow"><i data-lucide="arrow-right" class="ui-icon" aria-hidden="true"></i></div>
+            <select class="form-select" onchange="setImportMapping(${i}, this.value)" aria-label="Map column ${escapeHtml(h)} to a field">
               ${IMPORT_FIELDS.map(f => `<option value="${f.key}" ${mapping[i] === f.key ? 'selected' : ''}>${escapeHtml(f.label)}</option>`).join('')}
             </select>
           </div>`;
@@ -680,21 +680,21 @@ function renderWizardStepContent() {
                this header did not. -->
           <i data-lucide="file-text" class="ui-icon"></i> Parsed File: <strong>"${escapeHtml(currentImportState.filename)}"</strong> (${escapeHtml(currentImportState.totalRows)} Total Records)
         </div>
-        <button class="btn btn-outline btn-sm" onclick="resetImportWizard()">← Upload Different File</button>
+        <button class="btn btn-outline btn-sm" onclick="resetImportWizard()"><i data-lucide="arrow-left" class="ui-icon" aria-hidden="true"></i> Upload Different File</button>
       </div>
 
       <!-- VALIDATION STATS -->
       <div class="validation-summary-bar">
         <div class="vstat-card"><div class="vstat-num">${currentImportState.totalRows}</div><div class="vstat-label">Total Rows</div></div>
-        <div class="vstat-card"><div class="vstat-num" style="color:var(--teal)">${validCount}</div><div class="vstat-label">Valid Records</div></div>
-        <div class="vstat-card"><div class="vstat-num" style="color:var(--amber)">${dupCount}</div><div class="vstat-label">Duplicates Found</div></div>
-        <div class="vstat-card"><div class="vstat-num" style="color:var(--red)">${invalidCount}</div><div class="vstat-label">Validation Errors</div></div>
+        <div class="vstat-card"><div class="vstat-num" style="color:var(--teal-text)">${validCount}</div><div class="vstat-label">Valid Records</div></div>
+        <div class="vstat-card"><div class="vstat-num" style="color:var(--amber-text)">${dupCount}</div><div class="vstat-label">Duplicates Found</div></div>
+        <div class="vstat-card"><div class="vstat-num" style="color:var(--red-text)">${invalidCount}</div><div class="vstat-label">Validation Errors</div></div>
       </div>
 
       <!-- DUPLICATE RESOLUTION STRATEGY -->
       ${dupCount > 0 ? `
         <div class="duplicate-strategy-box">
-          <div style="font-weight:700;color:var(--amber);margin-bottom:6px"><i data-lucide="triangle-alert" class="ui-icon"></i> ${dupCount} Duplicate Records Detected (Priority: StudentID &gt; Roll &gt; Email &gt; Phone)</div>
+          <div style="font-weight:700;color:var(--amber-text);margin-bottom:6px"><i data-lucide="triangle-alert" class="ui-icon"></i> ${dupCount} Duplicate Records Detected (Priority: StudentID &gt; Roll &gt; Email &gt; Phone)</div>
           <div style="display:flex;gap:16px;font-size:12px">
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
               <input type="radio" name="dup-strat" value="skip" checked onchange="currentImportState.dupResolution = this.value" />
@@ -741,7 +741,7 @@ function renderWizardStepContent() {
                 <td>${escapeHtml(r.year)}</td>
                 <td>${escapeHtml(r.dept)}</td>
                 <td><span class="card-badge teal">Valid</span></td>
-                <td style="color:var(--teal);font-size:11px"><i data-lucide="check" class="ui-icon"></i> Ready for Account Creation</td>
+                <td style="color:var(--teal-text);font-size:11px"><i data-lucide="check" class="ui-icon"></i> Ready for Account Creation</td>
               </tr>
             `).join('')}
             ${currentImportState.duplicateRecords.map(r => `
@@ -753,7 +753,7 @@ function renderWizardStepContent() {
                 <td>${escapeHtml(r.year)}</td>
                 <td>${escapeHtml(r.dept)}</td>
                 <td><span class="card-badge amber">Duplicate</span></td>
-                <td style="color:var(--amber);font-size:11px"><i data-lucide="triangle-alert" class="ui-icon"></i> Matches existing alumni ID ${escapeHtml(r.studentId)}</td>
+                <td style="color:var(--amber-text);font-size:11px"><i data-lucide="triangle-alert" class="ui-icon"></i> Matches existing alumni ID ${escapeHtml(r.studentId)}</td>
               </tr>
             `).join('')}
             ${currentImportState.invalidRecords.map(r => `
@@ -765,7 +765,7 @@ function renderWizardStepContent() {
                 <td>${escapeHtml(r.year || 'N/A')}</td>
                 <td>${escapeHtml(r.dept || 'N/A')}</td>
                 <td><span class="card-badge red">Invalid</span></td>
-                <td style="color:var(--red);font-size:11px"><i data-lucide="circle-x" class="ui-icon"></i> ${escapeHtml(r.errorMsg)}</td>
+                <td style="color:var(--red-text);font-size:11px"><i data-lucide="circle-x" class="ui-icon"></i> ${escapeHtml(r.errorMsg)}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -776,7 +776,7 @@ function renderWizardStepContent() {
         ${invalidCount > 0 ? `
           <button class="btn btn-outline btn-sm" onclick="downloadImportErrorReportCSV()"><i data-lucide="download" class="ui-icon"></i> Download Error Report (${invalidCount} rows)</button>
         ` : '<div></div>'}
-        <button class="btn btn-primary" onclick="executeBulkImportProcess()"><i data-lucide="rocket" class="ui-icon"></i> Confirm &amp; Create ${validCount} Accounts →</button>
+        <button class="btn btn-primary" onclick="executeBulkImportProcess()"><i data-lucide="rocket" class="ui-icon"></i> Confirm &amp; Create ${validCount} Accounts</button>
       </div>
     `;
   }
@@ -814,7 +814,7 @@ function renderWizardStepContent() {
             <div style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;color:var(--text-primary)">
               <i data-lucide="key-round" class="ui-icon"></i> Temporary password for this batch
             </div>
-            <div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:18px;font-weight:700;letter-spacing:1px;margin:10px 0;color:var(--teal);user-select:all">${escapeHtml(currentImportState.lastResult.temporaryPassword)}</div>
+            <div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:18px;font-weight:700;letter-spacing:1px;margin:10px 0;color:var(--teal-text);user-select:all">${escapeHtml(currentImportState.lastResult.temporaryPassword)}</div>
             <div style="font-size:12px;color:var(--text-secondary);line-height:1.5">
               Every account created by this import signs in with this password once, then
               has to choose their own. It is shown here only — it is not stored anywhere
@@ -941,16 +941,16 @@ async function renderCustomFieldManager() {
   el.innerHTML = `
     <form onsubmit="handleCreateCustomField(event)" class="custom-field-form">
       <div class="field-grid-2">
-        <div class="input-group"><label class="input-label">Field Label</label>
+        <div class="input-group"><label class="input-label" for="cf-label">Field Label</label>
           <input type="text" id="cf-label" class="form-input" placeholder="e.g. LinkedIn Headline" required /></div>
-        <div class="input-group"><label class="input-label">Section</label>
+        <div class="input-group"><label class="input-label" for="cf-section">Section</label>
           <select id="cf-section" class="form-select">
             <option value="academic">Academic</option><option value="professional">Professional</option>
             <option value="contact">Contact</option><option value="personal">Personal</option>
           </select></div>
       </div>
       <div class="field-grid-2">
-        <div class="input-group"><label class="input-label">Field Type</label>
+        <div class="input-group"><label class="input-label" for="cf-type">Field Type</label>
           <select id="cf-type" class="form-select">
             <option value="text">Text</option><option value="number">Number</option>
             <option value="date">Date</option><option value="select">Dropdown</option>
@@ -968,7 +968,7 @@ async function renderCustomFieldManager() {
         <div class="custom-field-row">
           <div class="vault-icon"><i data-lucide="puzzle" class="ui-icon"></i></div>
           <div style="flex:1;min-width:0">
-            <div style="font-weight:700;font-size:13px">${escapeHtml(f.label)}${f.is_required ? ' <span style="color:var(--red)">*</span>' : ''}</div>
+            <div style="font-weight:700;font-size:13px">${escapeHtml(f.label)}${f.is_required ? ' <span style="color:var(--red-text)">*</span>' : ''}</div>
             <div style="font-size:12px;color:var(--text-secondary)">${escapeHtml(f.section)} · ${escapeHtml(f.field_type)} · <span style="font-family:monospace;font-size:11px">${escapeHtml(f.id)}</span></div>
           </div>
           <button class="btn btn-sm btn-ghost" onclick="deleteCustomField(${jsArg(f.id)}, ${jsArg(f.label)})"><i data-lucide="trash-2" class="ui-icon"></i></button>
@@ -1007,7 +1007,7 @@ async function renderSegmentationPanel() {
   const el = document.getElementById('segmentation-panel');
   if (!el) return;
 
-  el.innerHTML = '<div class="glass-card"><div style="padding:16px;color:var(--text-muted);font-size:12px">Loading…</div></div>';
+  el.innerHTML = renderSkeletonCards(2);
   const opt = await API.getSegmentOptions();
 
   if (apiFailed(opt)) {
@@ -1039,33 +1039,33 @@ async function renderSegmentationPanel() {
       </p>
       <div class="segment-builder">
         <div class="input-group">
-          <label class="input-label">Batch from</label>
+          <label class="input-label" for="seg-batch-from">Batch from</label>
           <select class="form-select" id="seg-batch-from" onchange="updateSegmentCount()">
             <option value="">Any</option>${years}
           </select>
         </div>
         <div class="input-group">
-          <label class="input-label">Batch to</label>
+          <label class="input-label" for="seg-batch-to">Batch to</label>
           <select class="form-select" id="seg-batch-to" onchange="updateSegmentCount()">
             <option value="">Any</option>${years}
           </select>
         </div>
         <div class="input-group">
-          <label class="input-label">Department</label>
+          <label class="input-label" for="seg-dept">Department</label>
           <select class="form-select" id="seg-dept" onchange="updateSegmentCount()">
             <option value="all">All departments</option>
             ${opt.departments.map(d => `<option value="${escapeHtml(d.department)}">${escapeHtml(d.department)} (${d.n})</option>`).join('')}
           </select>
         </div>
         <div class="input-group">
-          <label class="input-label">Industry</label>
+          <label class="input-label" for="seg-industry">Industry</label>
           <select class="form-select" id="seg-industry" onchange="updateSegmentCount()">
             <option value="all">All industries</option>
             ${opt.industries.map(i => `<option value="${escapeHtml(i.industry)}">${escapeHtml(i.industry)} (${i.n})</option>`).join('')}
           </select>
         </div>
         <div class="input-group">
-          <label class="input-label">Donation history</label>
+          <label class="input-label" for="seg-donor">Donation history</label>
           <select class="form-select" id="seg-donor" onchange="updateSegmentCount()">
             <option value="all">Any donor status</option>
             <option value="donors">Has a settled donation</option>
@@ -1073,7 +1073,7 @@ async function renderSegmentationPanel() {
           </select>
         </div>
         <div class="input-group">
-          <label class="input-label">Mentoring</label>
+          <label class="input-label" for="seg-mentor">Mentoring</label>
           <select class="form-select" id="seg-mentor" onchange="updateSegmentCount()">
             <option value="">Anyone</option>
             <option value="true">Offers mentoring</option>
@@ -1081,7 +1081,7 @@ async function renderSegmentationPanel() {
         </div>
       </div>
       <div style="margin-top:16px;padding:12px;background:var(--bg-glass);border-radius:var(--radius-sm)">
-        <div><strong style="color:var(--teal)">Segment:</strong>
+        <div><strong style="color:var(--teal-text)">Segment:</strong>
           <span id="segment-count-val">${opt.total.toLocaleString('en-IN')}</span>
           of ${opt.total.toLocaleString('en-IN')} alumni profiles
         </div>
@@ -1091,7 +1091,7 @@ async function renderSegmentationPanel() {
            cannot take an arbitrary segment, so this says so rather than
            implying the filters above carry over. -->
       <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <button class="btn btn-primary btn-sm" onclick="showBroadcastModal()"><i data-lucide="megaphone" class="ui-icon"></i> Open broadcast composer</button>
+        <button class="btn btn-primary btn-sm" onclick="showBroadcastModal()"><i data-lucide="megaphone" class="ui-icon"></i> Create Broadcast</button>
         <span style="font-size:11px;color:var(--text-muted)">A broadcast targets a role and optionally one batch, not this segment.</span>
       </div>
     </div>

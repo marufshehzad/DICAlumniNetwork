@@ -157,7 +157,7 @@ async function renderMentorships() {
     } else {
       suggested.innerHTML = suggestions.map(m => `
         <div class="suggested-mentor-card">
-          <div class="alumni-avatar" style="width:40px;height:40px;background:linear-gradient(135deg,${m.color || '#00A859'}40,${m.color || '#00A859'}20);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:${m.color || '#00A859'}">${escapeHtml(m.initials)}</div>
+          <div class="alumni-avatar" style="width:40px;height:40px;background:linear-gradient(135deg,${m.color || '#00A859'}40,${m.color || '#00A859'}20);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:${readableInk(m.color || '#00A859')}">${escapeHtml(m.initials)}</div>
           <div style="flex:1;min-width:0">
             <div style="font-weight:700;font-size:13px">${escapeHtml(m.name)}</div>
             <div style="font-size:11px;color:var(--text-secondary)">${escapeHtml([m.role, m.company].filter(Boolean).join(' · ') || 'DIC Alumni')}</div>
@@ -191,11 +191,11 @@ function showMentorModal(mentorName = '', mentorId = null) {
       <div style="font-size:15px;font-weight:700;margin-top:2px">${escapeHtml(mentorName)}</div>
     </div>
     <div class="input-group">
-      <label class="input-label">What do you need help with?</label>
+      <label class="input-label" for="mentor-subject">What do you need help with?</label>
       <input type="text" id="mentor-subject" class="form-input" placeholder="e.g. Transitioning from web development into ML engineering" required />
     </div>
     <div class="input-group">
-      <label class="input-label">Your message</label>
+      <label class="input-label" for="mentor-message">Your message</label>
       <textarea id="mentor-message" class="form-input" rows="5" placeholder="Introduce yourself, your background and what specific guidance would help most…"></textarea>
     </div>
     <button class="btn btn-primary btn-full" onclick="submitMentorRequest(${mentorId})"><i data-lucide="handshake" class="ui-icon"></i> Send Request</button>
@@ -207,7 +207,7 @@ async function renderMentorshipHealthAnalytics() {
   const dist = document.getElementById('outcome-distribution');
   if (!grid) return;
 
-  grid.innerHTML = '<div class="queue-sub" style="padding:12px">Loading…</div>';
+  grid.innerHTML = renderSkeletonCards(3);
   const res = await API.getStatsAnalytics();
 
   if (apiFailed(res)) {

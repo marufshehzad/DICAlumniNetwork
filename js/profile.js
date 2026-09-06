@@ -111,7 +111,7 @@ async function viewAlumniProfile(id) {
         <div style="flex:1">
           <div class="onboarding-title" style="font-size:18px">${escapeHtml(profile.name)}</div>
           <div class="onboarding-sub">${escapeHtml([profile.jobTitle, profile.company].filter(Boolean).join(" · ") || "Profile incomplete")}</div>
-          <div style="font-size:11px;color:var(--teal);margin-top:2px"><i data-lucide="graduation-cap" class="ui-icon"></i> ${val(profile.degree)}${profile.batch ? ` (Batch ${escapeHtml(profile.batch)})` : ""} · ${val(profile.department)}</div>
+          <div style="font-size:11px;color:var(--teal-text);margin-top:2px"><i data-lucide="graduation-cap" class="ui-icon"></i> ${val(profile.degree)}${profile.batch ? ` (Batch ${escapeHtml(profile.batch)})` : ""} · ${val(profile.department)}</div>
         </div>
         <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
       </div>
@@ -124,7 +124,7 @@ async function viewAlumniProfile(id) {
         <div style="display:flex;align-items:center;gap:8px">
           <i data-lucide="link-2" class="ui-icon"></i>
           <div>
-            <div style="font-weight:700;font-size:13px;color:var(--teal)">You have ${shared.length} thing${shared.length === 1 ? '' : 's'} in common</div>
+            <div style="font-weight:700;font-size:13px;color:var(--teal-text)">You have ${shared.length} thing${shared.length === 1 ? '' : 's'} in common</div>
             <div style="font-size:11px;color:var(--text-secondary)">${shared.map(escapeHtml).join(' · ')}</div>
           </div>
         </div>
@@ -146,13 +146,13 @@ async function viewAlumniProfile(id) {
 
       <!-- ABOUT BIO -->
       <div class="profile-section-card">
-        <div class="profile-section-title" style="font-size:13px;font-weight:700;color:var(--teal)"><i data-lucide="pin" class="ui-icon"></i> About &amp; Biography</div>
+        <div class="profile-section-title" style="font-size:13px;font-weight:700;color:var(--teal-text)"><i data-lucide="pin" class="ui-icon"></i> About &amp; Biography</div>
         <div style="font-size:13px;color:var(--text-primary);margin-top:6px">${val(profile.bio)}</div>
       </div>
 
       <!-- CAREER & LOCATION -->
       <div class="profile-section-card">
-        <div class="profile-section-title" style="font-size:13px;font-weight:700;color:var(--teal)"><i data-lucide="briefcase" class="ui-icon"></i> Professional &amp; Location Details</div>
+        <div class="profile-section-title" style="font-size:13px;font-weight:700;color:var(--teal-text)"><i data-lucide="briefcase" class="ui-icon"></i> Professional &amp; Location Details</div>
         <div class="field-grid-2" style="margin-top:8px">
           <div><div class="field-label">Current Role &amp; Employer</div><div class="field-val">${profile.jobTitle || profile.company ? escapeHtml([profile.jobTitle, profile.company].filter(Boolean).join(" at ")) : unset}</div></div>
           <div><div class="field-label">Geographical Location</div><div class="field-val"><i data-lucide="map-pin" class="ui-icon"></i> ${val(profile.location)}</div></div>
@@ -163,7 +163,7 @@ async function viewAlumniProfile(id) {
 
       <!-- SKILLS -->
       <div class="profile-section-card">
-        <div class="profile-section-title" style="font-size:13px;font-weight:700;color:var(--teal)"><i data-lucide="zap" class="ui-icon"></i> Core Expertise &amp; Skills</div>
+        <div class="profile-section-title" style="font-size:13px;font-weight:700;color:var(--teal-text)"><i data-lucide="zap" class="ui-icon"></i> Core Expertise &amp; Skills</div>
         <div class="alumni-tags" style="margin-top:8px">
           ${(profile.skills && profile.skills.length) ? profile.skills.map(s => `<span class="alumni-tag">${escapeHtml(s)}</span>`).join('') : unset}
         </div>
@@ -519,9 +519,9 @@ function render10SectionProfile(filterSection = 'all') {
           <span class="privacy-badge public"><i data-lucide="globe" class="ui-icon"></i> Public</span>
         </div>
         <div class="field-grid-2 mb-16">
-          <div class="profile-field-row"><div><div class="field-label">LinkedIn</div><div class="field-val">${p.linkedin && safeUrl(p.linkedin) ? `<a href="${escapeHtml(safeUrl(p.linkedin))}" target="_blank" rel="noopener noreferrer" style="color:var(--teal)">${escapeHtml(p.linkedin)}</a>` : escapeHtml(p.linkedin)}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">GitHub</div><div class="field-val">${p.github && safeUrl(p.github) ? `<a href="${escapeHtml(safeUrl(p.github))}" target="_blank" rel="noopener noreferrer" style="color:var(--teal)">${escapeHtml(p.github)}</a>` : escapeHtml(p.github)}</div></div></div>
-          <div class="profile-field-row"><div><div class="field-label">Personal Portfolio</div><div class="field-val">${p.website && safeUrl(p.website) ? `<a href="${escapeHtml(safeUrl(p.website))}" target="_blank" rel="noopener noreferrer" style="color:var(--teal)">${escapeHtml(p.website)}</a>` : escapeHtml(p.website)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">LinkedIn</div><div class="field-val">${p.linkedin && safeUrl(p.linkedin) ? `<a href="${escapeHtml(safeUrl(p.linkedin))}" target="_blank" rel="noopener noreferrer" style="color:var(--teal-text)">${escapeHtml(p.linkedin)}</a>` : escapeHtml(p.linkedin)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">GitHub</div><div class="field-val">${p.github && safeUrl(p.github) ? `<a href="${escapeHtml(safeUrl(p.github))}" target="_blank" rel="noopener noreferrer" style="color:var(--teal-text)">${escapeHtml(p.github)}</a>` : escapeHtml(p.github)}</div></div></div>
+          <div class="profile-field-row"><div><div class="field-label">Personal Portfolio</div><div class="field-val">${p.website && safeUrl(p.website) ? `<a href="${escapeHtml(safeUrl(p.website))}" target="_blank" rel="noopener noreferrer" style="color:var(--teal-text)">${escapeHtml(p.website)}</a>` : escapeHtml(p.website)}</div></div></div>
         </div>
       </div>
     `;
@@ -599,11 +599,11 @@ function showEditProfileV2() {
     </div>
 
     <form onsubmit="handleSaveProfileV2(event)" style="display:flex;flex-direction:column;gap:14px;margin-top:14px;max-height:60vh;overflow-y:auto;padding-right:6px">
-      <div class="input-group"><label class="input-label">Full Name</label><input type="text" id="edit-fullname" class="form-input" value="${p.fullName}" required /></div>
-      <div class="input-group"><label class="input-label">Current Company &amp; Job Title</label><input type="text" id="edit-company" class="form-input" value="${p.currentCompany}" required /></div>
-      <div class="input-group"><label class="input-label">Technical Skills (Comma separated)</label><input type="text" id="edit-skills" class="form-input" value="${p.skills}" required /></div>
-      <div class="input-group"><label class="input-label">LinkedIn Profile URL</label><input type="url" id="edit-linkedin" class="form-input" value="${p.linkedin}" /></div>
-      <div class="input-group"><label class="input-label">Biography</label><textarea id="edit-bio" class="form-input" rows="3">${p.bio}</textarea></div>
+      <div class="input-group"><label class="input-label" for="edit-fullname">Full Name</label><input type="text" id="edit-fullname" class="form-input" value="${p.fullName}" required /></div>
+      <div class="input-group"><label class="input-label" for="edit-company">Current Company &amp; Job Title</label><input type="text" id="edit-company" class="form-input" value="${p.currentCompany}" required /></div>
+      <div class="input-group"><label class="input-label" for="edit-skills">Technical Skills (Comma separated)</label><input type="text" id="edit-skills" class="form-input" value="${p.skills}" required /></div>
+      <div class="input-group"><label class="input-label" for="edit-linkedin">LinkedIn Profile URL</label><input type="url" id="edit-linkedin" class="form-input" value="${p.linkedin}" /></div>
+      <div class="input-group"><label class="input-label" for="edit-bio">Biography</label><textarea id="edit-bio" class="form-input" rows="3">${p.bio}</textarea></div>
       <button type="submit" class="btn btn-primary btn-full mt-16"><i data-lucide="save" class="ui-icon"></i> Save Profile &amp; Update ID Card</button>
     </form>
   `);
@@ -642,7 +642,7 @@ function handleSaveProfileV2(e) {
 function renderEngagementScore() {
   const el = document.getElementById('engagement-score-display');
   if (!el) return;
-  el.innerHTML = '<div class="engagement-score-display"><div class="score-level">Loading…</div></div>';
+  el.innerHTML = renderSkeletonCards(1);
 
   loadPlatformStats().then(s => {
     if (!s) {
@@ -675,7 +675,7 @@ function renderEngagementScore() {
 function renderAlumniBadges() {
   const el = document.getElementById('alumni-badges');
   if (!el) return;
-  el.innerHTML = '<div class="queue-sub" style="padding:12px">Loading…</div>';
+  el.innerHTML = renderSkeletonCards(3);
 
   Promise.all([loadPlatformStats(), loadMyProfile()]).then(([s, profile]) => {
     if (!s) {
@@ -691,7 +691,7 @@ function renderAlumniBadges() {
       { icon: 'ticket', title: 'Event Attendee', desc: 'Registered for an event', earned: (s.my_registrations || 0) >= 1 },
       { icon: 'hexagon', title: 'Chapter Member', desc: 'Joined a chapter', earned: (s.my_chapters || 0) >= 1 },
       { icon: 'users', title: 'Connected', desc: 'Has an accepted connection', earned: (s.my_connections || 0) >= 1 },
-      { icon: 'badge-check', title: 'Verified Alumnus', desc: 'Verified by an administrator', earned: !!verified }
+      { icon: 'badge-check', title: 'Verified Alumni', desc: 'Verified by an administrator', earned: !!verified }
     ];
     const earned = candidates.filter(b => b.earned);
 
@@ -811,7 +811,7 @@ async function showEditProfileV2() {
 
   const sel = (id, label, options, value, allowBlank = true) => `
     <div class="input-group">
-      <label class="input-label">${escapeHtml(label)}</label>
+      <label class="input-label" for="${id}">${escapeHtml(label)}</label>
       <select id="${id}" class="form-select">
         ${allowBlank ? `<option value="">Not specified</option>` : ''}
         ${options.map(o => `<option ${String(value) === o ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
@@ -820,7 +820,7 @@ async function showEditProfileV2() {
 
   const txt = (id, label, value, type = 'text', placeholder = '') => `
     <div class="input-group">
-      <label class="input-label">${escapeHtml(label)}</label>
+      <label class="input-label" for="${id}">${escapeHtml(label)}</label>
       <input type="${type}" id="${id}" class="form-input" placeholder="${escapeHtml(placeholder)}"
              value="${escapeHtml(value ?? '')}" />
     </div>`;
@@ -1004,7 +1004,7 @@ async function showDeleteAccount() {
       </p>
       <button class="btn btn-outline btn-full" onclick="exportUserData('json')"><i data-lucide="package" class="ui-icon"></i> Export my data first</button>
       <div class="input-group mt-16">
-        <label class="input-label">Reason (optional)</label>
+        <label class="input-label" for="delete-reason">Reason (optional)</label>
         <textarea id="delete-reason" class="form-input" rows="3" placeholder="Help us understand why you are leaving…"></textarea>
       </div>
       <button class="btn btn-danger btn-full" onclick="confirmAccountDeletion()">Request account deletion</button>
