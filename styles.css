@@ -400,7 +400,10 @@ body {
   border: 1px solid rgba(11, 56, 151,0.4);
   border-radius: 14px;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 0 20px rgba(11, 56, 151,0.3);
+  /* Was a 20px zero-offset blue halo. On the light login screen that reads as
+     a chromatic smear rather than lighting; neutral elevation lifts the tile
+     off the page without tinting the pixels around it. */
+  box-shadow: 0 2px 10px rgba(16, 32, 56, 0.12);
 }
 .brand-logo-circle.small { width: 36px; height: 36px; border-radius: 10px; }
 .brand-name { font-size: 24px; font-weight: 800; background: linear-gradient(135deg, var(--primary-light), var(--teal-text)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
@@ -971,10 +974,13 @@ body {
 .alert-item.info { background: rgba(0,212,170,0.06); border-color: rgba(0,212,170,0.15); }
 .alert-item.success { background: rgba(52,211,153,0.06); border-color: rgba(52,211,153,0.15); }
 .alert-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
-.alert-dot.red { background: var(--red); box-shadow: 0 0 8px var(--red); }
-.alert-dot.amber { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
-.alert-dot.teal { background: var(--teal); box-shadow: 0 0 8px var(--teal); }
-.alert-dot.green { background: var(--green); box-shadow: 0 0 8px var(--green); }
+/* These carried an 8px halo in their own colour — as wide as the dot itself —
+   which said nothing the dot's colour had not already said, and blurred its
+   edge doing it. The state is the colour; the dot just needs to be crisp. */
+.alert-dot.red { background: var(--red); }
+.alert-dot.amber { background: var(--amber); }
+.alert-dot.teal { background: var(--teal); }
+.alert-dot.green { background: var(--green); }
 .alert-title { font-size: 13px; font-weight: 600; }
 .alert-sub { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
 
@@ -1790,7 +1796,7 @@ body.password-change-required .topbar-actions {
 .career-timeline { position: relative; padding-left: 24px; }
 .career-timeline::before { content: ''; position: absolute; left: 8px; top: 0; bottom: 0; width: 2px; background: linear-gradient(to bottom, var(--primary), var(--teal)); }
 .timeline-item { position: relative; margin-bottom: 20px; }
-.timeline-dot { position: absolute; left: -20px; top: 4px; width: 12px; height: 12px; background: var(--primary); border-radius: 50%; border: 2px solid var(--bg-deep); box-shadow: 0 0 8px var(--primary-glow); }
+.timeline-dot { position: absolute; left: -20px; top: 4px; width: 12px; height: 12px; background: var(--primary); border-radius: 50%; border: 2px solid var(--bg-deep); box-shadow: 0 0 0 2px var(--bg-page, #fff); }
 .timeline-company { font-size: 14px; font-weight: 700; }
 .timeline-role { font-size: 12px; color: var(--primary-light); margin-top: 1px; }
 .timeline-period { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
@@ -3291,7 +3297,9 @@ textarea.form-input { resize: vertical; min-height: 100px; }
 .sis-integration-name { font-size: 13px; font-weight: 700; }
 .sis-integration-type { font-size: 11px; color: var(--text-muted); }
 .sis-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.sis-status-dot.connected { background: var(--green); box-shadow: 0 0 6px var(--green); }
+/* `pending` below never had a glow, so the halo was decoration on one state
+   rather than a signal. Colour carries the state for both. */
+.sis-status-dot.connected { background: var(--green); }
 .sis-status-dot.pending { background: var(--amber); }
 
 /* ─── OFFLINE SYNC PANEL (REQ-10) ─── */
