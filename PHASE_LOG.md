@@ -3290,7 +3290,8 @@ rather than left as a capability with no interface.
 
 **Status:** **COMPLETE**
 **Date:** 2026-09-07
-**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Commit:** `e409534`
+**Parent:** `e2d22b3`
 
 ### Current state before implementation
 
