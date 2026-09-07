@@ -4344,7 +4344,8 @@ RELEASE_CANDIDATE.md §10. No further engineering phase is planned.
 
 **Status:** **COMPLETE**
 **Date:** 2026-09-08
-**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Commit:** `dd2a098`
+**Parent:** `fd2c8f1`
 
 Two user-facing complaints, both fixed. The second turned out to be a single
 CSS bug that broke every dialog in the application on a phone.
