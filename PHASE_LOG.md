@@ -3089,7 +3089,7 @@ groups readable. Verified and unverified states both checked in the interface.
 
 **Status:** **COMPLETE**
 **Date:** 2026-09-07
-**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Commit:** `1de41f8`
 **Parent:** `6b48421`
 
 ### Current state before implementation
