@@ -3558,7 +3558,8 @@ database ends the phase at 18 users, 14 profiles, 21 events, 3 jobs, 1 poll and
 
 **Status:** **COMPLETE**
 **Date:** 2026-09-08
-**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Commit:** `62d318a`
+**Parent:** `8b7a00e`
 
 ### Baseline before implementation
 
