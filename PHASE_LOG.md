@@ -3082,3 +3082,204 @@ groups readable. Verified and unverified states both checked in the interface.
 ### Next phase
 
 **Phase 7C-2.** Not started.
+
+---
+
+## PHASE 7C-2 — Jobs, Applications, Referrals & Polls
+
+**Status:** **COMPLETE**
+**Date:** 2026-09-07
+**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Parent:** `6b48421`
+
+### Current state before implementation
+
+Re-audited against the running system, since earlier phases had already closed
+parts of the Master Audit.
+
+| Item | State |
+|---|---|
+| Job create / edit / delete, with ownership | **READY** |
+| Job close, reopen, deadline, description | **MISSING** |
+| `jobs.days_ago` | **DEAD** — stored 2, 4 and 1 against three rows created the same day |
+| Apply, and the poster's applicant list | **READY** |
+| Change an application's status | **MISSING** — a column with a vocabulary and no route |
+| Applicant seeing their own status | **MISSING** |
+| Applicant list leaking contact data | **READY** — it returns none |
+| Referral request and read | **READY** |
+| Referral accept / decline | **MISSING** — every row ever written was still 'pending' |
+| Referral list disclosing the requester's email | **BROKEN** |
+| Poll admin CRUD | **MISSING** — the only poll in the database arrived by seed |
+| Draft state, `created_by` | **MISSING** — `is_active` is a boolean and cannot express a draft |
+| `closes_at` enforced | **BROKEN** |
+| One vote per member | **READY** |
+| Job search and location filters | **READY** |
+| Audit for job/application/referral/poll actions | **MISSING** except Job Deleted |
+
+### Two defects, found by looking rather than by being told
+
+**A poll that had closed was still taking votes.** `GET /api/polls/active`
+selected on `is_active` alone and the vote handler checked the same flag.
+`closes_at` was written and never read, so the seeded poll — closing time
+**19 August** — was still being offered on **7 September** and would still have
+recorded a vote. A closing time that closes nothing is worse than none, because
+the interface displays it.
+
+**A referral disclosed an address its owner had hidden.** The list returned
+`requester.email` unconditionally. A member who set email to 'private' had it
+handed to whoever they asked for a referral — the one place nobody had checked
+against the gate the directory and profile both honour. It now passes the same
+gate: visible to the member, to staff (email carries a staff bypass), and
+otherwise only while the member leaves it visible.
+
+### Database — `migrate_v15.js` / `schema_v15.sql`
+
+Dry-run first, applied in a transaction, with fingerprints proving the substance
+of every job, poll and application was byte-identical afterwards.
+
+Added: `jobs.description`, `jobs.deadline`, `jobs.status`, `jobs.closed_at`,
+`jobs.closed_by`; `job_applications.status_changed_at` and `.status_changed_by`;
+`job_referrals.responded_at`; `polls.status`, `.created_by`, `.opened_at`,
+`.closed_at`. Constraints `jobs_status_valid` and `polls_status_valid`; indexes
+on both status columns.
+
+Dropped: **`jobs.days_ago`**, a fabricated relative date nothing read, and
+**`polls.is_active`**, a second answer to "is this poll live" — its value
+carried into `status` first, so an active poll became open and none became a
+draft retroactively.
+
+**No status vocabulary was changed.** The audit found
+`job_applications_status_check` already allowing submitted / reviewing /
+shortlisted / rejected / hired, and `job_referrals_status_check` already
+allowing exactly pending / accepted / declined. Renaming 'submitted' to
+'pending' would have churned the schema to match a word rather than a
+behaviour; the interface labels it "Received" instead. The migration asserts
+that no application status was rewritten.
+
+Nothing was back-filled: 0 jobs gained a description, 0 gained a deadline, none
+was closed, and no poll became a draft. Each asserted.
+
+### API
+
+| Route | Change |
+|---|---|
+| `GET /api/jobs` | `is_open` and `is_expired` derived; `?status=` filter; the caller's own application status |
+| `POST /api/jobs` | description, validated deadline; **Job Created** audited |
+| `PUT /api/jobs/:id` | description, deadline, open/close; audited as Created / Edited / Closed / Reopened |
+| `POST /api/jobs/:id/apply` | refuses a closed or expired posting |
+| **`GET /api/my-applications`** | **new** — the applicant's own applications and their state |
+| **`PUT /api/job-applications/:id/status`** | **new** — poster or admin; notifies the applicant; audited |
+| **`PUT /api/job-referrals/:id`** | **new** — accept or decline, once, by the addressee only |
+| `GET /api/job-referrals` | the requester's email now passes the privacy gate |
+| **`GET /api/polls`**, **`/:id/results`**, **`POST /api/polls`**, **`PUT /api/polls/:id`**, **`PUT /api/polls/:id/status`**, **`DELETE /api/polls/:id`** | **new** — the poll lifecycle, staff only |
+| `GET /api/polls/active`, `POST /api/polls/:id/vote` | honour status **and** `closes_at` |
+
+No endpoint was duplicated: the existing `PUT /api/jobs/:id` carries close and
+reopen rather than a second route.
+
+### Permissions
+
+- A job is edited, closed and deleted by its **poster**, or by `ADMIN_ROLES` —
+  the policy that already existed. A moderator is not automatically an owner.
+- An application's status is changed by the **job's poster** or an
+  administrator. Ownership is resolved from the job, never from the request.
+- A referral is answered **only by the person it was addressed to**. An
+  administrator is deliberately refused: accepting a referral is a personal
+  vouching, and nobody should be able to vouch on someone else's behalf.
+- Polls are created, edited, opened and closed by `MODERATOR_ROLES`; deleted by
+  `ADMIN_ROLES` only, and only when nobody has voted.
+- Every Phase 7C-1 `requireVerified` gate is untouched and re-asserted here.
+
+### Notifications and audit
+
+New application status → the applicant is told, naming the role and the state
+and nothing about other candidates. Referral accepted or declined → the
+requester is told. Both use the existing in-app notifications table.
+
+Audited: Job Created, Job Edited, Job Closed, Job Reopened, Job Deleted,
+Application Status Changed, Referral Accepted, Referral Declined, Poll Created,
+Poll Edited, Poll Opened, Poll Closed, Poll Deleted. The suite asserts each is
+present and that no entry carries a credential.
+
+### Interface
+
+Jobs gained a state badge that distinguishes **Open**, **Apply by <date>**,
+**Deadline passed** and **Closed**; a Close / Reopen control for the poster;
+description and deadline in the form; a status select on each applicant; and a
+**My Applications** panel — a candidate could previously apply and never learn
+what happened. Referrals gained **Accept** and **Decline**, shown only to the
+addressee while the request is pending, and a state pill otherwise.
+
+Polls gained a staff page — Draft / Open / Closed, with Edit, Open to members,
+Close, Results and Delete. A poll whose closing time has passed reads *"Closed —
+its closing time has passed"* even while its stored status is open, because
+`is_live` is the server's answer and the badge follows it.
+
+**A layout defect fixed on the way:** `.jobs-layout` was a grid whose column
+sized itself to the job cards' min-content — 357.8px of track inside a 344px
+container at 360px wide, clipped by the body's overflow guard rather than
+scrolling. `minmax(0, 1fr)` plus `min-width: 0` on the children. Pre-existing;
+found by the mobile sweep.
+
+### Mobile and accessibility
+
+Jobs and polls at 360 · 390 · 430 · 768 · 1024 · 1280 · 1440: **no overflow,
+nothing clipped** after the grid fix. Every new control is a labelled
+`type="button"`; the applicant status select carries a visually-hidden label
+naming the applicant; state is carried by an icon and a word, never colour
+alone; and the poll editor was checked against Phase 7A's modal rule — a
+backdrop click leaves the form open with its typed value intact.
+
+### Tests
+
+```
+27 suites                    2,065 passed, 0 failed
+  of which phase7c2_jobs_polls     114   (new)
+  the 26 pre-existing suites     1,951   unchanged, still 0 failed
+```
+
+`tests/phase7c2_jobs_polls.js` covers §23 A–T: the job lifecycle including a
+deadline moved into the past to prove expiry is derived, ownership across all
+five roles, application status transitions and their refusals, the applicant's
+own view, the absence of ten contact fields from the employer's list, referral
+accept and decline and the refusal to answer twice, the email privacy gate in
+both directions, poll draft/open/closed, one-vote-per-member, a poll past its
+closing time refusing a vote, staff-only administration, the refusal to delete a
+poll holding votes, the Phase 7C-1 gate, and every audit action.
+
+### Test cleanup
+
+The suite removes every account, job, application, referral, poll and vote it
+creates, and does so on the error path as well — a lesson from Phase 7C-1,
+where two aborted runs left rows that an unrelated `acceptance` assertion
+picked up through `LIMIT 1` with no `ORDER BY`. Confirmed afterwards: 3 jobs,
+1 application, 0 referrals, 1 poll, 0 votes — the same as before the phase, and
+18 users / 14 profiles / 99 places unchanged.
+
+### Regressions
+
+None. Nothing pre-existing was deleted and no assertion was weakened.
+
+One defect in my own work, found by the §22 cross-check rather than by a test:
+the admin poll list drew per-option bars from `p.counts`, which the list
+endpoint did not return — every bar would have read zero. The list now carries
+the tally, and `GET /api/polls/:id/results` is used by the Results action
+rather than left as a capability with no interface.
+
+### Limitations
+
+- **A closed poll cannot be reopened.** Votes were cast under a stated closing;
+  the correct move is a new poll. The server refuses it explicitly.
+- **An open poll cannot be edited.** Votes are recorded against option
+  positions, so changing the options would silently reassign them.
+- **Job status has two values.** open and closed, plus expired derived from the
+  deadline. No draft, because nothing in the workflow asked for one.
+- **Referral notifications are in-app only.** There is no email path for them,
+  in keeping with the rest of the platform.
+- **The seeded poll remains open with a past closing time.** It now reads as
+  closed everywhere and refuses votes; the stored status was left alone rather
+  than rewritten, since that is a decision for whoever owns the poll.
+
+### Next phase
+
+**Phase 7C-3.** Not started.

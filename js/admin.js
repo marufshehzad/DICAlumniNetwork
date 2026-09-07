@@ -341,6 +341,206 @@ async function renderAuditLog(targetId = 'audit-log') {
     </div>`).join('');
 }
 
+/* ═══ POLLS (Phase 7C-2) ═══════════════════════════════════
+   Every figure here is a count the server returned. A poll is drafted, then
+   opened, then closed; it is only deleted while nobody has answered it. */
+
+const POLL_STATE_LABEL = { draft: 'Draft', open: 'Open', closed: 'Closed' };
+
+async function renderPollsAdmin() {
+  const el = document.getElementById('polls-admin-list');
+  if (!el) return;
+  el.innerHTML = renderSkeletonCards(3);
+
+  const rows = await API.getPolls();
+  if (apiFailed(rows)) {
+    el.innerHTML = renderErrorState(rows?.error || 'Could not load polls.', 'renderPollsAdmin()');
+    return;
+  }
+  if (!rows.length) {
+    el.innerHTML = renderEmptyState('<i data-lucide="vote" class="ui-icon"></i>',
+      'No polls yet', 'Create one to ask members a question.');
+    if (window.lucide) lucide.createIcons();
+    return;
+  }
+
+  el.innerHTML = rows.map(p => {
+    /* "Open" in the database and "taking votes" are not the same thing once a
+       closing time has passed; is_live is the server's answer to the second. */
+    const live = p.is_live === true;
+    const state = p.status === 'open' && !live ? 'closed' : p.status;
+    return `
+    <div class="glass-card mt-16 poll-admin-card">
+      <div class="poll-admin-head">
+        <div>
+          <h2 class="card-title">${escapeHtml(p.question)}</h2>
+          <div class="poll-admin-meta">
+            ${escapeHtml(POLL_STATE_LABEL[state] || state)}
+            ${p.status === 'open' && !live ? ' — its closing time has passed' : ''}
+            · ${p.total} vote${p.total === 1 ? '' : 's'}
+            ${p.created_by_name ? ' · by ' + escapeHtml(p.created_by_name) : ''}
+            ${p.closes_at ? ' · closes ' + escapeHtml(formatDate(p.closes_at)) : ''}
+          </div>
+        </div>
+        <span class="poll-state is-${escapeHtml(state)}">${escapeHtml(POLL_STATE_LABEL[state] || state)}</span>
+      </div>
+
+      <div class="poll-admin-options">
+        ${p.options.map((o, i) => {
+          const n = (p.counts && p.counts[i]) || 0;
+          const pct = p.total ? Math.round(n / p.total * 100) : 0;
+          return `<div class="poll-admin-option">
+            <span class="poll-opt-label">${escapeHtml(o)}</span>
+            <span class="poll-opt-bar"><span style="width:${pct}%"></span></span>
+            <span class="poll-opt-n">${n}</span>
+          </div>`;
+        }).join('')}
+      </div>
+
+      <div class="poll-admin-actions">
+        ${p.status === 'draft' ? `
+          <button type="button" class="btn btn-outline btn-sm" onclick="showPollEditor(${p.id})">
+            <i data-lucide="pen-line" class="ui-icon"></i> Edit</button>
+          <button type="button" class="btn btn-primary btn-sm" onclick="setPollStatus(${p.id}, ${jsArg('open')})">
+            <i data-lucide="unlock" class="ui-icon"></i> Open to members</button>` : ''}
+        ${p.status === 'open' ? `
+          <button type="button" class="btn btn-outline btn-sm" onclick="setPollStatus(${p.id}, ${jsArg('closed')})">
+            <i data-lucide="lock" class="ui-icon"></i> Close</button>` : ''}
+        ${p.total === 0 && isSuperAdmin() ? `
+          <button type="button" class="btn btn-outline btn-sm" onclick="deletePollPrompt(${p.id})">
+            <i data-lucide="trash-2" class="ui-icon"></i> Delete</button>` : ''}
+        ${p.total > 0 ? `<button type="button" class="btn btn-outline btn-sm" onclick="showPollResults(${p.id})">
+            <i data-lucide="bar-chart-3" class="ui-icon"></i> Results</button>
+          <span class="poll-admin-note">A poll with votes is closed, never deleted.</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  if (window.lucide) lucide.createIcons();
+}
+
+/* One poll's answers on their own, for a poll with more options than the
+   inline bars read comfortably. Uses GET /api/polls/:id/results — the endpoint
+   exists for exactly this, so it is called rather than left unused. */
+async function showPollResults(id) {
+  const p = await API.getPollResults(id);
+  if (apiFailed(p)) { showToast(`⚠ ${p?.error || 'Could not load the results.'}`); return; }
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title"><i data-lucide="bar-chart-3" class="ui-icon"></i> Results</div>
+      <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
+    </div>
+    <p style="font-size:13px;font-weight:600;margin-bottom:4px">${escapeHtml(p.question)}</p>
+    <p style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">
+      ${p.total} vote${p.total === 1 ? '' : 's'} · ${escapeHtml(POLL_STATE_LABEL[p.status] || p.status)}</p>
+    <div class="poll-admin-options">
+      ${p.options.map((o, i) => {
+        const n = p.counts[i] || 0;
+        const pct = p.total ? Math.round(n / p.total * 100) : 0;
+        return `<div class="poll-admin-option">
+          <span class="poll-opt-label">${escapeHtml(o)}</span>
+          <span class="poll-opt-bar"><span style="width:${pct}%"></span></span>
+          <span class="poll-opt-n">${n} · ${pct}%</span></div>`;
+      }).join('')}
+    </div>
+    <p style="font-size:11.5px;color:var(--text-secondary);margin-top:12px">
+      Counts only. Which member chose what is not shown.</p>
+  `);
+}
+
+function isSuperAdmin() {
+  return (state.currentUser || {}).role === 'super_admin';
+}
+
+/* Draft editor. Only a draft may be edited — the server refuses anything
+   else, because votes are recorded against option positions. */
+async function showPollEditor(id) {
+  let poll = null;
+  if (id) {
+    const rows = await API.getPolls();
+    if (!apiFailed(rows)) poll = rows.find(p => p.id === id) || null;
+  }
+  const options = poll ? poll.options : ['', ''];
+
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title"><i data-lucide="vote" class="ui-icon"></i> ${poll ? 'Edit poll' : 'New poll'}</div>
+      <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
+    </div>
+    <form onsubmit="submitPoll(event, ${poll ? poll.id : 'null'})">
+      <div class="input-group">
+        <label class="input-label" for="poll-question">Question</label>
+        <input type="text" id="poll-question" class="form-input" required maxlength="255"
+               placeholder="What would you like to ask members?" value="${poll ? escapeHtml(poll.question) : ''}" />
+      </div>
+      <div class="input-group">
+        <label class="input-label" for="poll-options">Options — one per line, at least two</label>
+        <textarea id="poll-options" class="form-input" rows="5" required
+                  placeholder="Friday&#10;Saturday&#10;Sunday">${escapeHtml(options.join('\n'))}</textarea>
+      </div>
+      <div class="input-group">
+        <label class="input-label" for="poll-closes">Closing time (optional)</label>
+        <input type="datetime-local" id="poll-closes" class="form-input"
+               value="${poll && poll.closes_at ? escapeHtml(String(poll.closes_at).slice(0, 16)) : ''}" />
+        <span class="field-hint" style="font-size:11px;color:var(--text-secondary)">After this, the poll stops accepting votes.</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button type="submit" class="btn btn-primary">${poll ? 'Save draft' : 'Create draft'}</button>
+        <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      </div>
+      <p style="font-size:12px;color:var(--text-secondary);margin-top:10px">
+        A new poll is saved as a draft. Members see it only once you open it.
+      </p>
+    </form>
+  `);
+}
+
+async function submitPoll(e, id) {
+  e.preventDefault();
+  const question = document.getElementById('poll-question').value.trim();
+  const options = document.getElementById('poll-options').value
+    .split('\n').map(o => o.trim()).filter(Boolean);
+  const closesAt = document.getElementById('poll-closes').value || null;
+  if (options.length < 2) { showToast('⚠ A poll needs at least two options.'); return; }
+
+  const res = id ? await API.updatePoll(id, { question, options, closesAt })
+                 : await API.createPoll({ question, options, closesAt });
+  if (apiFailed(res)) { showToast(`⚠ ${res?.error || 'Could not save the poll.'}`); return; }
+  closeModal();
+  showToast(id ? '✅ Draft saved.' : '✅ Poll created as a draft.');
+  renderPollsAdmin();
+}
+
+async function setPollStatus(id, status) {
+  const res = await API.setPollStatus(id, status);
+  if (apiFailed(res)) { showToast(`⚠ ${res?.error || 'Could not change the poll.'}`); return; }
+  showToast(status === 'open' ? '✅ Poll is now open to members.' : '✅ Poll closed.');
+  renderPollsAdmin();
+}
+
+function deletePollPrompt(id) {
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title"><i data-lucide="trash-2" class="ui-icon"></i> Delete this poll?</div>
+      <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
+    </div>
+    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:14px">
+      Nobody has voted in it, so nothing is lost. A poll that has votes is closed instead.
+    </p>
+    <div style="display:flex;gap:8px">
+      <button type="button" class="btn btn-danger" onclick="confirmDeletePoll(${id})">Delete poll</button>
+      <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    </div>
+  `);
+}
+
+async function confirmDeletePoll(id) {
+  const res = await API.deletePoll(id);
+  if (apiFailed(res)) { showToast(`⚠ ${res?.error || 'Could not delete the poll.'}`); return; }
+  closeModal();
+  showToast('✅ Poll deleted.');
+  renderPollsAdmin();
+}
+
 // ─── ADMIN SECTIONS ─────────────────────────────────────────
 function switchAdmin(section, btn) {
   document.querySelectorAll('.admin-tabs .chart-tab').forEach(t => t.classList.remove('active'));

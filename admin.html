@@ -372,6 +372,10 @@
                 <div class="card-header"><h2 class="card-title">Referral Requests</h2></div>
                 <div id="job-referrals-list"></div>
               </div>
+              <div class="glass-card mt-16">
+                <div class="card-header"><h2 class="card-title">My Applications</h2></div>
+                <div id="my-applications-list"></div>
+              </div>
             </div>
         </div>
       </div>
@@ -588,6 +592,20 @@
           </div>
         </div>
         <div id="moderation-panel"></div>
+      </div>
+
+      <!-- ============ POLLS (Phase 7C-2) ============ -->
+      <div class="page hidden" id="page-polls">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title"><i data-lucide="vote" class="ui-icon"></i> Polls</h1>
+            <p class="page-subtitle">Draft a question, open it to members, and close it when you have your answer</p>
+          </div>
+          <button type="button" class="btn btn-primary" onclick="showPollEditor()">
+            <i data-lucide="plus" class="ui-icon"></i> New Poll
+          </button>
+        </div>
+        <div id="polls-admin-list"></div>
       </div>
 
       <!-- ============ BROADCASTS ============ -->

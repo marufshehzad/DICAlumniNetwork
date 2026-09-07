@@ -30,6 +30,7 @@ const ADMIN_NAV = [
   { id: 'chapters',       icon: '⬡',             label: 'Chapters',         roles: ['univ_admin', 'super_admin'] },
   { id: 'moderation',     icon: 'shield-check',  label: 'Moderation',       roles: ['moderator', 'dept_admin', 'univ_admin', 'super_admin'] },
   { id: 'broadcasts',     icon: 'megaphone',     label: 'Broadcasts',       roles: ['univ_admin', 'super_admin'] },
+  { id: 'polls',          icon: 'vote',          label: 'Polls',            roles: ['moderator', 'dept_admin', 'univ_admin', 'super_admin'] },
   { id: 'analytics',      icon: '▦',             label: 'Reports',          roles: ['dept_admin', 'univ_admin', 'super_admin'] },
   { id: 'segmentation',   icon: 'target',        label: 'Segmentation',     roles: ['moderator', 'dept_admin', 'univ_admin', 'super_admin'] },
   { id: 'compliance',     icon: 'shield',        label: 'Compliance',       roles: ['univ_admin', 'super_admin'] },
@@ -93,6 +94,7 @@ const PAGE_ROLES = {
   moderation:     ['moderator', 'dept_admin', 'univ_admin', 'super_admin'],
   broadcasts:     ['univ_admin', 'super_admin'],
   segmentation:   ['moderator', 'dept_admin', 'univ_admin', 'super_admin'],
+  polls:          ['moderator', 'dept_admin', 'univ_admin', 'super_admin'],
   compliance:     ['univ_admin', 'super_admin'],
   audit:          ['univ_admin', 'super_admin'],
   operations:     ['univ_admin', 'super_admin'],
@@ -162,7 +164,8 @@ function showPage(page) {
     events:         () => render(window.renderEventsPage),
     chapters:       () => render(window.renderChapters),
     map:            () => render(window.renderMapClusters),
-    jobs:           () => { render(window.renderJobReferrals); render(window.renderJobsEnhanced); },
+    jobs:           () => { render(window.renderJobReferrals); render(window.renderMyApplications); render(window.renderJobsEnhanced); },
+    polls:          () => render(window.renderPollsAdmin),
     news:           () => {
       render(window.renderNewsFeed);
       render(window.renderActivePoll);

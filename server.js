@@ -2416,7 +2416,8 @@ app.get('/api/stats/overview', requireAuth, async (req, res) => {
           (SELECT COUNT(*)::int FROM chapter_memberships)                          AS chapter_memberships_total,
           (SELECT COUNT(*)::int FROM connections WHERE status = 'accepted')        AS connections_total,
           (SELECT COUNT(*)::int FROM stories WHERE status = 'published')            AS stories_total,
-          (SELECT COUNT(*)::int FROM polls WHERE is_active)                        AS polls_active,
+          (SELECT COUNT(*)::int FROM polls
+            WHERE status = 'open' AND (closes_at IS NULL OR closes_at > CURRENT_TIMESTAMP))  AS polls_active,
           -- Money: settled donations only. donations.status is one of
           -- PENDING / SUCCESS / FAILED / REFUNDED, so SUCCESS is "settled".
           (SELECT COALESCE(SUM(amount), 0) FROM donations WHERE status = 'SUCCESS')       AS donations_total,
@@ -2679,19 +2680,82 @@ app.get('/api/job-referrals', requireAuth, async (req, res) => {
     const isStaff = MODERATOR_ROLES.includes(req.user.role);
     // A poster sees requests against their own postings; staff see all.
     const rows = await db.query(`
-      SELECT r.id, r.job_id, r.message, r.status, r.created_at,
+      /* requester.email was returned to every reader of this list. A member
+         who set email = 'private' had it disclosed to the person they asked
+         for a referral, which is precisely the setting they had turned off.
+         It now passes the same gate the directory uses: visible to the member
+         themselves, to staff (email carries a staff bypass), and to anyone
+         else only while the member has left it visible. */
+      SELECT r.id, r.job_id, r.message, r.status, r.created_at, r.responded_at,
+             r.requester_id, r.referrer_id,
              j.title AS job_title, j.company,
-             requester.full_name AS requester_name, requester.email AS requester_email,
+             requester.full_name AS requester_name,
+             CASE WHEN r.requester_id = $1 OR $3::boolean
+                    OR COALESCE(rp.privacy_settings ->> 'email', 'public') <> 'private'
+                  THEN requester.email END AS requester_email,
              referrer.full_name  AS referrer_name
       FROM job_referrals r
       JOIN jobs j ON j.id = r.job_id
       LEFT JOIN users requester ON requester.id = r.requester_id
+      LEFT JOIN alumni_profiles rp ON rp.user_id = r.requester_id
       LEFT JOIN users referrer  ON referrer.id  = r.referrer_id
       WHERE $2::boolean OR r.referrer_id = $1 OR r.requester_id = $1
       ORDER BY r.created_at DESC, r.id DESC
       LIMIT 100
-    `, [req.user.uid, isStaff]);
+    `, [req.user.uid, isStaff, privacy.STAFF_ROLES.includes(req.user.role)]);
     res.json(rows.rows);
+  } catch (err) {
+    serverError(res, err, 'api');
+  }
+});
+
+/* Answering a referral. The request had a status column and no way to move
+   it, so every row ever written stayed 'pending'.
+
+   Only the person it was addressed to may answer — the job's poster. An
+   administrator is deliberately NOT given this: accepting a referral is a
+   personal vouching, not an administrative act, and nobody should be able to
+   vouch on someone else's behalf. */
+app.put('/api/job-referrals/:id', requireVerified, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { status } = req.body || {};
+  if (!['accepted', 'declined'].includes(status)) {
+    return res.status(400).json({ error: 'A referral is either accepted or declined' });
+  }
+
+  try {
+    const row = await db.query(
+      `SELECT r.id, r.status, r.requester_id, r.referrer_id, j.title
+         FROM job_referrals r JOIN jobs j ON j.id = r.job_id
+        WHERE r.id = $1`, [id]);
+    if (!row.rows.length) return res.status(404).json({ error: 'Referral request not found' });
+
+    const ref = row.rows[0];
+    if (ref.referrer_id !== req.user.uid) {
+      return res.status(403).json({ error: 'Only the person asked for the referral can answer it' });
+    }
+    if (ref.status !== 'pending') {
+      return res.status(409).json({ error: `This request was already ${ref.status}` });
+    }
+
+    const updated = await db.query(
+      `UPDATE job_referrals SET status = $2, responded_at = CURRENT_TIMESTAMP
+        WHERE id = $1 RETURNING id, status, responded_at`, [id, status]);
+
+    const me = await db.query('SELECT full_name FROM users WHERE id = $1', [req.user.uid]);
+    await db.query(
+      `INSERT INTO notifications (user_id, icon, title, subtitle)
+       VALUES ($1, $2, $3, $4)`,
+      [ref.requester_id,
+       status === 'accepted' ? 'handshake' : 'circle-x',
+       status === 'accepted' ? 'Referral accepted' : 'Referral declined',
+       `${me.rows[0]?.full_name || 'The poster'} ${status} your referral request for ${ref.title}.`]);
+
+    await writeAuditSafe(status === 'accepted' ? 'Referral Accepted' : 'Referral Declined',
+      `referral ${id} by user ${req.user.uid}`, 'handshake',
+      auditCtx(req, 'job_referral', id));
+
+    res.json(updated.rows[0]);
   } catch (err) {
     serverError(res, err, 'api');
   }

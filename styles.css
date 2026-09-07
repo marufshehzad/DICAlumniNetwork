@@ -1262,7 +1262,12 @@ body {
   font-weight: 600;
   margin-bottom: 20px;
 }
-.jobs-layout { display: grid; grid-template-columns: 1fr 300px; gap: 20px; }
+/* minmax(0, …) rather than 1fr: a grid item defaults to min-width:auto, so the
+   column sized itself to the job cards min-content and grew wider than its own
+   container — 357.8px of track inside 344px at 360px wide, which the body overflow
+   guard then clipped. */
+.jobs-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; }
+.jobs-main, .jobs-sidebar { min-width: 0; }
 .jobs-filters { display: flex; gap: 10px; margin-bottom: 16px; }
 .jobs-filters .form-input { max-width: 300px; }
 .jobs-filters .form-select { width: auto; }
@@ -2268,7 +2273,7 @@ textarea.form-input { resize: vertical; min-height: 100px; }
   .criterion-label { width: 100px; font-size: 11px; }
 
   /* ── Jobs Layout ── */
-  .jobs-layout { grid-template-columns: 1fr; gap: 16px; }
+  .jobs-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
   .jobs-filters { flex-wrap: wrap; }
   .jobs-filters .form-input { max-width: 100%; width: 100%; }
   .jobs-filters .form-select { width: 100%; }
@@ -6002,4 +6007,73 @@ textarea.form-input { resize: vertical; min-height: 100px; }
   .pc-row-val { text-align: left; }
   .pc-consent-row { display: flex; flex-wrap: wrap; }
   .pc-actions .btn { width: 100%; }
+}
+
+/* ─── PHASE 7C-2: JOB, APPLICATION AND REFERRAL STATE ───────
+   Every pill states its condition in words; the tint only reinforces it. */
+.job-state {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 99px;
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+}
+.job-state .ui-icon { width: 12px; height: 12px; }
+.job-state.is-open    { background: var(--teal-glow);        color: var(--teal-text); }
+.job-state.is-closed  { background: rgba(139,156,196,0.14);  color: var(--text-secondary); }
+.job-state.is-expired { background: var(--amber-glow);       color: var(--amber-text); }
+
+.job-description {
+  margin: 8px 0 0; font-size: 12.5px; color: var(--text-secondary); line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+.app-state {
+  padding: 3px 9px; border-radius: 99px;
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+}
+.app-state.is-submitted   { background: rgba(139,156,196,0.14); color: var(--text-secondary); }
+.app-state.is-reviewing   { background: var(--amber-glow);      color: var(--amber-text); }
+.app-state.is-shortlisted { background: var(--teal-glow);       color: var(--teal-text); }
+.app-state.is-rejected    { background: rgba(248,113,113,0.12); color: var(--red-text); }
+.app-state.is-hired       { background: rgba(52,211,153,0.14);  color: var(--green-text); }
+
+.app-status-select { min-width: 132px; font-size: 11px; min-height: 30px; }
+
+.referral-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.referral-actions .btn { min-height: 30px; padding: 0 10px; font-size: 11px; }
+.ref-state {
+  padding: 3px 9px; border-radius: 99px;
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+}
+.ref-state.is-pending  { background: rgba(139,156,196,0.14); color: var(--text-secondary); }
+.ref-state.is-accepted { background: rgba(52,211,153,0.14);  color: var(--green-text); }
+.ref-state.is-declined { background: rgba(248,113,113,0.12); color: var(--red-text); }
+
+@media (max-width: 480px) {
+  .referral-actions { width: 100%; }
+  .referral-actions .btn { flex: 1; }
+  .app-status-select { width: 100%; min-width: 0; }
+}
+
+/* ─── PHASE 7C-2: POLL ADMINISTRATION ───────────────────────
+   Same light surface as every other admin card. */
+.poll-admin-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.poll-admin-meta { font-size: 12px; color: var(--text-secondary); margin-top: 3px; }
+.poll-state {
+  padding: 3px 10px; border-radius: 99px; font-size: 11px; font-weight: 700; white-space: nowrap;
+}
+.poll-state.is-draft  { background: rgba(139,156,196,0.14); color: var(--text-secondary); }
+.poll-state.is-open   { background: var(--teal-glow);       color: var(--teal-text); }
+.poll-state.is-closed { background: var(--amber-glow);      color: var(--amber-text); }
+.poll-admin-options { display: grid; gap: 7px; margin: 14px 0; }
+.poll-admin-option { display: grid; grid-template-columns: minmax(90px, 1fr) 2fr auto; gap: 10px; align-items: center; font-size: 12.5px; }
+.poll-opt-label { color: var(--text-primary); overflow-wrap: anywhere; }
+.poll-opt-bar { height: 8px; border-radius: 99px; background: var(--bg-deep); overflow: hidden; }
+.poll-opt-bar > span { display: block; height: 100%; border-radius: 99px; background: var(--daffodil-primary, #0B3897); }
+.poll-opt-n { font-weight: 700; color: var(--text-primary); min-width: 24px; text-align: right; }
+.poll-admin-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.poll-admin-note { font-size: 11.5px; color: var(--text-secondary); }
+@media (max-width: 480px) {
+  .poll-admin-option { grid-template-columns: 1fr auto; }
+  .poll-opt-bar { grid-column: 1 / -1; }
+  .poll-admin-actions .btn { flex: 1; }
 }

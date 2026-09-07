@@ -427,6 +427,10 @@ Object.assign(API, {
   applyToJob:       (id, d)         => apiRequest('POST',   `/api/jobs/${id}/apply`, d || {}),
   getJobApplicants: (id)            => apiRequest('GET',    `/api/jobs/${id}/applicants`),
   requestReferral:  (id, message)   => apiRequest('POST',   `/api/jobs/${id}/refer`, { message }),
+  // Phase 7C-2: the halves of the job workflow that had no caller.
+  myApplications:   ()              => apiRequest('GET',    '/api/my-applications'),
+  setApplicationStatus: (id, status) => apiRequest('PUT',   `/api/job-applications/${id}/status`, { status }),
+  answerReferral:   (id, status)    => apiRequest('PUT',    `/api/job-referrals/${id}`, { status }),
 
   // ─── REAL PLATFORM STATISTICS ───
   // Backs every dashboard tile, analytics figure and map number. Each field is
@@ -493,6 +497,13 @@ Object.assign(API, {
   // ─── POLLS ───
   getActivePoll:    ()              => apiRequest('GET',    '/api/polls/active'),
   votePoll:         (id, optionIndex) => apiRequest('POST', `/api/polls/${id}/vote`, { optionIndex }),
+  // Poll administration, staff only server-side.
+  getPolls:         ()              => apiRequest('GET',    '/api/polls'),
+  getPollResults:   (id)            => apiRequest('GET',    `/api/polls/${id}/results`),
+  createPoll:       (d)             => apiRequest('POST',   '/api/polls', d),
+  updatePoll:       (id, d)         => apiRequest('PUT',    `/api/polls/${id}`, d),
+  setPollStatus:    (id, status)    => apiRequest('PUT',    `/api/polls/${id}/status`, { status }),
+  deletePoll:       (id)            => apiRequest('DELETE', `/api/polls/${id}`),
 
   // ─── BROADCASTS & AUDIT ───
   getBroadcasts:    ()              => apiRequest('GET',    '/api/broadcasts'),

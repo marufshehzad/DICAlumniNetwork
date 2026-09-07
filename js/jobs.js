@@ -88,6 +88,13 @@ function showPostJobModal(job) {
       </div>
       <div class="input-group"><label class="input-label" for="job-salary">Salary Range</label>
         <input type="text" id="job-salary" class="form-input" placeholder="e.g. ৳80K–৳120K/mo" value="${editing ? escapeHtml(job.salary || '') : ''}" /></div>
+      <div class="input-group"><label class="input-label" for="job-description">Description</label>
+        <textarea id="job-description" class="form-input" rows="4"
+                  placeholder="What the role involves, and what you are looking for.">${editing ? escapeHtml(job.description || '') : ''}</textarea></div>
+      <div class="input-group"><label class="input-label" for="job-deadline">Application deadline</label>
+        <input type="date" id="job-deadline" class="form-input"
+               value="${editing && job.deadline ? escapeHtml(String(job.deadline).slice(0, 10)) : ''}" />
+        <span class="field-hint" style="font-size:11px;color:var(--text-secondary)">Optional. After this date the posting stops accepting applications.</span></div>
       <div class="input-group"><label class="input-label" for="job-tags">Skill Tags (comma separated)</label>
         <input type="text" id="job-tags" class="form-input" placeholder="React, Node.js, PostgreSQL" value="${editing ? escapeHtml((job.tags || []).join(', ')) : ''}" /></div>
       <button type="submit" class="btn btn-primary btn-full">${editing ? 'Save changes' : 'Post Job'}</button>
@@ -193,14 +200,17 @@ async function renderJobsEnhanced(filter = '') {
           <span class="job-meta-item"><i data-lucide="download" class="ui-icon"></i> ${j.applicants} applicant${j.applicants === 1 ? '' : 's'}</span>
         </div>
         <div class="job-tags">${tags.map(t => `<span class="job-tag">${escapeHtml(t)}</span>`).join('')}</div>
+        ${j.description ? `<p class="job-description">${escapeHtml(j.description)}</p>` : ''}
       </div>
       <div class="job-right">
         <div class="job-salary">${escapeHtml(j.salary || 'Negotiable')}</div>
+        ${jobStatusBadge(j)}
         <span class="job-type-badge ${escapeHtml(j.type)}">${escapeHtml((j.type || '').charAt(0).toUpperCase() + (j.type || '').slice(1))}</span>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           ${mine || isAdmin
             ? `<button class="apply-btn" onclick="showJobApplicants(${j.id}, ${titleArg})"><i data-lucide="users" class="ui-icon"></i> Applicants (${j.applicants})</button>
                <button class="referral-btn" onclick="editJobPrompt(${j.id})"><i data-lucide="pen-line" class="ui-icon"></i> Edit</button>
+               <button class="referral-btn" onclick="setJobStatus(${j.id}, ${j.status === 'closed' ? jsArg('open') : jsArg('closed')})"><i data-lucide="${j.status === 'closed' ? 'unlock' : 'lock'}" class="ui-icon"></i> ${j.status === 'closed' ? 'Reopen' : 'Close'}</button>
                <button class="referral-btn" onclick="deleteJobPrompt(${j.id}, ${titleArg})"><i data-lucide="trash-2" class="ui-icon"></i> Delete</button>`
             : `<button class="apply-btn" ${j.has_applied ? 'disabled' : ''} onclick="applyJob(${j.id}, ${titleArg})">${j.has_applied ? '<i data-lucide="check" class="ui-icon"></i> Applied' : 'Apply'}</button>
                <button class="referral-btn" onclick="showReferralModal(${j.id}, ${titleArg}, ${jsArg(j.posted_by_name)})"><i data-lucide="handshake" class="ui-icon"></i> Referral</button>`}
@@ -225,6 +235,82 @@ async function renderJobsEnhanced(filter = '') {
    requireRole(...ADMIN_ROLES | ...MODERATOR_ROLES). GET /api/stats/rbac derives
    the table from those same constants, so the screen cannot drift from the
    middleware, and no permission rule is written twice. */
+/* Open, closed or expired — three states a reader distinguishes, from two
+   fields the server derives. A closed posting is not hidden: a candidate who
+   applied deserves to still find it. */
+function jobStatusBadge(j) {
+  if (j.status === 'closed') {
+    return '<span class="job-state is-closed"><i data-lucide="lock" class="ui-icon" aria-hidden="true"></i> Closed</span>';
+  }
+  if (j.is_expired) {
+    return '<span class="job-state is-expired"><i data-lucide="calendar-x" class="ui-icon" aria-hidden="true"></i> Deadline passed</span>';
+  }
+  if (j.deadline) {
+    return '<span class="job-state is-open"><i data-lucide="calendar-clock" class="ui-icon" aria-hidden="true"></i> Apply by '
+         + escapeHtml(formatDate(j.deadline)) + '</span>';
+  }
+  return '<span class="job-state is-open"><i data-lucide="circle-check" class="ui-icon" aria-hidden="true"></i> Open</span>';
+}
+
+async function setJobStatus(id, status) {
+  const res = await API.updateJob(id, { status });
+  if (apiFailed(res)) { showToast(`⚠ ${res?.error || 'Could not change the posting.'}`); return; }
+  showToast(status === 'closed' ? '✅ Posting closed.' : '✅ Posting reopened.');
+  renderJobsEnhanced();
+}
+
+/* The applicant's side. Someone could apply and then never learn what
+   happened; the status existed in the database and nowhere a candidate could
+   read it. */
+const APPLICATION_LABEL = {
+  submitted: 'Received', reviewing: 'Under review', shortlisted: 'Shortlisted',
+  rejected: 'Not taken forward', hired: 'Successful'
+};
+
+async function renderMyApplications() {
+  const el = document.getElementById('my-applications-list');
+  if (!el) return;
+  el.innerHTML = renderSkeletonCards(2);
+
+  const rows = await API.myApplications();
+  if (apiFailed(rows)) {
+    el.innerHTML = renderErrorState(rows?.error || 'Could not load your applications.', 'renderMyApplications()');
+    return;
+  }
+  if (!rows.length) {
+    el.innerHTML = renderEmptyState('<i data-lucide="file-text" class="ui-icon"></i>',
+      'No applications yet', 'Roles you apply for appear here with their current status.');
+    if (window.lucide) lucide.createIcons();
+    return;
+  }
+  el.innerHTML = rows.map(a => `
+    <div class="queue-item">
+      <div class="queue-info">
+        <div class="queue-name">${escapeHtml(a.title)} · ${escapeHtml(a.company || '')}</div>
+        <div class="queue-sub">Applied ${escapeHtml(formatRelativeTime(a.created_at))}${
+          a.status_changed_at ? ' · updated ' + escapeHtml(formatRelativeTime(a.status_changed_at)) : ''}</div>
+      </div>
+      <span class="app-state is-${escapeHtml(a.status)}">${escapeHtml(APPLICATION_LABEL[a.status] || a.status)}</span>
+    </div>`).join('');
+  if (window.lucide) lucide.createIcons();
+}
+
+/* The employer's side: move an application through the states the server
+   allows. The select is the control, so there is no separate save. */
+async function setApplicationStatus(appId, status, jobId, title) {
+  const res = await API.setApplicationStatus(appId, status);
+  if (apiFailed(res)) { showToast(`⚠ ${res?.error || 'Could not update the application.'}`); return; }
+  showToast(`✅ Marked ${APPLICATION_LABEL[status] || status}.`);
+  showJobApplicants(jobId, title);
+}
+
+async function answerReferral(id, status) {
+  const res = await API.answerReferral(id, status);
+  if (apiFailed(res)) { showToast(`⚠ ${res?.error || 'Could not answer the request.'}`); return; }
+  showToast(status === 'accepted' ? '✅ Referral accepted.' : '✓ Referral declined.');
+  renderJobReferrals();
+}
+
 async function renderJobReferrals() {
   const el = document.getElementById('job-referrals-list');
   if (!el) return;
@@ -249,10 +335,23 @@ async function renderJobReferrals() {
         <div class="queue-sub">
           ${escapeHtml(r.requester_name || 'Someone')} asked ${escapeHtml(r.referrer_name || 'the poster')}
           · ${escapeHtml(formatRelativeTime(r.created_at))}
+          ${r.requester_email ? ' · ' + escapeHtml(r.requester_email) : ''}
         </div>
         ${r.message ? `<div class="queue-sub" style="margin-top:4px">“${escapeHtml(r.message)}”</div>` : ''}
       </div>
-      <span class="card-badge ${r.status === 'accepted' ? 'teal' : ''}">${escapeHtml(r.status || 'pending')}</span>
+      ${/* Only the person the request was addressed to may answer it, and only
+            while it is still pending. The server enforces both; this mirrors
+            it so a button is never offered that would be refused. */
+        r.status === 'pending' && r.referrer_id === (state.currentUser || {}).id
+        ? `<div class="referral-actions">
+             <button type="button" class="btn btn-primary btn-sm" onclick="answerReferral(${r.id}, ${jsArg('accepted')})">
+               <i data-lucide="check" class="ui-icon"></i> Accept</button>
+             <button type="button" class="btn btn-outline btn-sm" onclick="answerReferral(${r.id}, ${jsArg('declined')})">
+               <i data-lucide="x" class="ui-icon"></i> Decline</button>
+           </div>`
+        : `<span class="ref-state is-${escapeHtml(r.status || 'pending')}">${
+             escapeHtml({ pending: 'Awaiting a reply', accepted: 'Accepted', declined: 'Declined' }[r.status] || r.status)
+           }</span>`}
     </div>`).join('');
   if (window.lucide) lucide.createIcons();
 }
@@ -309,7 +408,12 @@ async function showJobApplicants(jobId, title) {
               <div style="font-weight:700;font-size:13px">${escapeHtml(a.name)}</div>
               <div style="font-size:11px;color:var(--text-secondary)">${escapeHtml([a.dept, a.batch && `Batch ${a.batch}`, a.company].filter(Boolean).join(' · ') || '—')}</div>
             </div>
-            <span class="card-badge">${escapeHtml(a.status)}</span>
+            <label class="sr-only" for="app-status-${a.id}">Status for ${escapeHtml(a.name)}</label>
+            <select id="app-status-${a.id}" class="form-select sm app-status-select"
+                    onchange="setApplicationStatus(${a.id}, this.value, ${jobId}, ${jsArg(title)})">
+              ${['submitted','reviewing','shortlisted','rejected','hired'].map(s =>
+                `<option value="${s}" ${a.status === s ? 'selected' : ''}>${APPLICATION_LABEL[s]}</option>`).join('')}
+            </select>
           </div>
           ${a.cover_note ? `<div style="font-size:12px;color:var(--text-secondary);margin-top:8px;padding-top:8px;border-top:1px solid var(--border-glass)">${escapeHtml(a.cover_note)}</div>` : ''}
         </div>`).join('')
@@ -345,6 +449,8 @@ async function handlePostJobSubmit(e, jobId = null) {
     type: document.getElementById('job-type').value,
     location: document.getElementById('job-location').value.trim(),
     workMode: document.getElementById('job-work-mode').value,
+    description: document.getElementById('job-description').value.trim(),
+    deadline: document.getElementById('job-deadline').value || null,
     salary: document.getElementById('job-salary').value.trim(),
     tags: document.getElementById('job-tags').value
   };

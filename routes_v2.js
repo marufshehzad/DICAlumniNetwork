@@ -94,7 +94,7 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
      ══════════════════════════════════════════════════════════ */
 
   app.get('/api/jobs', requireAuth, (req, res) => ok(res, async () => {
-    const { search, type, location, workMode } = req.query;
+    const { search, type, location, workMode, status } = req.query;
     const where = [], params = [req.user.uid];
     if (search) { params.push(`%${search.toLowerCase()}%`);
       where.push(`(LOWER(j.title) LIKE $${params.length} OR LOWER(j.company) LIKE $${params.length} OR LOWER(ARRAY_TO_STRING(j.tags,',')) LIKE $${params.length})`); }
@@ -103,11 +103,21 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
     // Only the three real answers filter; anything else is ignored rather
     // than passed to the database as a value it would never match.
     if (WORK_MODES.includes(workMode)) { params.push(workMode); where.push(`j.work_mode = $${params.length}`); }
+    /* 'open' means open AND not past its deadline — the two things a reader
+       means by it. Anything else is ignored rather than passed through. */
+    if (status === 'open')   where.push(`j.status = 'open' AND (j.deadline IS NULL OR j.deadline >= CURRENT_DATE)`);
+    if (status === 'closed') where.push(`(j.status = 'closed' OR (j.deadline IS NOT NULL AND j.deadline < CURRENT_DATE))`);
 
     const rows = await db.query(`
       SELECT j.*,
+             /* Derived, not stored: a deadline passing writes nothing, so a
+                stored flag would need a job to keep it true. */
+             (j.deadline IS NOT NULL AND j.deadline < CURRENT_DATE) AS is_expired,
+             (j.status = 'open' AND (j.deadline IS NULL OR j.deadline >= CURRENT_DATE)) AS is_open,
              (SELECT COUNT(*)::int FROM job_applications a WHERE a.job_id = j.id) AS applicants,
-             EXISTS (SELECT 1 FROM job_applications a WHERE a.job_id = j.id AND a.applicant_id = $1) AS has_applied
+             EXISTS (SELECT 1 FROM job_applications a WHERE a.job_id = j.id AND a.applicant_id = $1) AS has_applied,
+             (SELECT a.status FROM job_applications a
+               WHERE a.job_id = j.id AND a.applicant_id = $1) AS my_application_status
       FROM jobs j
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY j.created_at DESC, j.id DESC
@@ -116,7 +126,7 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
   }));
 
   app.post('/api/jobs', requireVerified, (req, res) => ok(res, async () => {
-    const { title, company, salary, type, location, tags, emoji, workMode } = req.body;
+    const { title, company, salary, type, location, tags, emoji, workMode, description, deadline } = req.body;
     if (!title || !title.trim()) return res.status(400).json({ error: 'Job title is required' });
     if (!company || !company.trim()) return res.status(400).json({ error: 'Company is required' });
 
@@ -128,16 +138,25 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
       return res.status(400).json({ error: 'Work mode must be onsite, remote or hybrid' });
     }
 
+    if (deadline !== undefined && deadline !== null && String(deadline).trim() !== '' && isNaN(Date.parse(deadline))) {
+      return res.status(400).json({ error: 'Application deadline is not a valid date' });
+    }
+
     const row = await db.query(`
-      INSERT INTO jobs (emoji, title, company, salary, type, location, work_mode, posted_by_id, posted_by_name, tags, days_ago)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0) RETURNING *
+      INSERT INTO jobs (emoji, title, company, salary, type, location, work_mode, posted_by_id, posted_by_name, tags,
+                        description, deadline)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *
     `, [emoji || '💼', title.trim(), company.trim(), salary || 'Negotiable',
         (type || 'fulltime').toLowerCase(),
         // Was `location || 'Dhaka'`: a posting submitted without a location
         // recorded Dhaka anyway. An unstated location stays unstated.
         String(location || '').trim() || null,
         WORK_MODES.includes(workMode) ? workMode : null,
-        req.user.uid, poster.rows[0]?.full_name || 'DIC Alumni', tagArray]);
+        req.user.uid, poster.rows[0]?.full_name || 'DIC Alumni', tagArray,
+        String(description || '').trim() || null,
+        String(deadline || '').trim() || null]);
+
+    await writeAudit('Job Created', `"${title.trim()}" at ${company.trim()} by user ${req.user.uid}`, 'briefcase');
 
     await db.query(`INSERT INTO notifications (target_role, icon, title, subtitle) VALUES ('alumni','💼','New Job Posted',$1)`,
       [`${title.trim()} at ${company.trim()}`]);
@@ -151,9 +170,15 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
     if (owner.rows[0].posted_by_id !== req.user.uid && !ADMIN_ROLES.includes(req.user.role)) {
       return res.status(403).json({ error: 'You can only edit your own postings' });
     }
-    const { title, company, salary, type, location, workMode } = req.body;
+    const { title, company, salary, type, location, workMode, description, deadline, status } = req.body;
     if (workMode !== undefined && workMode !== null && workMode !== '' && !WORK_MODES.includes(workMode)) {
       return res.status(400).json({ error: 'Work mode must be onsite, remote or hybrid' });
+    }
+    if (status !== undefined && !['open', 'closed'].includes(status)) {
+      return res.status(400).json({ error: 'Job status must be open or closed' });
+    }
+    if (deadline !== undefined && deadline !== null && String(deadline).trim() !== '' && isNaN(Date.parse(deadline))) {
+      return res.status(400).json({ error: 'Application deadline is not a valid date' });
     }
     // An explicit empty string clears the mode; undefined leaves it alone.
     const nextMode = workMode === undefined ? null
@@ -161,9 +186,26 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
     const row = await db.query(`
       UPDATE jobs SET title=COALESCE($2,title), company=COALESCE($3,company), salary=COALESCE($4,salary),
                       type=COALESCE($5,type), location=COALESCE($6,location),
-                      work_mode = CASE WHEN $7::boolean THEN $8 ELSE work_mode END
+                      work_mode   = CASE WHEN $7::boolean  THEN $8  ELSE work_mode END,
+                      description = CASE WHEN $9::boolean  THEN $10 ELSE description END,
+                      deadline    = CASE WHEN $11::boolean THEN $12 ELSE deadline END,
+                      status      = COALESCE($13, status),
+                      closed_at   = CASE WHEN $13 = 'closed' AND status <> 'closed' THEN CURRENT_TIMESTAMP
+                                         WHEN $13 = 'open' THEN NULL ELSE closed_at END,
+                      closed_by   = CASE WHEN $13 = 'closed' AND status <> 'closed' THEN $14
+                                         WHEN $13 = 'open' THEN NULL ELSE closed_by END
       WHERE id=$1 RETURNING *
-    `, [id, title, company, salary, type, location, workMode !== undefined, nextMode]);
+    `, [id, title, company, salary, type, location,
+        workMode !== undefined, nextMode,
+        description !== undefined, String(description || '').trim() || null,
+        deadline !== undefined, String(deadline || '').trim() || null,
+        status === undefined ? null : status, req.user.uid]);
+
+    /* A close is a different act from an edit and reads differently in the
+       trail, so it is named differently. */
+    if (status === 'closed')      await writeAudit('Job Closed',   `job ${id} by user ${req.user.uid}`, 'lock');
+    else if (status === 'open')   await writeAudit('Job Reopened', `job ${id} by user ${req.user.uid}`, 'unlock');
+    else                          await writeAudit('Job Edited',   `job ${id} by user ${req.user.uid}`, 'pen-line');
     res.json(row.rows[0]);
   }));
 
@@ -183,8 +225,18 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
     const jobId = parseInt(req.params.id);
     const { coverNote, resumeUrl } = req.body || {};
 
-    const job = await db.query('SELECT title, company, posted_by_id FROM jobs WHERE id = $1', [jobId]);
+    const job = await db.query(`SELECT title, company, posted_by_id, status, deadline,
+                                 (deadline IS NOT NULL AND deadline < CURRENT_DATE) AS expired
+                                FROM jobs WHERE id = $1`, [jobId]);
     if (!job.rows.length) return res.status(404).json({ error: 'Job not found' });
+    /* A closed or expired posting does not take applications. Checked here
+       rather than only hidden in the interface. */
+    if (job.rows[0].status === 'closed') {
+      return res.status(409).json({ error: 'This posting has been closed and is no longer accepting applications.' });
+    }
+    if (job.rows[0].expired) {
+      return res.status(409).json({ error: 'The application deadline for this posting has passed.' });
+    }
 
     const existing = await db.query('SELECT 1 FROM job_applications WHERE job_id=$1 AND applicant_id=$2', [jobId, req.user.uid]);
     if (existing.rows.length) return res.status(409).json({ error: 'You have already applied to this role' });
@@ -202,6 +254,67 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
     res.json({ success: true, application: row.rows[0] });
   }));
 
+  /* An applicant could apply and then never learn what happened. This is the
+     other half: their own applications and the current state of each. Scoped
+     to the caller — there is no id in the path to tamper with. */
+  app.get('/api/my-applications', requireAuth, (req, res) => ok(res, async () => {
+    const rows = await db.query(`
+      SELECT a.id, a.status, a.cover_note, a.created_at, a.status_changed_at,
+             j.id AS job_id, j.title, j.company, j.location, j.work_mode,
+             j.status AS job_status,
+             (j.deadline IS NOT NULL AND j.deadline < CURRENT_DATE) AS job_expired
+        FROM job_applications a
+        JOIN jobs j ON j.id = a.job_id
+       WHERE a.applicant_id = $1
+       ORDER BY a.created_at DESC`, [req.user.uid]);
+    res.json(rows.rows);
+  }));
+
+  /* The poster (or an administrator) moves an application through the states
+     the CHECK constraint already allows. Ownership is resolved from the JOB,
+     not from anything the caller sends. */
+  const APPLICATION_STATES = ['submitted', 'reviewing', 'shortlisted', 'rejected', 'hired'];
+
+  app.put('/api/job-applications/:id/status', requireAuth, (req, res) => ok(res, async () => {
+    const appId = parseInt(req.params.id, 10);
+    const { status } = req.body || {};
+    if (!APPLICATION_STATES.includes(status)) {
+      return res.status(400).json({ error: 'Unknown application status' });
+    }
+
+    const row = await db.query(`
+      SELECT a.id, a.status, a.applicant_id, j.id AS job_id, j.title, j.posted_by_id
+        FROM job_applications a JOIN jobs j ON j.id = a.job_id
+       WHERE a.id = $1`, [appId]);
+    if (!row.rows.length) return res.status(404).json({ error: 'Application not found' });
+
+    const app_ = row.rows[0];
+    if (app_.posted_by_id !== req.user.uid && !ADMIN_ROLES.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Only the poster of this job can change an application' });
+    }
+
+    const updated = await db.query(`
+      UPDATE job_applications
+         SET status = $2, status_changed_at = CURRENT_TIMESTAMP, status_changed_by = $3
+       WHERE id = $1 RETURNING id, status, status_changed_at`, [appId, status, req.user.uid]);
+
+    /* The applicant is told, because a status they cannot see is not a status.
+       The message names the role and the state and nothing about other
+       candidates. */
+    const LABEL = { submitted: 'received', reviewing: 'under review', shortlisted: 'shortlisted',
+                    rejected: 'not taken forward', hired: 'successful' };
+    await db.query(
+      `INSERT INTO notifications (user_id, icon, title, subtitle, link_entity, link_id)
+       VALUES ($1,'briefcase','Application update',$2,'job',$3)`,
+      [app_.applicant_id, `Your application for ${app_.title} is ${LABEL[status]}.`, app_.job_id]);
+
+    await writeAudit('Application Status Changed',
+      `application ${appId} on job ${app_.job_id}: ${app_.status} -> ${status} by user ${req.user.uid}`,
+      'clipboard-list');
+
+    res.json(updated.rows[0]);
+  }));
+
   app.get('/api/jobs/:id/applicants', requireAuth, (req, res) => ok(res, async () => {
     const jobId = parseInt(req.params.id);
     const owner = await db.query('SELECT posted_by_id FROM jobs WHERE id=$1', [jobId]);
@@ -210,7 +323,7 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
       return res.status(403).json({ error: 'Only the poster can view applicants' });
     }
     const rows = await db.query(`
-      SELECT a.id, a.status, a.cover_note, a.created_at,
+      SELECT a.id, a.status, a.cover_note, a.created_at, a.status_changed_at,
              u.id AS user_id, u.full_name AS name, u.initials,
              ap.batch, ap.department AS dept, ap.current_company AS company, ap.skills
       FROM job_applications a
@@ -705,8 +818,15 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
      POLLS
      ══════════════════════════════════════════════════════════ */
 
+  /* One definition of "this poll is taking votes", used by the read side, the
+     vote handler and the admin list alike. closes_at used to be written and
+     never read, so a poll that had closed in August was still being offered
+     in September. */
+  const POLL_LIVE_SQL = `status = 'open' AND (closes_at IS NULL OR closes_at > CURRENT_TIMESTAMP)`;
+
   app.get('/api/polls/active', requireAuth, (req, res) => ok(res, async () => {
-    const poll = await db.query('SELECT * FROM polls WHERE is_active = TRUE ORDER BY id DESC LIMIT 1');
+    const poll = await db.query(
+      `SELECT * FROM polls WHERE ${POLL_LIVE_SQL} ORDER BY id DESC LIMIT 1`);
     if (!poll.rows.length) return res.json(null);
     const p = poll.rows[0];
     const votes = await db.query('SELECT option_index, COUNT(*)::int n FROM poll_votes WHERE poll_id=$1 GROUP BY option_index', [p.id]);
@@ -718,9 +838,17 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
   app.post('/api/polls/:id/vote', requireAuth, (req, res) => ok(res, async () => {
     const pollId = parseInt(req.params.id);
     const idx = parseInt(req.body.optionIndex);
-    const poll = await db.query('SELECT options FROM polls WHERE id=$1 AND is_active=TRUE', [pollId]);
-    if (!poll.rows.length) return res.status(404).json({ error: 'Poll not found or closed' });
-    if (!(idx >= 0 && idx < poll.rows[0].options.length)) return res.status(400).json({ error: 'Invalid option' });
+    /* Read the poll first so a draft, a closed poll and one past its closing
+       time can each be refused for the reason that is true. */
+    const poll = await db.query(
+      `SELECT options, status, (closes_at IS NOT NULL AND closes_at <= CURRENT_TIMESTAMP) AS past_closing
+         FROM polls WHERE id=$1`, [pollId]);
+    if (!poll.rows.length) return res.status(404).json({ error: 'Poll not found' });
+    const p = poll.rows[0];
+    if (p.status === 'draft')  return res.status(403).json({ error: 'This poll is not open yet.' });
+    if (p.status === 'closed') return res.status(409).json({ error: 'This poll has closed.' });
+    if (p.past_closing)        return res.status(409).json({ error: 'Voting on this poll has closed.' });
+    if (!(idx >= 0 && idx < p.options.length)) return res.status(400).json({ error: 'Invalid option' });
 
     // Re-voting updates the existing row; the UNIQUE constraint guarantees one
     // vote per person no matter how many times the button is pressed.
@@ -728,6 +856,130 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
       INSERT INTO poll_votes (poll_id, user_id, option_index) VALUES ($1,$2,$3)
       ON CONFLICT (poll_id, user_id) DO UPDATE SET option_index = EXCLUDED.option_index
     `, [pollId, req.user.uid, idx]);
+    res.json({ success: true });
+  }));
+
+  /* ─── POLL ADMINISTRATION (§10) ───
+     Staff only. The whole lifecycle, and nothing beyond it. */
+
+  const pollWithCounts = async (id) => {
+    const p = await db.query(
+      `SELECT p.*, u.full_name AS created_by_name,
+              (p.status = 'open' AND (p.closes_at IS NULL OR p.closes_at > CURRENT_TIMESTAMP)) AS is_live
+         FROM polls p LEFT JOIN users u ON u.id = p.created_by WHERE p.id = $1`, [id]);
+    if (!p.rows.length) return null;
+    const votes = await db.query(
+      'SELECT option_index, COUNT(*)::int n FROM poll_votes WHERE poll_id=$1 GROUP BY option_index', [id]);
+    const counts = p.rows[0].options.map((_, i) => votes.rows.find(v => v.option_index === i)?.n || 0);
+    return { ...p.rows[0], counts, total: counts.reduce((a, b) => a + b, 0) };
+  };
+
+  app.get('/api/polls', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
+    /* Per-option counts come back with the list, so the admin screen draws real
+       bars from one request rather than a request per poll. */
+    const rows = await db.query(`
+      SELECT p.*, u.full_name AS created_by_name,
+             (p.status = 'open' AND (p.closes_at IS NULL OR p.closes_at > CURRENT_TIMESTAMP)) AS is_live,
+             (SELECT COUNT(*)::int FROM poll_votes v WHERE v.poll_id = p.id) AS total
+        FROM polls p LEFT JOIN users u ON u.id = p.created_by
+       ORDER BY p.created_at DESC, p.id DESC`);
+    const tally = await db.query(
+      `SELECT poll_id, option_index, COUNT(*)::int n FROM poll_votes GROUP BY poll_id, option_index`);
+    res.json(rows.rows.map(p => ({
+      ...p,
+      counts: p.options.map((_, i) =>
+        tally.rows.find(t => t.poll_id === p.id && t.option_index === i)?.n || 0)
+    })));
+  }));
+
+  app.get('/api/polls/:id/results', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
+    const poll = await pollWithCounts(parseInt(req.params.id, 10));
+    if (!poll) return res.status(404).json({ error: 'Poll not found' });
+    res.json(poll);
+  }));
+
+  /* Question and options are validated the same way on create and on edit,
+     because a poll with one option is not a question. */
+  const readPoll = (body) => {
+    const question = String(body?.question || '').trim();
+    const options = (Array.isArray(body?.options) ? body.options : [])
+      .map(o => String(o || '').trim()).filter(Boolean);
+    if (!question) return { error: 'A question is required' };
+    if (question.length > 255) return { error: 'The question must be 255 characters or fewer' };
+    if (options.length < 2) return { error: 'A poll needs at least two options' };
+    if (options.length > 10) return { error: 'A poll can have at most ten options' };
+    const closesAt = String(body?.closesAt || '').trim() || null;
+    if (closesAt && isNaN(Date.parse(closesAt))) return { error: 'The closing time is not a valid date' };
+    return { question, options, closesAt };
+  };
+
+  app.post('/api/polls', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
+    const p = readPoll(req.body);
+    if (p.error) return res.status(400).json({ error: p.error });
+    // Created as a draft: an author writes before an audience reads.
+    const row = await db.query(
+      `INSERT INTO polls (question, options, closes_at, status, created_by)
+       VALUES ($1,$2,$3,'draft',$4) RETURNING *`,
+      [p.question, p.options, p.closesAt, req.user.uid]);
+    await writeAudit('Poll Created', `poll ${row.rows[0].id} by user ${req.user.uid}`, 'vote');
+    res.json(row.rows[0]);
+  }));
+
+  app.put('/api/polls/:id', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
+    const id = parseInt(req.params.id, 10);
+    const cur = await db.query('SELECT status FROM polls WHERE id=$1', [id]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'Poll not found' });
+    /* Only a draft may be rewritten. Changing the question or the options of a
+       poll people have already answered would silently reassign their votes to
+       something they did not choose. */
+    if (cur.rows[0].status !== 'draft') {
+      return res.status(409).json({ error: 'Only a draft poll can be edited. Votes are already recorded against these options.' });
+    }
+    const p = readPoll(req.body);
+    if (p.error) return res.status(400).json({ error: p.error });
+    const row = await db.query(
+      `UPDATE polls SET question=$2, options=$3, closes_at=$4 WHERE id=$1 RETURNING *`,
+      [id, p.question, p.options, p.closesAt]);
+    await writeAudit('Poll Edited', `poll ${id} by user ${req.user.uid}`, 'pen-line');
+    res.json(row.rows[0]);
+  }));
+
+  app.put('/api/polls/:id/status', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
+    const id = parseInt(req.params.id, 10);
+    const { status } = req.body || {};
+    if (!['open', 'closed'].includes(status)) {
+      return res.status(400).json({ error: 'A poll is opened or closed' });
+    }
+    const cur = await db.query('SELECT status FROM polls WHERE id=$1', [id]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'Poll not found' });
+    // A closed poll is not reopened: votes were cast under a stated closing.
+    if (cur.rows[0].status === 'closed' && status === 'open') {
+      return res.status(409).json({ error: 'A closed poll cannot be reopened. Create a new poll instead.' });
+    }
+    const row = await db.query(
+      `UPDATE polls SET status=$2::varchar,
+              opened_at = CASE WHEN $2::text='open'   AND opened_at IS NULL THEN CURRENT_TIMESTAMP ELSE opened_at END,
+              closed_at = CASE WHEN $2::text='closed' THEN CURRENT_TIMESTAMP ELSE closed_at END
+        WHERE id=$1 RETURNING *`, [id, status]);
+    await writeAudit(status === 'open' ? 'Poll Opened' : 'Poll Closed',
+      `poll ${id} by user ${req.user.uid}`, status === 'open' ? 'unlock' : 'lock');
+    res.json(row.rows[0]);
+  }));
+
+  app.delete('/api/polls/:id', requireRole(...ADMIN_ROLES), (req, res) => ok(res, async () => {
+    const id = parseInt(req.params.id, 10);
+    const cur = await db.query(
+      `SELECT p.status, (SELECT COUNT(*)::int FROM poll_votes v WHERE v.poll_id=p.id) AS votes
+         FROM polls p WHERE p.id=$1`, [id]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'Poll not found' });
+    /* A poll with votes in it is closed, never deleted: poll_votes cascades,
+       so removing the poll would destroy what people answered. */
+    if (cur.rows[0].votes > 0) {
+      return res.status(409).json({
+        error: `This poll has ${cur.rows[0].votes} vote(s). Close it instead — deleting it would erase them.` });
+    }
+    await db.query('DELETE FROM polls WHERE id=$1', [id]);
+    await writeAudit('Poll Deleted', `poll ${id} by user ${req.user.uid} (no votes cast)`, 'trash-2');
     res.json({ success: true });
   }));
 
