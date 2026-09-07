@@ -36,7 +36,11 @@ const ADMIN_NAV = [
   { id: 'segmentation',   icon: 'target',        label: 'Segmentation',     roles: ['moderator', 'dept_admin', 'univ_admin', 'super_admin'] },
   { id: 'compliance',     icon: 'shield',        label: 'Compliance',       roles: ['univ_admin', 'super_admin'] },
   { id: 'administration', icon: 'users',         label: 'Administration',   isDivider: true, roles: ['super_admin'] },
-  { id: 'audit',          icon: 'scroll-text',   label: 'Audit Logs',       roles: ['univ_admin', 'super_admin'] },
+  /* Phase 7D: a department admin reads a SCOPED audit log — its own
+     department's accounts and its own actions, never a platform-security
+     action. The server enforces that; this entry is what makes the capability
+     reachable rather than granted and hidden. */
+  { id: 'audit',          icon: 'scroll-text',   label: 'Audit Logs',       roles: ['dept_admin', 'univ_admin', 'super_admin'] },
   { id: 'operations',     icon: 'activity',      label: 'Operations',       roles: ['univ_admin', 'super_admin'] }
 ];
 
@@ -98,7 +102,7 @@ const PAGE_ROLES = {
   polls:          ['moderator', 'dept_admin', 'univ_admin', 'super_admin'],
   reports:        ['moderator', 'dept_admin', 'univ_admin', 'super_admin'],
   compliance:     ['univ_admin', 'super_admin'],
-  audit:          ['univ_admin', 'super_admin'],
+  audit:          ['dept_admin', 'univ_admin', 'super_admin'],
   operations:     ['univ_admin', 'super_admin'],
 };
 

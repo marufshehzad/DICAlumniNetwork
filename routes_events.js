@@ -72,7 +72,7 @@ const STANDARD_CHECKLIST = [
 ];
 
 module.exports = function mountEvents(app, guards) {
-  const { requireAuth, requireVerified, requireRole, ADMIN_ROLES, MODERATOR_ROLES, writeAudit , serverError} = guards;
+  const { requireAuth, requireVerified, requireRole, ADMIN_ROLES, MODERATOR_ROLES, writeAudit , serverError, scope} = guards;
 
   /* Phase 5F: this returned err.message to the caller. GET /api/events/:id with
      a non-numeric id was enough to read PostgreSQL's own type error back. The
@@ -80,6 +80,33 @@ module.exports = function mountEvents(app, guards) {
   const ok = (res, fn) => fn().catch(err => serverError(res, err, 'events'));
 
   const isStaff = (u) => !!u && MODERATOR_ROLES.includes(u.role);
+
+  /* Phase 7D — department scope on event MANAGEMENT only.
+
+     Reading an event is not scoped: an event is something members attend, and
+     a CSE event is not hidden from a BBA graduate. What is scoped is the right
+     to change one. A department admin manages events belonging to its own
+     department; an event belonging to no department is institution-wide and is
+     managed by institution-wide roles.
+
+     The event's department is read from the row, never from the request, so
+     changing ?id= or posting a department_id reaches this check rather than
+     the UPDATE behind it. */
+  async function eventInScope(req, eventId) {
+    const r = await db.query('SELECT department_id FROM events WHERE id = $1', [eventId]);
+    if (!r.rows.length) return { found: false };
+    return { found: true, allowed: scope.canReach(req.user, r.rows[0].department_id) };
+  }
+
+  /* Wrapped once so every managing route reads the same three lines rather
+     than each growing its own variation. Returns true when the caller may
+     proceed; otherwise it has already answered the request. */
+  async function guardEventScope(req, res, eventId) {
+    const v = await eventInScope(req, eventId);
+    if (!v.found) { res.status(404).json({ error: 'Event not found' }); return false; }
+    if (!v.allowed) { res.status(403).json(scope.OUT_OF_SCOPE); return false; }
+    return true;
+  }
   const isAdmin = (u) => !!u && ADMIN_ROLES.includes(u.role);
   const num = (v, d = null) => (v === undefined || v === null || v === '' ? d : parseInt(v, 10));
 
@@ -283,6 +310,22 @@ module.exports = function mountEvents(app, guards) {
     if (!b.startsOn) return res.status(400).json({ error: 'Event date is required' });
     if (isNaN(Date.parse(b.startsOn))) return res.status(400).json({ error: 'Event date is not a valid date' });
 
+    /* Whose event this is comes from who is creating it, not from the body. A
+       department admin cannot create an event into another department, and an
+       institution-wide role creates an institution-wide event unless it names
+       a department explicitly. */
+    const callerScope = scope.scopeOf(req.user);
+    let departmentId = null;
+    if (callerScope.kind === 'department') {
+      departmentId = callerScope.departmentId;
+    } else if (callerScope.kind === 'none') {
+      return res.status(403).json(scope.NO_DEPARTMENT);
+    } else if (b.departmentId !== undefined && b.departmentId !== null && b.departmentId !== '') {
+      const d = await db.query('SELECT id FROM departments WHERE id = $1 AND is_active', [num(b.departmentId)]);
+      if (!d.rows.length) return res.status(400).json({ error: 'That department does not exist.' });
+      departmentId = d.rows[0].id;
+    }
+
     const eventType = EVENT_TYPES.includes(b.eventType) ? b.eventType : 'Other';
     const visibility = VISIBILITIES.includes(b.visibility) ? b.visibility : 'alumni';
     const isPaid = b.isPaid === true || b.isPaid === 'true';
@@ -313,8 +356,9 @@ module.exports = function mountEvents(app, guards) {
            address, latitude, longitude,
            capacity, organizer_department, visibility, status, approval_status,
            registration_opens_at, registration_closes_at, waitlist_enabled, is_paid,
-           cover_image_url, created_by, updated_by, approved_by, approved_at, price)
-        VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$21,$22,$23,$8,$9,$10,'upcoming',$11,$12,$13,$14,$15,$16,$17,$17,$18,$19,$20)
+           cover_image_url, created_by, updated_by, approved_by, approved_at, price,
+           department_id)
+        VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$21,$22,$23,$8,$9,$10,'upcoming',$11,$12,$13,$14,$15,$16,$17,$17,$18,$19,$20,$24)
         RETURNING *`,
         [title, b.description || null, eventType, b.startsOn, b.startTime || null, b.endTime || null,
          venue, capacity, b.organizerDepartment || null, visibility, approvalStatus,
@@ -323,7 +367,7 @@ module.exports = function mountEvents(app, guards) {
          approvalStatus === 'approved' ? req.user.uid : null,
          approvalStatus === 'approved' ? new Date() : null,
          isPaid ? 'Paid' : 'Free',
-         String(b.address || '').trim() || null, coords.lat, coords.lng]);
+         String(b.address || '').trim() || null, coords.lat, coords.lng, departmentId]);
 
       const event = row.rows[0];
 
@@ -369,6 +413,7 @@ module.exports = function mountEvents(app, guards) {
   /* ─── UPDATE ─── */
   app.put('/api/events/:id', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
     const id = num(req.params.id);
+    if (!await guardEventScope(req, res, id)) return;
     const b = req.body || {};
 
     const map = {
@@ -502,6 +547,7 @@ module.exports = function mountEvents(app, guards) {
   }));
 
   app.post('/api/events/:id/ticket-types', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
+    if (!await guardEventScope(req, res, num(req.params.id))) return;
     const id = num(req.params.id);
     const { name, price, quota } = req.body || {};
     if (!String(name || '').trim()) return res.status(400).json({ error: 'Ticket name is required' });
@@ -665,18 +711,11 @@ module.exports = function mountEvents(app, guards) {
         [eventId, req.user.uid, ticketCode, qrPayload, type ? type.id : null,
          type ? type.name : 'standard', priceValue, paymentGateway || null, status]);
 
-      if (status === 'confirmed') {
-        /* NOT A SOURCE OF TRUTH — see POST_PHASE5B_WHOLE_SYSTEM_AUDIT.md P5C-009.
-
-           This counter is still incremented so the column does not drift further, but
-           nothing in the product reads it: event capacity is enforced with a live COUNT(*) of
-           event_registrations, a few lines above this.
-           It was seeded with fabricated values (chapters.members_count sums to 41,990
-           against 0 real memberships), so its absolute value is meaningless and only
-           the delta is maintained. Do not start displaying or enforcing on it without
-           reconciling it first. Dropping it is queued for a schema-cleanup phase. */
-        await client.query('UPDATE events SET registered_count = registered_count + 1 WHERE id=$1', [eventId]);
-      }
+      /* events.registered_count was maintained here and read by nothing. It is
+         gone as of schema_v19: capacity is enforced with a live COUNT(*) of
+         event_registrations a few lines above, and the column had already
+         drifted from that count on 5 of 21 events. A counter nobody reads is
+         not a cache, it is a second answer waiting to be believed. */
       if (clientMutationId) {
         await client.query(
           `INSERT INTO sync_mutations (client_mutation_id, user_id, entity, action, payload)
@@ -712,7 +751,6 @@ module.exports = function mountEvents(app, guards) {
       [eventId, req.user.uid]);
     if (!row.rows.length) return res.status(404).json({ error: 'No active ticket found' });
 
-    await db.query('UPDATE events SET registered_count = GREATEST(0, registered_count - 1) WHERE id=$1', [eventId]);
 
     const promoted = await db.query(`
       UPDATE event_registrations SET status='confirmed'
@@ -721,7 +759,6 @@ module.exports = function mountEvents(app, guards) {
       RETURNING user_id, ticket_code`, [eventId]);
 
     if (promoted.rows.length) {
-      await db.query('UPDATE events SET registered_count = registered_count + 1 WHERE id=$1', [eventId]);
       await notify(null, {
         userId: promoted.rows[0].user_id, icon: 'ticket-check',
         title: 'A seat opened up — you are in',
@@ -939,6 +976,7 @@ module.exports = function mountEvents(app, guards) {
   }));
 
   app.post('/api/events/:id/tasks', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
+    if (!await guardEventScope(req, res, num(req.params.id))) return;
     const eventId = num(req.params.id);
     const b = req.body || {};
     const title = String(b.title || '').trim();
@@ -984,6 +1022,7 @@ module.exports = function mountEvents(app, guards) {
 
   // Seed a practical checklist, with deadlines derived from the event date.
   app.post('/api/events/:id/tasks/standard-checklist', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
+    if (!await guardEventScope(req, res, num(req.params.id))) return;
     const eventId = num(req.params.id);
     const ev = await db.query('SELECT id, title, starts_on FROM events WHERE id=$1', [eventId]);
     if (!ev.rows.length) return res.status(404).json({ error: 'Event not found' });
@@ -1299,6 +1338,7 @@ module.exports = function mountEvents(app, guards) {
 
   // Attach one or more DIC accounts to the event team.
   app.post('/api/events/:id/people', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
+    if (!await guardEventScope(req, res, num(req.params.id))) return;
     const eventId = num(req.params.id);
     const b = req.body || {};
     const ids = Array.isArray(b.userIds) ? b.userIds.map(x => num(x)).filter(Boolean) : [];
@@ -1329,6 +1369,7 @@ module.exports = function mountEvents(app, guards) {
      This deliberately does NOT create a users row and never touches the
      alumni directory: the record lives and dies with this event. */
   app.post('/api/events/:id/external-people', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
+    if (!await guardEventScope(req, res, num(req.params.id))) return;
     const eventId = num(req.params.id);
     const b = req.body || {};
     const name = String(b.name || '').trim();

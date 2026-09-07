@@ -3551,3 +3551,345 @@ database ends the phase at 18 users, 14 profiles, 21 events, 3 jobs, 1 poll and
 ### Next phase
 
 **Phase 7D.** Not started.
+
+---
+
+## PHASE 7D — Architecture, Schema, Legacy Cleanup & Department Scoping
+
+**Status:** **COMPLETE**
+**Date:** 2026-09-08
+**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+
+### Baseline before implementation
+
+```
+28 suites                   2,291 passed, 0 failed
+audit chain                 PASS through 12,770 entries
+47 tables · 18 users · 14 profiles · 21 events · 3 jobs · 1 poll · 99 places
+```
+
+One flake on the way in: `portal` exited 0xC0000409 once and passed on four
+consecutive re-runs. A Windows process failure, not a code failure; the baseline
+was re-established green before anything was changed.
+
+### The finding that shaped the phase
+
+`users.department` is `VARCHAR(150) NOT NULL` and holds four different kinds of
+thing across 18 rows:
+
+| Kind | Example | Rows |
+|---|---|---|
+| a department | Computer Science & Engineering | 7 |
+| a programme | BSc CSE (2020) | 1 |
+| an HSC group | Science | 1 |
+| a staff org label | CSE Department, DIC Administration | 4 |
+
+The platform's only `dept_admin` reads **'CSE Department'**. The alumni it should
+govern read **'Computer Science & Engineering'**. Scoping on that string would
+have matched **nothing** — and a scope that silently returns zero rows looks
+exactly like a scope that works. That is the failure mode this phase existed to
+avoid, and it was one string comparison away.
+
+Two causes, both fixed:
+
+- **Bulk import had no Department field at all.** It wrote
+  `normalizeHscGroup(r.hscGroup)` into `users.department`, so an imported
+  alumnus's department was their HSC group.
+- **Registration did the same.** Every self-registered account belonged to no
+  department, so a department administrator could never confirm their own
+  graduates — the scope would have decayed to nothing as new accounts arrived.
+
+### The department model
+
+`scope.js` — one definition, no RBAC system, nothing configurable.
+
+| Role | Scope |
+|---|---|
+| `super_admin` / `univ_admin` | Institution-wide |
+| `dept_admin` | Its own department, and nothing else |
+| `moderator` | **unscoped** — platform-wide, as §1 requires |
+| `alumni` | unscoped — governed by privacy and ownership |
+
+Two decisions carry the design:
+
+**`unscoped` is not `none`.** Collapsing them is a bug in both directions, and
+I nearly shipped it: the first version returned `none` for a moderator, which
+would have emptied the moderation and event screens for the one role that exists
+to work them. A moderator gets no clause; an unassigned `dept_admin` gets
+`AND FALSE`.
+
+**Fail closed.** A `dept_admin` with no department reaches nothing, not
+everything, and the interface says so in words rather than showing an
+inexplicably empty screen.
+
+**A record with no department belongs to the institution.** The one alumnus whose
+department was never captured is visible to institution-wide roles and to no
+department admin.
+
+### Migrations
+
+All four are transactional, dry-run capable and idempotent, and each proves what
+it did not change with md5 fingerprints.
+
+| Migration | Change | Checks |
+|---|---|---|
+| **v17** | `departments` reference table; `users.department_id`; `alumni_profiles.department_id`; back-fill from the profile by exact match | 20 |
+| **v18** | `events.department_id`, back-filled by exact organiser match | 12 |
+| **v19** | Nine columns dropped, `event_proposals` retained under a new name, the seeded department administrator assigned | 34 |
+
+v17 seeds **four** departments — only names that actually appear on alumni
+profiles. **'Science' was deliberately not seeded**: it is an HSC group the
+import wrote into a department column, and the one profile carrying it keeps
+`department_id` NULL. "We do not know" is the truthful answer.
+
+v17 also assigned **no** staff department, on purpose. v19 assigns exactly one —
+the seeded `dept_admin`, matched on both its role and its `'CSE Department'`
+label so it cannot catch another account. Every further assignment goes through
+`PUT /api/admin/administrators/:id`, which audits it as
+**Administrator Department Changed**, separately from the field list of an
+ordinary edit, because an authorisation change should be findable by searching
+for one.
+
+### A defect in my own migration harness, introduced in Phase 7C-3
+
+`schema_v16.sql` — written last phase — contained its own `BEGIN; … COMMIT;`.
+Executed inside the migration script's transaction, that embedded `COMMIT` ends
+**the script's** transaction from the inside, so **`--dry-run` was committing,
+not rolling back**. I repeated it in v17 and v18.
+
+It stayed invisible because v16, v17 and v18 are fully idempotent — the "real"
+run after each dry run re-applied harmlessly and reported success. v19 exposed it
+because a table rename is not idempotent: the dry run renamed the table and
+committed, and the real run then failed with *relation "event_proposals" does not
+exist*.
+
+Fixed by removing `BEGIN`/`COMMIT` from all four schema files, and **proved**
+with a throwaway migration: a dry run now leaves the column absent, a real run
+creates it.
+
+### Schema cleanup
+
+Every column was verified unread before it was touched, and the code that wrote
+each counter was deleted in the same commit.
+
+**Five denormalised counters, all written by code and read by nothing:**
+
+| Column | Claimed | Real |
+|---|---|---|
+| `campaigns.raised_amount` | ৳3,442,532 | ৳5,000 settled |
+| `campaigns.donors_count` | — | never reconciled |
+| `chapters.members_count` | 41,994 | **0** memberships |
+| `chapters.events_count` | 57 | never written by any code |
+| `events.registered_count` | 83 | 4 confirmed registrations |
+
+Six `UPDATE` statements went with them, one of which —
+`GREATEST(1, members_count - 1)` — could never reach zero, guaranteeing
+permanent drift by construction.
+
+**Superseded date columns:** `events.event_date` and `events.event_time`, both
+`VARCHAR` and populated on 7 of 21 rows, against `starts_on`/`start_time` which
+are typed and populated on all 21.
+
+**A defect I introduced in Phase 7C-3, found here:** the Event Attendance and
+Ticket & Registration reports were written against `event_date`. They showed a
+blank date for two thirds of events and filtered a string as a date. Both now use
+`starts_on`.
+
+**Also dropped:** `events.planning_mode` (no reference anywhere),
+`mentorships.health_score` (nothing computes it).
+
+**`event_proposals`: retained, not deleted.** One historical row, no code path
+— its only caller was `API.moderateProposal`, whose route does not exist.
+Renamed to `legacy_event_proposals` with a `COMMENT` recording why. Deleting an
+institutional record because no code reads it is a retention decision, and not
+this migration's to make.
+
+**Kept, and worth naming:** `event_committees.members_count` is a different
+table and still live. `campaigns.days_left` is written once at creation and read
+with `created_at` to give a real end date — a duration, not a stale relative
+date.
+
+### A latent bug the phase surfaced
+
+`alumni_profiles.student_id` is UNIQUE, and both import and registration
+generated `DIC-<year>-<user id>`. The **seed** occupies the same namespace:
+`DIC-2018-1001` and `DIC-2018-1008` belong to users **7** and **14**. Safe only
+while `users.id` stayed below 1001 — and every rolled-back dry run burns ids
+without creating rows, so the sequence climbed to 1046 during this phase's
+testing and an ordinary import produced an id the seed already owned. The whole
+batch failed with a 500 and a constraint name.
+
+Pre-existing, latent since the seed was written, and reproduced deliberately by
+forcing the sequence to 1000. `uniqueStudentId()` now checks and suffixes:
+the collision that produced a 500 imports as `DIC-2018-1001-1`, seed untouched.
+
+### Dead code removed
+
+**Ten API client methods** with no caller: `getMyEvents`, `getEvent`,
+`deleteEvent`, `runReminderSweep`, `getAdministrator`, `updateCampaign`,
+`getPlannerList`, `updatePlannerItem`, `getImportHistoryV2` (a duplicate), and
+`moderateProposal` — whose route never existed.
+
+**Four frontend functions:** `goToStep1/2/3` (the `step-2` and `step-3` elements
+they address do not exist in either portal) and `toggleProgressiveDisclosure`.
+
+**`onSessionExpired` was on the first candidate list and was NOT removed.**
+`api.js` calls it through `typeof onSessionExpired === 'function'`, which the
+first scan missed because it only searched `js/*.js`. Removing it would have
+broken session expiry silently. The suite now asserts it survives.
+
+**Three shadowed definitions in `js/profile.js`:** `showEditProfile` (a toast
+stub) and an earlier `showEditProfileV2`/`handleSaveProfileV2` pair, both
+shadowed by later definitions in the same file. Worth removing rather than
+leaving: the shadowed pair mutated a local object and closed the modal without
+calling the server, so had it ever won, a member's edits would have vanished.
+
+**§15 found no duplicate helpers to consolidate.** `formatDate`, `escapeHtml`,
+`showToast`, `showModal`, `jsArg` and the render helpers are each defined once,
+in `js/core.js`; `apiRequest` and `fetchWithTimeout` once in `api.js`; the CSV
+writer once per side. Earlier phases had already done that work.
+
+**§12 verified clean.** `pendingEvents` exists only in a comment saying it was
+removed; `pending_events` is a real count over `events.approval_status`. One
+event moderation path.
+
+### Documentation
+
+- **`DEPARTMENT_SCOPE.md`** — every resource classified GLOBAL or
+  DEPARTMENT-SCOPED with the reason, the audit visibility matrix, and §16's
+  people-search strategy.
+- **`STATUS_VOCABULARY.md`** — every status column, its permitted values, UI
+  label, meaning and allowed transitions. **Nothing was renamed.** The one real
+  inconsistency — donation statuses are the platform's only UPPERCASE values —
+  is documented rather than migrated, because those are financial records named
+  in queries, reports, tests and the ledger export.
+
+### Interface
+
+Only where scope had to be shown or a capability would otherwise be unreachable:
+
+- The Reports page states **"Department: CSE — every report below covers
+  Computer Science & Engineering only"**, or warns when no department is
+  assigned. An administrator is never asked to pick their own department.
+- The administrator profile gained a **Governs** line, distinct from the
+  free-text department label, which says plainly when a department admin has
+  none and what that costs them.
+- The edit form gained a real department selector beside the label.
+- Sign-up gained an optional **Department** field, without which no department
+  administrator could ever confirm a new graduate.
+- The import wizard's column vocabulary gained **Department**.
+- **Audit Logs became reachable by `dept_admin`** — the server grants a scoped
+  read and the navigation did not offer it, which would have left the capability
+  granted and hidden.
+
+### Tests
+
+```
+29 suites                    2,425 passed, 0 failed
+  of which phase7d_architecture_scope   128   (new)
+  the 28 pre-existing suites          2,297   still 0 failed
+install drill (fresh DB, v2..v19)      32 passed, 0 failed
+audit chain                            PASS through 15,967 entries
+```
+
+`tests/phase7d_architecture_scope.js` covers A–Q: the relation and what was
+deliberately not seeded into it, assignment and who may do it, fail-closed before
+assignment, `unscoped` vs `none`, cross-department IDOR on `?id=`, scope that no
+query parameter widens, CSV exports scoped like their JSON, event management
+scoped while reading is not, imports that cannot cross a boundary, audit
+visibility with a platform-security deny-list, institution-wide authority
+retained, every dropped column, the retained proposal archive, every removed
+method and function, and the status vocabularies checked against the document
+that records them.
+
+### Six assertions updated, none weakened
+
+Each replacement is stricter than what it replaced:
+
+| Suite | Was | Now |
+|---|---|---|
+| `qa1` | legacy `event_date` values preserved | the VARCHAR columns are gone **and** every event has a typed date |
+| `qa1` | `dept` cannot read the audit log | `dept` reads a log that is strictly narrower **and** contains no security action |
+| `phase5a` | `dept` cannot read the audit log | same stricter pair |
+| `phase5d` | counters are labelled NOT A SOURCE OF TRUTH | the columns are gone **and** no code writes them |
+| `phase7c1` | `dept` may operate the verification queue | it may not, for an account outside its department — the refusal is now asserted |
+| `phase7c3` | a `dept_admin` cannot export the alumni directory | it can, scoped, and sees strictly fewer rows from a single department |
+
+`security_smoke` gained `GET /api/departments/public` to its public allow-list —
+a declaration, not a relaxation. The endpoint returns id, code and name for
+active departments and deliberately **not** the per-department alumni count the
+staff endpoint carries.
+
+### Two mistakes of my own, found and corrected
+
+**I over-corrected a test.** Updating `phase2b`/`phase2c` for the audit
+envelope, I also moved their filtering server-side. That looked like an
+improvement and was not: it widened the set to include each account's own
+sign-in and self-registration, which legitimately have no actor, and broke a real
+assertion about administrator actions taken *on* that account. Reverted to the
+original semantics — accessor only.
+
+**My first scope model would have locked out moderators.** Caught before any
+route used it, by writing out the truth table for all six role/department
+combinations rather than trusting the code read correctly.
+
+### Mobile and accessibility
+
+360 · 390 · 430 · 768 · 1024 · 1280 · 1440 across Reports, Audit Logs,
+Administration and Directory: **no page overflow at any width**. The
+22-column alumni report scrolls inside its own 315px container at 360. The scope
+banner fits every width, carries `role="status"`, and no control on either new
+surface is unlabelled.
+
+### Database verification
+
+18 users · 14 profiles · 21 events · 8 registrations · 37 ticket types · 3 jobs ·
+1 application · 1 poll · 4 donations · 3 campaigns · 7 chapters · 99 places ·
+4 departments · 1 retained proposal — every figure identical to the baseline.
+
+Orphan checks: 0 orphan profiles, 0 orphan registrations, 0 dangling department
+references across users, profiles and events, 0 user/profile department
+disagreements, 0 duplicate student ids, 0 duplicate emails, 0 audit entries
+missing a digest, 0 dangling notification deep-links.
+
+48 tables: `departments` added; the proposal rename is net zero.
+
+### Regressions
+
+None. Nothing pre-existing was deleted, and no assertion was weakened.
+
+One caught by the suite rather than by me: my new tests created an event and
+deleted it, but `notifications` has no foreign key to `events`, so its
+"awaiting approval" notices survived as dangling deep-links — which `qa1`
+correctly reported. The suite's cleanup now removes them first.
+
+### Limitations
+
+- **The free-text `department` columns remain**, beside the relation. They are
+  `NOT NULL`, several hold text no department could represent, and they are what
+  a person reads. `department_id` is the authority for authorisation and the
+  free text governs nothing. Merging them would mean either inventing
+  departments or discarding real strings.
+- **One alumnus has no department** — the imported account whose department
+  column holds an HSC group. Institution-wide roles see them; no department
+  admin does. There is no correct value to infer.
+- **20 of 21 events belong to no department**, because `organizer_department` was
+  blank or a test label on all but one. They are institution-wide, which is the
+  honest reading, and a department administrator manages none of them.
+- **A department administrator still cannot import.** Import remains
+  `ADMIN_ROLES`. The row-level department scope check is enforced regardless, so
+  the boundary holds if that ever changes.
+- **Jobs are not department-scoped.** A job is open to every graduate, and
+  `dept_admin` has no administrative power over jobs in any case.
+- **Donation statuses stay UPPERCASE.** Documented, not migrated.
+- **The people searches were not merged.** They answer different questions over
+  different tables, and a DIC system user is not an external event contact. A
+  future consolidation needs `event_people.user_id` first — a data-model change,
+  not a UI one.
+- **`install_drill` needs `DOCKER_PG_CONTAINER` set** to run against the Docker
+  database; without it it falls back to a local `psql` that is not installed on
+  this host. Pre-existing, and it is not in the `npm test` suite list.
+
+### Next phase
+
+**Phase 7E.** Not started.

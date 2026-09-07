@@ -11,6 +11,7 @@ const db = require('./db');
 const mailer = require('./mailer');
 const jobs = require('./jobs');
 const privacy = require('./privacy');
+const scope = require('./scope');       // one definition of department scope
 const location = require('./location');
 const path = require('path');
 const fs = require('fs');
@@ -343,7 +344,8 @@ async function attachUser(req, res, next) {
 
   try {
     const r = await db.query(
-      'SELECT id, role, status, token_version, must_change_password, is_verified FROM users WHERE id = $1',
+      `SELECT id, role, status, token_version, must_change_password, is_verified, department_id
+         FROM users WHERE id = $1`,
       [payload.uid]);
     // Account deleted since the token was issued — the token is now inert.
     if (r.rows.length === 0) { req.user = null; return next(); }
@@ -374,7 +376,16 @@ async function attachUser(req, res, next) {
        reasoning the status check above gives. It is read from the database
        rather than the token so revoking a verification takes effect on the
        next request instead of when the token expires. */
-    req.user = { ...payload, role: r.rows[0].role, verified: r.rows[0].is_verified === true };
+    /* department_id rides along on the row already being fetched, for the same
+       reason is_verified does: a department reassignment must take effect on the
+       next request, not when the token expires. It is deliberately NOT in the
+       token — a scope a caller carries is a scope a caller can forge. */
+    req.user = {
+      ...payload,
+      role: r.rows[0].role,
+      verified: r.rows[0].is_verified === true,
+      departmentId: r.rows[0].department_id === null ? null : Number(r.rows[0].department_id)
+    };
     req.mustChangePassword = r.rows[0].must_change_password === true;
   } catch {
     // The database is unreachable. Fail closed rather than fall back to the
@@ -521,6 +532,36 @@ const STAFF_ROLES = MODERATOR_ROLES;
 // batch, returned once to the administrator who ran the import, and never
 // stored in plaintext or written to a log. Every imported user is still flagged
 // must_change_password.
+
+/* A student id for an account the institution created for somebody, rather than
+   one they told us. The obvious formula is DIC-<year>-<user id>, and it is what
+   registration and bulk import have always used — unique, because the user id is.
+
+   Except that alumni_profiles.student_id is UNIQUE across the whole table, and
+   the seeded data occupies the same namespace: two seeded profiles carry
+   DIC-2018-1001 and DIC-2018-1008 while belonging to users 7 and 14. Those were
+   safe only while users.id stayed below 1001. Every rolled-back dry run burns
+   ids without creating rows, so the sequence climbs faster than the table, and
+   it reached 1046 during Phase 7D testing — at which point an ordinary import
+   generated an id the seed already owned and the whole batch failed with a 500
+   and a constraint name.
+
+   So the formula is kept and the collision is handled: the id is checked, and a
+   suffix is added if it is taken. In practice the first form is always free;
+   this exists so that "in practice" is not load-bearing. */
+async function uniqueStudentId(client, year, uid) {
+  const base = year ? `DIC-${year}-${uid}` : `DIC-${uid}`;
+  for (let n = 0; n < 50; n++) {
+    const candidate = n === 0 ? base : `${base}-${n}`;
+    const taken = await client.query(
+      'SELECT 1 FROM alumni_profiles WHERE student_id = $1', [candidate]);
+    if (!taken.rows.length) return candidate;
+  }
+  /* Fifty taken in a row means something is wrong that a suffix will not fix.
+     A null student id is allowed by the schema and is honest about it. */
+  return null;
+}
+
 function generateImportPassword() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
   let out = '';
@@ -882,14 +923,40 @@ app.post('/api/auth/register', async (req, res) => {
     const year = yearNum;
     const group = normalizeHscGroup(hscGroup) || 'General';
 
+    /* Phase 7D. Registration wrote the HSC group into users.department, exactly
+       as the bulk import did — so a self-registered alumnus had a "department"
+       of 'Science' and belonged to no department at all. No department
+       administrator could verify their own graduates, which is the one thing a
+       department administrator is for, and the scope would have decayed to
+       nothing as new accounts arrived.
+
+       A department is optional at sign-up: somebody who does not know theirs, or
+       whose department this platform has not been told about, must still be able
+       to register. When it is absent the account belongs to the institution and
+       an institution-wide role verifies it — which is what happened to every
+       account before this. */
+    let regDepartment = null;
+    if (req.body?.departmentId !== undefined && req.body.departmentId !== null && req.body.departmentId !== '') {
+      const d = await client.query('SELECT id, name FROM departments WHERE id = $1 AND is_active',
+        [parseInt(req.body.departmentId, 10)]);
+      if (!d.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'That department does not exist.' });
+      }
+      regDepartment = d.rows[0];
+    }
+
     // Self-registered accounts start unverified — an admin verifies them before
     // they are treated as confirmed alumni.
     const userRes = await client.query(`
       INSERT INTO users (email, password_hash, full_name, initials, role, role_label,
-                         department, is_verified, must_change_password, created_via)
-      VALUES ($1,$2,$3,$4,'alumni','Alumni Member',$5,FALSE,FALSE,'self_signup')
+                         department, is_verified, must_change_password, created_via,
+                         department_id)
+      VALUES ($1,$2,$3,$4,'alumni','Alumni Member',$5,FALSE,FALSE,'self_signup',$6)
       RETURNING *
-    `, [email.trim().toLowerCase(), hashPassword(password), clean, initials, group]);
+    `, [email.trim().toLowerCase(), hashPassword(password), clean, initials,
+        regDepartment ? regDepartment.name : group,
+        regDepartment ? regDepartment.id : null]);
 
     const uid = userRes.rows[0].id;
     /* Location is NOT written here. This INSERT used to end in
@@ -899,11 +966,14 @@ app.post('/api/auth/register', async (req, res) => {
        set"; a guess stored as fact is indistinguishable from a fact. */
     await client.query(`
       INSERT INTO alumni_profiles (user_id, student_id, batch, passing_year, department,
-                                   primary_email, mobile_number, blood_group, hsc_group)
-      VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8)
-    `, [uid, year ? `DIC-${year}-${uid}` : `DIC-${uid}`, year, group,
+                                   primary_email, mobile_number, blood_group, hsc_group,
+                                   department_id)
+      VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$9)
+    `, [uid, await uniqueStudentId(client, year, uid), year,
+        regDepartment ? regDepartment.name : group,
         email.trim().toLowerCase(), (mobile || '').trim() || null,
-        normalizeBloodGroup(bloodGroup), group]);
+        normalizeBloodGroup(bloodGroup), group,
+        regDepartment ? regDepartment.id : null]);
 
     // Verifying an account is a moderator's job, not only a super admin's, so
     // this reaches every role /api/verification-queue actually admits.
@@ -1756,20 +1826,10 @@ app.post('/api/chapters/:id/join', requireVerified, async (req, res) => {
     if (check.rows.length > 0) {
       // Leave chapter
       await db.query('DELETE FROM chapter_memberships WHERE chapter_id = $1 AND user_id = $2', [chapterId, targetUserId]);
-      /* NOT A SOURCE OF TRUTH — see POST_PHASE5B_WHOLE_SYSTEM_AUDIT.md P5C-009.
-
-         This counter is still incremented so the column does not drift further, but
-         nothing in the product reads it: chapter membership is COUNT(chapter_memberships).
-         It was seeded with fabricated values (chapters.members_count sums to 41,990
-         against 0 real memberships), so its absolute value is meaningless and only
-         the delta is maintained. Do not start displaying or enforcing on it without
-         reconciling it first. Dropping it is queued for a schema-cleanup phase. */
-      await db.query('UPDATE chapters SET members_count = GREATEST(1, members_count - 1) WHERE id = $1', [chapterId]);
       joined = false;
     } else {
       // Join chapter
       await db.query('INSERT INTO chapter_memberships (chapter_id, user_id) VALUES ($1, $2)', [chapterId, targetUserId]);
-      await db.query('UPDATE chapters SET members_count = members_count + 1 WHERE id = $1', [chapterId]);
       joined = true;
     }
 
@@ -2134,7 +2194,7 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
     const missingFieldCounts = {};
     // hscPassingYear was listed here, but it is NOT optional — it is the batch,
     // and the column is NOT NULL. A row without it is rejected above.
-    const OPTIONAL_FIELDS = ["mobile","hscGroup","hscVersion","bloodGroup",
+    const OPTIONAL_FIELDS = ["mobile","department","hscGroup","hscVersion","bloodGroup",
                              "presentAddress","permanentAddress","hometown","postalCode",
                              "city","district","country",
                              "occupation","organization","designation",
@@ -2146,6 +2206,11 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
        file said, and discarded the Country, District, Hometown and
        PermanentAddress columns its own template asked for. */
     const unresolvedLocations = [];
+    /* Departments the file named that this platform has no record of. Reported
+       in full rather than counted, for the same reason unresolved locations
+       are: "3 unknown departments" is not actionable and "row 12: Mechatronics"
+       is. */
+    const unresolvedDepartments = [];
     const seenEmail = new Set(), seenMobile = new Set();
     const strategy = (req.body.dupResolution || "skip").toLowerCase();
 
@@ -2168,6 +2233,31 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
        The operator chooses. 'invite' needs every imported address to be one
        the person can actually read; 'generated' does not, which is why it
        still exists and is still the default rather than being replaced. */
+    /* Phase 7D — the roster's Department column.
+
+       Until now the import had no Department field at all: it wrote
+       normalizeHscGroup(r.hscGroup) into users.department and
+       alumni_profiles.department, so an imported alumnus's "department" was
+       their HSC group — 'Science', 'Commerce', 'Arts'. One account on this
+       platform still reads 'Science' for exactly that reason.
+
+       A department is now read from the file, resolved against the reference
+       table by code or name, and checked against the administrator's own scope.
+       A row naming a department the administrator does not govern is REJECTED
+       by row number, like any other bad row — not silently reassigned, and not
+       silently imported without one. */
+    const deptRows = await client.query('SELECT id, code, name FROM departments WHERE is_active');
+    const deptByKey = new Map();
+    for (const d of deptRows.rows) {
+      deptByKey.set(d.code.toLowerCase(), d);
+      deptByKey.set(d.name.toLowerCase(), d);
+    }
+    const importerScope = scope.scopeOf(req.user);
+    if (importerScope.kind === 'none') {
+      await client.query('ROLLBACK');
+      return res.status(403).json(scope.NO_DEPARTMENT);
+    }
+
     const passwordStrategy = req.body.passwordStrategy === 'invite' ? 'invite' : 'generated';
     const batchPassword = passwordStrategy === 'invite' ? null : generateImportPassword();
     const passwordHash = passwordStrategy === 'invite'
@@ -2216,6 +2306,35 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
         rejectedRows.push({ row: rowNo, name, email,
           error: "HSC passing year is missing or not a year between 1960 and 2100 (required: it is the batch)" });
         continue;
+      }
+
+      /* The row's department, resolved and scope-checked before anything is
+         written. An unrecognised name is not an error — the institution's
+         roster may legitimately carry a department this platform has not been
+         told about — but it is reported, and the account is created without a
+         department rather than with a guessed one. A department the importer
+         may not reach IS an error. */
+      const deptRaw = String(r.department || '').trim();
+      let rowDepartment = null;
+      if (deptRaw) {
+        const found = deptByKey.get(deptRaw.toLowerCase());
+        if (found) {
+          if (!scope.canReach(req.user, found.id)) {
+            rejected++;
+            rejectedRows.push({ row: rowNo, name, email,
+              error: `Department "${found.code}" is outside your scope — you cannot import into it` });
+            continue;
+          }
+          rowDepartment = found;
+        } else {
+          unresolvedDepartments.push({ row: rowNo, supplied: deptRaw,
+            reason: 'not a department this platform knows' });
+        }
+      } else if (importerScope.kind === 'department') {
+        /* A department administrator importing a roster with no Department
+           column is importing into their own department; there is nowhere else
+           they could be importing to. */
+        rowDepartment = { id: importerScope.departmentId, code: null, name: null };
       }
 
       // Record blanks for reporting; they never block the import.
@@ -2333,10 +2452,16 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
       const userRes = await client.query(
         `INSERT INTO users (email, password_hash, full_name, initials, role, role_label,
                             department, is_verified, must_change_password, created_via,
-                            import_batch_id)
-         VALUES ($1,$2,$3,$4,'alumni','Alumni Member',$5,TRUE,TRUE,'bulk_import',$6)
+                            import_batch_id, department_id)
+         VALUES ($1,$2,$3,$4,'alumni','Alumni Member',$5,TRUE,TRUE,'bulk_import',$6,$7)
          ON CONFLICT (email) DO NOTHING RETURNING id`,
-        [email, passwordHash, name, initials, normalizeHscGroup(r.hscGroup) || "General", batchId]
+        /* users.department keeps the display label. It reads the department
+           name where the file gave one, and falls back to the HSC group only
+           where it did not — which is what it always did, and is now visibly a
+           fallback rather than the definition. department_id is the authority. */
+        [email, passwordHash, name, initials,
+         (rowDepartment && rowDepartment.name) || normalizeHscGroup(r.hscGroup) || "General",
+         batchId, rowDepartment ? rowDepartment.id : null]
       );
       if (userRes.rows.length === 0) { skippedDuplicate++; continue; }
       const uid = userRes.rows[0].id;
@@ -2353,15 +2478,16 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
             blood_group, present_address, occupation, current_company, job_title,
             hsc_group, hsc_version, photo_url, facebook, mobile_number,
             place_id, city, country, division, district,
-            permanent_address, hometown, postal_code)
+            permanent_address, hometown, postal_code, department_id)
          VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
-                 $16,$17,$18,$19,$20,$21,$22,$23)`,
-        [uid, year ? `DIC-${year}-${uid}` : `DIC-${uid}`, year,
-         normalizeHscGroup(r.hscGroup) || "General", email,
+                 $16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+        [uid, await uniqueStudentId(client, year, uid), year,
+         (rowDepartment && rowDepartment.name) || normalizeHscGroup(r.hscGroup) || "General", email,
          profileVals[1], profileVals[2], profileVals[3], profileVals[4], profileVals[5],
          profileVals[6], profileVals[7], profileVals[8], profileVals[9], profileVals[10],
          profileVals[11], profileVals[12], profileVals[13], profileVals[14], profileVals[15],
-         profileVals[16], profileVals[17], profileVals[18]]
+         profileVals[16], profileVals[17], profileVals[18],
+         rowDepartment ? rowDepartment.id : null]
       );
       created++;
     }
@@ -2431,6 +2557,8 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
          and "row 41: Chattogram Sadar" is. */
       unresolvedLocations: unresolvedLocations.slice(0, 100),
       unresolvedLocationCount: unresolvedLocations.length,
+      unresolvedDepartments: unresolvedDepartments.slice(0, 100),
+      unresolvedDepartmentCount: unresolvedDepartments.length,
       dryRun,
       /* A dry run has no batch to report and no batch to roll back: the row it
          wrote was rolled back with everything else. */
@@ -3115,6 +3243,16 @@ app.put('/api/users/:id/verify', requireRole(...MODERATOR_ROLES), async (req, re
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid user id' });
   const verified = req.body?.verified !== false;
   try {
+    /* Whose account this is decides whether this caller may touch it, and the
+       answer comes from the database rather than from anything in the request.
+       Changing ?id= to somebody in another department reaches this check, not
+       the UPDATE. */
+    const target = await db.query('SELECT department_id FROM users WHERE id = $1', [id]);
+    if (!target.rows.length) return res.status(404).json({ error: 'User not found' });
+    if (!scope.canReach(req.user, target.rows[0].department_id)) {
+      return res.status(403).json(scope.OUT_OF_SCOPE);
+    }
+
     const r = await db.query(
       'UPDATE users SET is_verified = $1 WHERE id = $2 RETURNING id, full_name, is_verified',
       [verified, id]);
@@ -3131,22 +3269,76 @@ app.put('/api/users/:id/verify', requireRole(...MODERATOR_ROLES), async (req, re
    panel that used to list two invented people. */
 app.get('/api/verification-queue', requireRole(...MODERATOR_ROLES), async (req, res) => {
   try {
+    /* A department admin is offered only the accounts it may actually verify.
+       Listing one it would then be refused is worse than not listing it: it
+       reads as a broken button rather than as a boundary. */
+    const params = [];
+    const where = 'WHERE NOT u.is_verified' + scope.sqlFor(req.user, 'u.department_id', params);
     const rows = await db.query(`
       SELECT u.id, u.full_name, u.initials, u.email, u.department, u.created_at,
-             ap.batch, ap.student_id
+             ap.batch, ap.student_id, d.code AS department_code
       FROM users u
       LEFT JOIN alumni_profiles ap ON ap.user_id = u.id
-      WHERE NOT u.is_verified
+      LEFT JOIN departments d ON d.id = u.department_id
+      ${where}
       ORDER BY u.created_at DESC, u.id DESC
       LIMIT 50
-    `);
+    `, params);
     res.json(rows.rows);
   } catch (err) {
     serverError(res, err, 'api');
   }
 });
 
-const guards = { requireAuth, requireVerified, requireRole, ADMIN_ROLES, MODERATOR_ROLES, serverError };
+/* The department list a sign-up form needs, before anyone is signed in.
+
+   Department names are not sensitive — they are printed on the alumni
+   directory, on events and on the institution's own website. What this
+   deliberately does NOT return is the alumni count each department carries,
+   which the staff endpoint does: a headcount per department is an
+   institutional figure and an unauthenticated caller has no business with it. */
+app.get('/api/departments/public', async (req, res) => {
+  try {
+    const rows = await db.query(
+      'SELECT id, code, name FROM departments WHERE is_active ORDER BY name');
+    res.json(rows.rows);
+  } catch (err) {
+    serverError(res, err, 'api');
+  }
+});
+
+/* The department list. Readable by any staff role — a department's name and
+   code are not sensitive, and every screen that shows or filters by department
+   needs them. Members do not get it: they have no screen that uses it. */
+app.get('/api/departments', requireRole(...MODERATOR_ROLES), async (req, res) => {
+  try {
+    const rows = await db.query(`
+      SELECT d.id, d.code, d.name, d.is_active,
+             COUNT(ap.id)::int AS alumni
+      FROM departments d
+      LEFT JOIN alumni_profiles ap ON ap.department_id = d.id
+      GROUP BY d.id
+      ORDER BY d.name`);
+    /* What the caller's own scope is, so the interface can say "Department:
+       CSE" rather than asking an administrator to pick their own department
+       every time they open a screen. */
+    const mine = scope.scopeOf(req.user);
+    res.json({
+      departments: rows.rows,
+      scope: {
+        kind: mine.kind,
+        departmentId: mine.departmentId,
+        department: mine.departmentId
+          ? rows.rows.find(d => d.id === mine.departmentId) || null
+          : null
+      }
+    });
+  } catch (err) {
+    serverError(res, err, 'api');
+  }
+});
+
+const guards = { requireAuth, requireVerified, requireRole, ADMIN_ROLES, MODERATOR_ROLES, serverError, scope };
 
 // v2: events, ticketing, jobs, campaigns/donations, custom fields,
 // mentorship, connections, polls, broadcasts, audit log.

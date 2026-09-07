@@ -22,7 +22,11 @@
 -- guessing which users were its.
 -- ════════════════════════════════════════════════════════════
 
-BEGIN;
+-- NOTE: this file deliberately contains no BEGIN/COMMIT. The migration script
+-- that applies it owns the transaction. An embedded COMMIT would end THAT
+-- transaction from the inside, which is exactly what schema_v16 through v19
+-- did until this was fixed: --dry-run committed instead of rolling back, and
+-- the bug hid behind the idempotency of the migrations it affected.
 
 -- ─── import_history: a real actor, a lifecycle, and a rollback record ───
 ALTER TABLE import_history ADD COLUMN IF NOT EXISTS created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL;
@@ -49,4 +53,3 @@ CREATE INDEX IF NOT EXISTS idx_import_history_actor    ON import_history(created
 CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_action     ON audit_logs(action);
 
-COMMIT;

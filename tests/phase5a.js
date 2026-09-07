@@ -312,12 +312,27 @@ const src = f => fs.readFileSync(path.join(REPO, f), 'utf8').replace(/\r\n/g, '\
     ok('the chain verifies again once it is removed', (await auditChain.verifyChain(db)).ok);
   }
 
-  console.log('\n=== J. audit read access is unchanged and restricted ===');
+  console.log('\n=== J. audit read access is restricted, and scoped ===');
   ok('unauthenticated cannot read the audit log', (await j('/api/audit-logs')).status === 401);
-  for (const r of ['alum', 'mod', 'dept']) {
+  for (const r of ['alum', 'mod']) {
     ok(`${r} cannot read the audit log`, (await j('/api/audit-logs', H(S[r]))).status === 403, r);
   }
   ok('an admin can', (await j('/api/audit-logs', H(S.univ))).status === 200);
+
+  /* Phase 7D §7 gave a department admin a SCOPED audit read: it can answer
+     "what happened to this student of mine" and nothing else. The assertion
+     that it saw nothing at all is replaced by two that are together stricter —
+     what it sees must be a strict subset, and it must contain no
+     platform-security action whatever the department. */
+  const deptLog = await j('/api/audit-logs?limit=200', H(S.dept));
+  const superLog = await j('/api/audit-logs?limit=200', H(S.super));
+  ok('dept can read a scoped audit log', deptLog.status === 200, deptLog.status);
+  ok('…which is strictly narrower than the platform log',
+    deptLog.body.total < superLog.body.total, `${deptLog.body.total} of ${superLog.body.total}`);
+  const SENSITIVE = /^(Administrator|Password|Signed In|Signed Out|Sign-In Failed|Session|Vault|Identity|Database|Scheduler|Ops|Sync|DSAR|Account Purged|Account Deletion|Audit Log Exported|Bulk Import|Import Batch)/;
+  ok('…and contains no platform-security action',
+    (deptLog.body.entries || []).every(e => !SENSITIVE.test(e.action)),
+    [...new Set((deptLog.body.entries || []).filter(e => SENSITIVE.test(e.action)).map(e => e.action))].join(','));
 
   console.log('\n=== cleanup ===');
   await db.query('DELETE FROM users WHERE email IN ($1,$2)', [email, pe]);

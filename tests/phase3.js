@@ -191,7 +191,9 @@ const front = () => ['index.html', 'admin.html', 'api.js']
 
   // Clean up only the row this test created.
   await db.query('DELETE FROM donations WHERE id=$1', [pid]);
-  await db.query('UPDATE campaigns SET raised_amount = raised_amount - 1234, donors_count = donors_count - 1 WHERE id=$1', [camp.id]);
+  /* campaigns.raised_amount and donors_count were dropped in Phase 7D, so there
+     is no counter left to undo. The donation row above is the only thing this
+     test created and deleting it is the whole cleanup. */
 
   console.log('\n=== E. free tickets only until a gateway exists ===');
   const evs = (await j('/api/events?scope=manage&status=all', H(S.super))).body;

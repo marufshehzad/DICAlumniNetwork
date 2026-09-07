@@ -11,6 +11,7 @@ const privacy = require('./privacy');   // location privacy is enforced in SQL b
 const auditChain = require('./audit_chain');
 const { sendCsv } = require('./csv');                 // one CSV writer for the platform
 const { MODULE_NAMES, moduleCaseSql } = require('./audit_modules');
+const scope = require('./scope');
 
 // ─── FIELD-LEVEL ENCRYPTION (REQ-14, PDPA 2026) ───
 // AES-256-GCM. The key comes from ENCRYPTION_KEY (64 hex chars). Without it the
@@ -505,19 +506,11 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
           received ? (method ? String(method).slice(0, 100) : 'manual') : null]);
 
       if (received) {
-        await client.query(`
-          /* NOT A SOURCE OF TRUTH — see POST_PHASE5B_WHOLE_SYSTEM_AUDIT.md P5C-009.
-
-             This counter is still incremented so the column does not drift further, but
-             nothing in the product reads it: campaign totals are SUM(amount) over settled donations.
-             It was seeded with fabricated values (chapters.members_count sums to 41,990
-             against 0 real memberships), so its absolute value is meaningless and only
-             the delta is maintained. Do not start displaying or enforcing on it without
-             reconciling it first. Dropping it is queued for a schema-cleanup phase. */
-          UPDATE campaigns SET raised_amount = raised_amount + $2, donors_count = donors_count + 1
-          WHERE id = $1
-        `, [cur.rows[0].campaign_id, cur.rows[0].amount]);
-
+        /* campaigns.raised_amount and campaigns.donors_count were maintained here
+           and read by nothing: every campaign total the product shows is a SUM
+           over settled donations. Both columns are gone as of schema_v19. They
+           had been seeded at ৳1,842,532 against ৳5,000 of real settled giving,
+           so maintaining the delta only kept a wrong number moving. */
         if (cur.rows[0].donor_user_id) {
           await client.query(
             `INSERT INTO notifications (user_id, icon, title, subtitle) VALUES ($1,'💰','Donation received',$2)`,
@@ -1046,11 +1039,71 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
 
      The hash chain is never touched by any of this. Every query here is a
      SELECT; there is no ordering, filtering or export path that writes. */
-  app.get('/api/audit-logs', requireRole(...ADMIN_ROLES), (req, res) => ok(res, async () => {
+  /* Phase 7D §7 — who sees what.
+
+       super_admin  every entry
+       univ_admin   every entry (institution-wide)
+       dept_admin   entries about accounts in its own department, plus its own
+                    actions — and never a platform-security action, whoever it
+                    concerns
+       moderator    no access, unchanged
+       alumni       no access, unchanged
+
+     A department admin can now answer "what happened to this student of mine",
+     which is the question a department administrator actually has. It cannot
+     answer "who signed in as a super admin", "when was the vault opened" or
+     "who was given which role", because those are platform-security matters and
+     a departmental scope is not a reason to see them.
+
+     The deny-list is on the ACTION, not on the module, because a module is a
+     coarse grouping and 'Administration' contains both an ordinary profile edit
+     and a role change. Anything not recognised is denied to a scoped reader:
+     an action added later is invisible to a department admin until somebody
+     decides it should not be, which is the safe direction for that mistake. */
+  const SECURITY_SENSITIVE = [
+    'Administrator', 'Password', 'Signed In', 'Signed Out', 'Sign-In Failed',
+    'Session', 'Vault', 'Identity', 'Database', 'Scheduler', 'Ops', 'Sync',
+    'DSAR', 'Account Purged', 'Account Deletion', 'Audit Log Exported',
+    'Bulk Import', 'Import Batch'
+  ];
+
+  function auditScopeClause(user, params) {
+    if (scope.isInstitutionWide(user.role)) return '';
+
+    /* Not institution-wide, so the reader is a dept_admin — nothing else
+       reaches this route. An unassigned one sees nothing, like everywhere else. */
+    const s = scope.scopeOf(user);
+    if (s.kind !== 'department') return ' AND FALSE';
+
+    params.push(s.departmentId);
+    const dep = `$${params.length}`;
+    params.push(user.uid);
+    const me = `$${params.length}`;
+
+    const denied = SECURITY_SENSITIVE
+      .map(a => `a.action NOT ILIKE '${a.replace(/'/g, "''")}%'`)
+      .join(' AND ');
+
+    /* The subject of the entry must be one of this department's accounts, or
+       the entry must be this administrator's own action. Both sides are joined
+       against users.department_id, so an entry about a deleted account — whose
+       department can no longer be established — is not shown to a department
+       admin. */
+    return ` AND (${denied}) AND (
+        a.actor_id = ${me}
+        OR EXISTS (SELECT 1 FROM users tu
+                    WHERE a.target_type = 'user' AND tu.id = a.target_id
+                      AND tu.department_id = ${dep})
+      )`;
+  }
+
+  app.get('/api/audit-logs', requireRole(...ADMIN_ROLES, 'dept_admin'), (req, res) => ok(res, async () => {
     const isCsv = String(req.query.format || '').toLowerCase() === 'csv';
 
     const params = [];
     let where = 'WHERE TRUE';
+    /* Applied first, so no query parameter below can widen past it. */
+    where += auditScopeClause(req.user, params);
 
     // Administrator: an id, so a renamed account stays findable.
     if (/^\d+$/.test(String(req.query.actorId || ''))) {
@@ -1167,25 +1220,33 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
      instead of asking for an id. Read from audit_logs rather than from users:
      an account that has been deleted still has entries, and they must remain
      findable. */
-  app.get('/api/audit-logs/actors', requireRole(...ADMIN_ROLES), (req, res) => ok(res, async () => {
+  app.get('/api/audit-logs/actors', requireRole(...ADMIN_ROLES, 'dept_admin'), (req, res) => ok(res, async () => {
+    /* Scoped identically to the log itself. A filter list built from entries
+       the reader cannot open would name administrators and counts they are not
+       entitled to — a filter dropdown is a disclosure like any other. */
+    const params = [];
+    const clause = auditScopeClause(req.user, params);
     const rows = await db.query(`
       SELECT a.actor_id AS id,
              COALESCE(u.full_name, 'Deleted account #' || a.actor_id) AS name,
              u.role, COUNT(*)::int AS entries
       FROM audit_logs a
       LEFT JOIN users u ON u.id = a.actor_id
-      WHERE a.actor_id IS NOT NULL
+      WHERE a.actor_id IS NOT NULL${clause}
       GROUP BY a.actor_id, u.full_name, u.role
-      ORDER BY entries DESC`);
+      ORDER BY entries DESC`, params);
     res.json(rows.rows);
   }));
 
   /* The action vocabulary actually present in the log, with counts. Same
      reason: an operator should pick from what exists, not type a guess. */
-  app.get('/api/audit-logs/actions', requireRole(...ADMIN_ROLES), (req, res) => ok(res, async () => {
+  app.get('/api/audit-logs/actions', requireRole(...ADMIN_ROLES, 'dept_admin'), (req, res) => ok(res, async () => {
+    const params = [];
+    const clause = auditScopeClause(req.user, params);
     const rows = await db.query(`
-      SELECT action, ${moduleCaseSql('action')} AS module, COUNT(*)::int AS entries
-      FROM audit_logs GROUP BY action ORDER BY entries DESC`);
+      SELECT a.action, ${moduleCaseSql('a.action')} AS module, COUNT(*)::int AS entries
+      FROM audit_logs a WHERE TRUE${clause}
+      GROUP BY a.action ORDER BY entries DESC`, params);
     res.json({ actions: rows.rows, modules: MODULE_NAMES });
   }));
 

@@ -40,6 +40,15 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
   }
 }
 
+/* Phase 7D removed ten methods from this client that nothing called:
+   getMyEvents, getEvent, deleteEvent, runReminderSweep, getAdministrator,
+   updateCampaign, getPlannerList, updatePlannerItem, getImportHistoryV2 (a
+   duplicate of getImportHistory), and moderateProposal — whose route,
+   /api/moderation/proposal/:id/:action, does not exist on the server at all.
+   The endpoints behind the other nine are still there and still guarded; what
+   is gone is a client method with no caller, which is a promise this file was
+   making on behalf of screens that never took it up. */
+
 const API = {
   // ─── AUTHENTICATION ───
   async login(email, password) {
@@ -287,16 +296,6 @@ const API = {
     }
   },
 
-  async moderateProposal(id, action) {
-    try {
-      const res = await fetchWithTimeout(`${API_BASE_URL}/api/moderation/proposal/${id}/${action}`, {
-        method: 'POST'
-      });
-      return await res.json();
-    } catch (e) {
-      return null;
-    }
-  },
 
   async getImportHistory() {
     try {
@@ -371,15 +370,12 @@ function apiFailed(result) {
 Object.assign(API, {
   // ─── EVENTS, TICKETS, TASKS, PEOPLE (v5) ───
   getEvents:        (params = {})   => apiRequest('GET',    '/api/events' + qs(params)),
-  getMyEvents:      ()             => apiRequest('GET',    '/api/events/mine'),
-  getEvent:         (id)            => apiRequest('GET',    `/api/events/${id}`),
   getEventOverview: (id)            => apiRequest('GET',    `/api/events/${id}/overview`),
   createEvent:      (d)             => apiRequest('POST',   '/api/events', d),
   updateEvent:      (id, d)         => apiRequest('PUT',    `/api/events/${id}`, d),
   approveEvent:     (id)            => apiRequest('PUT',    `/api/events/${id}/approve`),
   rejectEvent:      (id, reason)    => apiRequest('PUT',    `/api/events/${id}/reject`, { reason }),
   cancelEvent:      (id, reason)    => apiRequest('PUT',    `/api/events/${id}/cancel`, { reason }),
-  deleteEvent:      (id)            => apiRequest('DELETE', `/api/events/${id}`),
 
   getTicketTypes:   (id)            => apiRequest('GET',    `/api/events/${id}/ticket-types`),
   addTicketType:    (id, d)         => apiRequest('POST',   `/api/events/${id}/ticket-types`, d),
@@ -407,7 +403,6 @@ Object.assign(API, {
   addChecklistItem: (taskId, label) => apiRequest('POST',   `/api/events/tasks/${taskId}/checklist`, { label }),
   setChecklistItem: (itemId, isDone) => apiRequest('PUT',   `/api/events/tasks/checklist/${itemId}`, { isDone }),
   deleteChecklistItem:(itemId)      => apiRequest('DELETE', `/api/events/tasks/checklist/${itemId}`),
-  runReminderSweep: ()              => apiRequest('POST',   '/api/events/tasks/reminder-sweep'),
 
   getEventPeople:   (id)            => apiRequest('GET',    `/api/events/${id}/people`),
   addEventPeople:   (id, d)         => apiRequest('POST',   `/api/events/${id}/people`, d),
@@ -455,7 +450,9 @@ Object.assign(API, {
 
   // ─── ADMINISTRATOR ACCOUNTS (super admin only) ───
   getAdministrators:    ()          => apiRequest('GET',    '/api/admin/administrators'),
-  getAdministrator:     (id)        => apiRequest('GET',    '/api/admin/administrators/' + id),
+  /* The reference departments plus the caller's own scope, so a screen can say
+     "Department: CSE" instead of asking an administrator to pick their own. */
+  getDepartments:       ()          => apiRequest('GET',    '/api/departments'),
   createAdministrator:  (d)         => apiRequest('POST',   '/api/admin/administrators', d),
   updateAdministrator:  (id, d)     => apiRequest('PUT',    '/api/admin/administrators/' + id, d),
   setAdministratorStatus: (id, s)   => apiRequest('PUT',    '/api/admin/administrators/' + id + '/status', { status: s }),
@@ -469,7 +466,6 @@ Object.assign(API, {
   // ─── CAMPAIGNS & DONATIONS ───
   getCampaigns:     ()              => apiRequest('GET',    '/api/campaigns'),
   createCampaign:   (d)             => apiRequest('POST',   '/api/campaigns', d),
-  updateCampaign:   (id, d)         => apiRequest('PUT',    `/api/campaigns/${id}`, d),
   deleteCampaign:   (id)            => apiRequest('DELETE', `/api/campaigns/${id}`),
   // Records a pledge. There is no browser-callable path to a settled donation:
   // confirmDonation() used to POST {success:true} and is gone with its endpoint.
@@ -519,9 +515,7 @@ Object.assign(API, {
   // ─── EVENT ADVANCED MODULES (staff only) ───
   getPlannerWorkspace: (eventId) => apiRequest('GET',   `/api/planner/workspace/${eventId}`),
   getPlannerAnalytics: (eventId) => apiRequest('GET',   `/api/planner/analytics/${eventId}`),
-  getPlannerList:   (kind, eventId) => apiRequest('GET', `/api/planner/${kind}?eventId=${eventId}`),
   createPlannerItem:(kind, d)       => apiRequest('POST',   `/api/planner/${kind}`, d),
-  updatePlannerItem:(kind, id, d)   => apiRequest('PUT',    `/api/planner/${kind}/${id}`, d),
   deletePlannerItem:(kind, id)      => apiRequest('DELETE', `/api/planner/${kind}/${id}`),
   plannerReportUrl: (eventId, type = 'full') => `${API_BASE_URL}/api/planner/report/${eventId}?type=${type}`,
 
@@ -539,7 +533,6 @@ Object.assign(API, {
   dsarExportUrl:    (format = 'json') => `${API_BASE_URL}/api/dsar/export?format=${format}`,
 
   // Import history (admin panel audit trail)
-  getImportHistoryV2: ()            => apiRequest('GET',    '/api/import-history'),
   rollbackImportBatch: (id)         => apiRequest('POST',   `/api/import-batches/${id}/rollback`),
 
   // Reports. The list is the server's; the interface renders whatever it says

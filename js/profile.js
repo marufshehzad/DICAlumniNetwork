@@ -196,7 +196,8 @@ async function viewAlumniProfile(id) {
 // ─── MISC ACTIONS ────────────────────────────────────────────
 
 
-function showEditProfile() { showToast('✏ Profile editor loading…'); }
+/* A stub that showed a toast and did nothing, shadowed 900 lines later by
+   the real delegating definition. Removed in Phase 7D. */
 
 // ─── 6. COMPREHENSIVE 10-SECTION USER PROFILE HUB ─────────────
 /* The fields the server gates, and the levels it accepts, are no longer
@@ -589,44 +590,13 @@ function switchProfileHubSection(sectionTag, btn) {
   render10SectionProfile(sectionTag);
 }
 
-// ─── 7. FULL PROFILE EDITOR MODAL ───────────────────────────
-function showEditProfileV2() {
-  const p = FULL_USER_PROFILE;
-  openModal(`
-    <div class="onboarding-header">
-      <div class="onboarding-title"><i data-lucide="pen-line" class="ui-icon"></i> Edit Comprehensive Profile</div>
-      <div class="onboarding-sub">Update your 10-section profile details and field privacy settings</div>
-    </div>
-
-    <form onsubmit="handleSaveProfileV2(event)" style="display:flex;flex-direction:column;gap:14px;margin-top:14px;max-height:60vh;overflow-y:auto;padding-right:6px">
-      <div class="input-group"><label class="input-label" for="edit-fullname">Full Name</label><input type="text" id="edit-fullname" class="form-input" value="${p.fullName}" required /></div>
-      <div class="input-group"><label class="input-label" for="edit-company">Current Company &amp; Job Title</label><input type="text" id="edit-company" class="form-input" value="${p.currentCompany}" required /></div>
-      <div class="input-group"><label class="input-label" for="edit-skills">Technical Skills (Comma separated)</label><input type="text" id="edit-skills" class="form-input" value="${p.skills}" required /></div>
-      <div class="input-group"><label class="input-label" for="edit-linkedin">LinkedIn Profile URL</label><input type="url" id="edit-linkedin" class="form-input" value="${p.linkedin}" /></div>
-      <div class="input-group"><label class="input-label" for="edit-bio">Biography</label><textarea id="edit-bio" class="form-input" rows="3">${p.bio}</textarea></div>
-      <button type="submit" class="btn btn-primary btn-full mt-16"><i data-lucide="save" class="ui-icon"></i> Save Profile &amp; Update ID Card</button>
-    </form>
-  `);
-}
-
-function handleSaveProfileV2(e) {
-  e.preventDefault();
-  FULL_USER_PROFILE.fullName = document.getElementById('edit-fullname').value.trim();
-  FULL_USER_PROFILE.currentCompany = document.getElementById('edit-company').value.trim();
-  FULL_USER_PROFILE.skills = document.getElementById('edit-skills').value.trim();
-  FULL_USER_PROFILE.linkedin = document.getElementById('edit-linkedin').value.trim();
-  FULL_USER_PROFILE.bio = document.getElementById('edit-bio').value.trim();
-
-  closeModal();
-  loadMyProfile(true);   // the row changed; drop the cached copy
-  render10SectionProfile();
-
-  // Update Digital ID & topbar name
-  const nameEl = document.getElementById('id-card-name');
-  if (nameEl) nameEl.textContent = FULL_USER_PROFILE.fullName;
-  
-  showToast('✅ User Profile & Field Privacy Settings Saved!');
-}
+/* ─── 7. FULL PROFILE EDITOR MODAL ───
+   An earlier showEditProfileV2 / handleSaveProfileV2 pair lived here and was
+   shadowed by the async definitions further down the same file — the later
+   definition wins, so this pair never ran. Worth removing rather than
+   leaving: it mutated a local FULL_USER_PROFILE object and closed the modal
+   without calling the server at all, so had it ever won, a member's edits
+   would have been discarded silently on the next load. */
 
 // ─── 8. AUDIENCE SEGMENTATION ENGINE (ADMIN) ─────────────────
 /* Audience segmentation. The count under these filters used to start at a

@@ -55,9 +55,11 @@ module.exports = function mountAdminUsers(app, guards) {
            u.department, u.phone, u.photo_url, u.status, u.is_verified,
            u.must_change_password, u.created_at, u.updated_at, u.last_login_at,
            u.last_password_changed_at, u.failed_login_count, u.locked_until,
-           u.created_by, c.full_name AS created_by_name
+           u.created_by, c.full_name AS created_by_name,
+           u.department_id, d.code AS department_code, d.name AS department_name
     FROM users u
-    LEFT JOIN users c ON c.id = u.created_by`;
+    LEFT JOIN users c ON c.id = u.created_by
+    LEFT JOIN departments d ON d.id = u.department_id`;
 
   // Never includes password_hash or reset_token_hash.
   const shape = (r) => ({
@@ -69,7 +71,17 @@ module.exports = function mountAdminUsers(app, guards) {
     createdAt: r.created_at, updatedAt: r.updated_at,
     lastLoginAt: r.last_login_at, lastPasswordChangedAt: r.last_password_changed_at,
     lockedUntil: r.locked_until, failedLoginCount: r.failed_login_count,
-    createdBy: r.created_by, createdByName: r.created_by_name
+    createdBy: r.created_by, createdByName: r.created_by_name,
+    /* The department label a human reads and the relation authorisation uses,
+       returned side by side and deliberately not conflated. departmentId is the
+       authority; department is whatever text the account carries. */
+    departmentId: r.department_id,
+    departmentCode: r.department_code,
+    departmentName: r.department_name,
+    /* Whether this administrator's role is one that department scope applies
+       to, so the interface can distinguish "governs CSE" from "has no
+       department because the role does not use one". */
+    departmentScoped: r.role === 'dept_admin'
   });
 
   /* ─── LIST ─────────────────────────────────────────────── */
@@ -147,9 +159,31 @@ module.exports = function mountAdminUsers(app, guards) {
     if (!existing.rows.length) return res.status(404).json({ error: 'Administrator not found' });
     const before = existing.rows[0];
 
-    const { fullName, designation, phone, photoUrl, department, role } = req.body || {};
+    const { fullName, designation, phone, photoUrl, department, role, departmentId } = req.body || {};
     const sets = [], vals = [];
     const put = (col, v) => { vals.push(v); sets.push(`${col} = $${vals.length}`); };
+
+    /* Phase 7D: which department this administrator administers. This is the
+       authority behind every department scope check, so it is validated against
+       the reference table and never taken as free text — the free-text
+       `department` column beside it is a display label and always was.
+
+       null is a legitimate value and means "no department". A dept_admin in
+       that state reaches no departmental record at all, which is the safe
+       reading of an unassigned scope and is shown as such in the interface. */
+    let departmentChange = null;
+    if (departmentId !== undefined) {
+      if (departmentId === null || departmentId === '') {
+        put('department_id', null);
+        departmentChange = 'cleared';
+      } else {
+        const d = await db.query('SELECT id, code, name FROM departments WHERE id = $1 AND is_active',
+          [parseInt(departmentId, 10)]);
+        if (!d.rows.length) return res.status(400).json({ error: 'That department does not exist.' });
+        put('department_id', d.rows[0].id);
+        departmentChange = d.rows[0].code;
+      }
+    }
 
     if (fullName !== undefined) {
       if (!String(fullName).trim()) return res.status(400).json({ error: 'Full name cannot be empty' });
@@ -195,6 +229,16 @@ module.exports = function mountAdminUsers(app, guards) {
       await writeAudit('Administrator Role Changed',
         `user ${id}: ${roleChanged.from} → ${roleChanged.to} by user ${req.user.uid}`,
         '🔀', auditCtx(req, 'user', id));
+    }
+    /* Recorded on its own, not folded into the field list of the update above.
+       Changing which department an administrator governs changes what they can
+       see and do, and an authorisation change should be findable by searching
+       for one rather than by reading a comma-separated list of column names. */
+    if (departmentChange !== null) {
+      await writeAudit('Administrator Department Changed',
+        `user ${id}: ${departmentChange === 'cleared' ? 'department cleared' : 'department set to ' + departmentChange}` +
+        ` by user ${req.user.uid}`,
+        '🏛', auditCtx(req, 'user', id));
     }
 
     const after = await db.query(`${SELECT_ADMIN} WHERE u.id = $1`, [id]);

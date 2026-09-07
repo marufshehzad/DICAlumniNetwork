@@ -123,10 +123,20 @@ async function cleanup() {
 
     ok('an alumnus cannot verify anyone',
        (await api('PUT', `/api/users/${unverified.uid}/verify`, { token: T.alumni, body: { verified: true } })).status === 403);
-    for (const r of ['moderator', 'dept', 'univ', 'super']) {
+    /* Phase 7D scoped verification by department. The probe account registers
+       without one, so it belongs to the institution: institution-wide roles and
+       the platform-wide moderator may verify it, and a department admin may
+       not — an account in no department is in no department admin's charge.
+       That refusal is asserted here rather than dropped, so this file still
+       states who may operate the queue and now also states who may not. */
+    for (const r of ['moderator', 'univ', 'super']) {
       const res = await api('PUT', `/api/users/${unverified.uid}/verify`, { token: T[r], body: { verified: false } });
       ok(`${r} may operate the verification queue`, res.status === 200, res.status);
     }
+    const deptCross = await api('PUT', `/api/users/${unverified.uid}/verify`,
+      { token: T.dept, body: { verified: false } });
+    ok('a department admin may NOT verify an account outside its department',
+      deptCross.status === 403, deptCross.status);
     ok('the verification queue is staff-only',
        (await api('GET', '/api/verification-queue', { token: T.alumni })).status === 403);
     ok('verifying is written to the audit trail',

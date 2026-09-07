@@ -158,7 +158,15 @@ const concrete = r => r.route.replace(/:[A-Za-z_]+/g, '999999');
 
 const PUBLIC_BY_DESIGN = new Set([
   'GET /api/health', 'POST /api/auth/login', 'POST /api/auth/register',
-  'POST /api/auth/forgot-password', 'POST /api/auth/reset-password'
+  'POST /api/auth/forgot-password', 'POST /api/auth/reset-password',
+  /* Phase 7D. The sign-up form needs department names before anyone is signed
+     in, so a member can say which department they graduated from — without
+     which no department administrator can ever confirm their account.
+     It returns id, code and name for active departments and nothing else; the
+     per-department alumni COUNT that the staff endpoint carries is deliberately
+     not here, because a headcount is an institutional figure. Department names
+     are already printed on the public directory and on events. */
+  'GET /api/departments/public'
 ]);
 
 (async () => {

@@ -357,7 +357,7 @@ async function renderAuditLog(targetId = 'audit-log') {
    percentage or a trend, because a figure computed twice is a figure that can
    disagree with itself. */
 
-let reportState = { catalogue: null, slug: null, filters: {}, result: null, running: false };
+let reportState = { catalogue: null, slug: null, filters: {}, result: null, running: false, scope: null };
 
 async function renderReportsPage() {
   const picker = document.getElementById('reports-picker');
@@ -367,7 +367,12 @@ async function renderReportsPage() {
   if (!reportState.catalogue) {
     picker.innerHTML = renderSkeletonCards(3);
     main.innerHTML = '';
-    const cat = await API.getReports();
+    const [cat, depts] = await Promise.all([API.getReports(), API.getDepartments()]);
+    /* The caller's own scope, so the page can state it once at the top rather
+       than leaving a department administrator to wonder why a report shows
+       fewer alumni than they expected. §4: do not ask an administrator to
+       choose their own department every time. */
+    reportState.scope = apiFailed(depts) ? null : depts.scope;
     if (apiFailed(cat)) {
       picker.innerHTML = '';
       main.innerHTML = renderErrorState(cat?.error || 'Could not load the report list.', 'renderReportsPage()');
@@ -383,6 +388,26 @@ async function renderReportsPage() {
       'No reports available to your role', 'Reports covering personal data are limited to college and super administrators.');
     if (window.lucide) lucide.createIcons();
     return;
+  }
+
+  const sc = reportState.scope;
+  const scopeBanner = sc && sc.kind === 'department' && sc.department ? `
+    <div class="scope-banner" role="status">
+      <i data-lucide="building-2" class="ui-icon"></i>
+      <div><strong>Department: ${escapeHtml(sc.department.code)}</strong>
+        <span>Every report below covers ${escapeHtml(sc.department.name)} only.</span></div>
+    </div>` : sc && sc.kind === 'none' ? `
+    <div class="scope-banner is-warning" role="status">
+      <i data-lucide="alert-triangle" class="ui-icon"></i>
+      <div><strong>No department assigned</strong>
+        <span>Reports will be empty until a super administrator assigns one to your account.</span></div>
+    </div>` : '';
+
+  /* Above the two-column layout, not inside it — dropped in beside the picker it
+     would take a grid cell and sit next to the report list rather than over it. */
+  const layout = document.querySelector('#page-reports .reports-layout');
+  if (layout && scopeBanner && !document.querySelector('#page-reports .scope-banner')) {
+    layout.insertAdjacentHTML('beforebegin', scopeBanner);
   }
 
   picker.innerHTML = `
@@ -2092,6 +2117,11 @@ const IMPORT_FIELDS = [
   { key: 'mobile',         label: 'Mobile Number' },
   { key: 'hscPassingYear', label: 'HSC Passing Year / Batch' },
   { key: 'hscGroup',       label: 'HSC Group' },
+  /* Phase 7D. The template has always had a Department column and the import
+     never mapped it — the HSC group was written into the department field
+     instead. It is a real field now, matched to the reference table by code
+     or by name, and checked against the importing administrator's scope. */
+  { key: 'department',     label: 'Department' },
   { key: 'hscVersion',     label: 'HSC Version' },
   { key: 'bloodGroup',     label: 'Blood Group' },
   { key: 'presentAddress', label: 'Present Address' },
@@ -2124,6 +2154,7 @@ const HEADER_RULES = [
   [/(mobile|phone|contact\s*number)/i,               'mobile'],
   [/hsc.*(pass|year|batch)|(^|\s)batch(\s|$)/i,      'hscPassingYear'],
   [/^group\s*$|hsc\s*group/i,                        'hscGroup'],
+  [/^(dept|department|programme|program)$/i,          'department'],
   [/version|medium/i,                                'hscVersion'],
   [/blood/i,                                         'bloodGroup'],
   /* Location. The template has offered PresentAddress, PermanentAddress,

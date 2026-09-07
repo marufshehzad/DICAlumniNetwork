@@ -35,9 +35,21 @@ const db = require('./db');
 const privacy = require('./privacy');
 const { sendCsv } = require('./csv');
 const { MODULE_NAMES, moduleCaseSql } = require('./audit_modules');
+const scope = require('./scope');
 
+/* Phase 7D: roles that may run a report at all. DEPT_ROLES is not a widening —
+   a department admin sees the same reports as a college admin, restricted to
+   its own department by the scope clause each query carries. A report with no
+   department dimension is NOT in DEPT_ROLES, because there is nothing to
+   restrict it to and an unrestricted institutional report is exactly what a
+   department admin must not have. */
 module.exports = function (app, guards) {
   const { requireRole, ADMIN_ROLES, MODERATOR_ROLES, serverError, writeAudit } = guards;
+
+  /* Institution-wide roles plus department admins. Every report using this
+     list applies scope.sqlFor to a real department_id column — that pairing is
+     asserted by the suite, so a report cannot join this list without one. */
+  const DEPT_ROLES = [...ADMIN_ROLES, 'dept_admin'];
   const ok = (res, fn) => fn().catch(err => serverError(res, err, 'reports'));
 
   /* ─── date range ───────────────────────────────────────────
@@ -97,7 +109,8 @@ module.exports = function (app, guards) {
       label: 'Alumni Directory',
       description: 'Every alumni account, with graduation and employment detail. ' +
                    'Location is withheld for members who set it to private — that setting has no staff override.',
-      roles: ADMIN_ROLES,
+      roles: DEPT_ROLES,
+      scoped: 'u.department_id',
       filters: ['from', 'to', 'department', 'batch', 'status'],
       dateLabel: 'Account created',
       columns: [
@@ -106,6 +119,7 @@ module.exports = function (app, guards) {
         { key: 'email', header: 'Email' },
         { key: 'mobile_number', header: 'Mobile' },
         { key: 'department', header: 'Department' },
+        { key: 'department_code', header: 'Department code' },
         { key: 'batch', header: 'Batch' },
         { key: 'passing_year', header: 'Passing year' },
         { key: 'program', header: 'Programme' },
@@ -126,6 +140,11 @@ module.exports = function (app, guards) {
       async run(f) {
         const params = [];
         let where = "WHERE u.role = 'alumni'";
+        /* The scope clause goes on FIRST, so no later filter can widen past it.
+           A caller supplying ?department= narrows within their scope; it can
+           never reach outside it, because both clauses are ANDed and the scope
+           one is not built from anything in the request. */
+        where += scope.sqlFor(f.user, 'u.department_id', params);
         where += rangeClause('u.created_at', f.range, params);
         if (f.department) { params.push(f.department); where += ` AND u.department = $${params.length}`; }
         if (f.batch)      { params.push(f.batch);      where += ` AND ap.batch = $${params.length}`; }
@@ -140,7 +159,7 @@ module.exports = function (app, guards) {
         const { rows } = await db.query(`
           SELECT u.id AS user_id, u.full_name, u.email, u.department,
                  u.status AS account_status, u.is_verified AS verified,
-                 u.created_at, u.last_login_at,
+                 u.created_at, u.last_login_at, dept.code AS department_code,
                  ap.batch, ap.passing_year, ap.program, ap.current_status,
                  ap.current_company, ap.job_title, ap.industry, ap.mobile_number,
                  CASE WHEN ${privacy.DIRECTORY_VISIBLE_SQL} THEN ap.city     END AS city,
@@ -150,6 +169,7 @@ module.exports = function (app, guards) {
                  NOT (${privacy.DIRECTORY_VISIBLE_SQL}) AS location_withheld
           FROM users u
           LEFT JOIN alumni_profiles ap ON ap.user_id = u.id
+          LEFT JOIN departments dept ON dept.id = u.department_id
           ${where}
           ORDER BY u.id
           LIMIT $${params.length}`, params);
@@ -162,12 +182,13 @@ module.exports = function (app, guards) {
       label: 'Event Attendance',
       description: 'One row per event: registered, checked in, and the attendance rate counted from registrations.',
       roles: MODERATOR_ROLES,
+      scoped: 'e.department_id',
       filters: ['from', 'to'],
       dateLabel: 'Event date',
       columns: [
         { key: 'event_id', header: 'Event ID' },
         { key: 'title', header: 'Event' },
-        { key: 'event_date', header: 'Date' },
+        { key: 'starts_on', header: 'Date' },
         { key: 'venue', header: 'Venue' },
         { key: 'organizer_department', header: 'Organising department' },
         { key: 'status', header: 'Status' },
@@ -181,7 +202,13 @@ module.exports = function (app, guards) {
       async run(f) {
         const params = [];
         let where = 'WHERE TRUE';
-        where += rangeClause('e.event_date', f.range, params);
+        where += scope.sqlFor(f.user, 'e.department_id', params);
+        /* starts_on, not event_date. Phase 7C-3 wrote this against event_date,
+           which is a VARCHAR populated on 7 of 21 events — so the column read
+           blank for two thirds of the report and the date filter compared a
+           string to a date. starts_on is the typed DATE every event has, and
+           qa1 already asserts it is the authoritative one. */
+        where += rangeClause('e.starts_on', f.range, params);
         params.push(f.limit);
 
         /* registered_count is a stored counter on events and is not read here.
@@ -189,7 +216,7 @@ module.exports = function (app, guards) {
            checked-in over confirmed, not over every row ever created, because
            a cancelled registration was never going to attend. */
         const { rows } = await db.query(`
-          SELECT e.id AS event_id, e.title, e.event_date, e.venue,
+          SELECT e.id AS event_id, e.title, e.starts_on, e.venue,
                  e.organizer_department, e.status, e.capacity,
                  COUNT(r.id) FILTER (WHERE r.status = 'confirmed')::int AS registered,
                  COUNT(r.id) FILTER (WHERE r.status = 'cancelled')::int AS cancelled,
@@ -203,7 +230,7 @@ module.exports = function (app, guards) {
           LEFT JOIN event_registrations r ON r.event_id = e.id
           ${where}
           GROUP BY e.id
-          ORDER BY e.event_date DESC NULLS LAST, e.id DESC
+          ORDER BY e.starts_on DESC NULLS LAST, e.id DESC
           LIMIT $${params.length}`, params);
         return rows;
       }
@@ -214,12 +241,13 @@ module.exports = function (app, guards) {
       label: 'Ticket & Registration',
       description: 'One row per registration, with ticket code, payment and check-in.',
       roles: MODERATOR_ROLES,
+      scoped: 'e.department_id',
       filters: ['from', 'to', 'eventId', 'status'],
       dateLabel: 'Registered',
       columns: [
         { key: 'registration_id', header: 'Registration ID' },
         { key: 'event_title', header: 'Event' },
-        { key: 'event_date', header: 'Event date' },
+        { key: 'starts_on', header: 'Event date' },
         { key: 'attendee_name', header: 'Attendee' },
         { key: 'attendee_email', header: 'Email' },
         { key: 'ticket_type', header: 'Ticket type' },
@@ -234,13 +262,14 @@ module.exports = function (app, guards) {
       async run(f) {
         const params = [];
         let where = 'WHERE TRUE';
+        where += scope.sqlFor(f.user, 'e.department_id', params);
         where += rangeClause('r.created_at', f.range, params);
         if (f.eventId) { params.push(f.eventId); where += ` AND r.event_id = $${params.length}::int`; }
         if (f.status)  { params.push(f.status);  where += ` AND r.status = $${params.length}`; }
         params.push(f.limit);
 
         const { rows } = await db.query(`
-          SELECT r.id AS registration_id, e.title AS event_title, e.event_date,
+          SELECT r.id AS registration_id, e.title AS event_title, e.starts_on,
                  u.full_name AS attendee_name, u.email AS attendee_email,
                  COALESCE(tt.name, r.ticket_type) AS ticket_type,
                  r.ticket_code, r.amount_paid, r.payment_gateway, r.status,
@@ -514,7 +543,8 @@ module.exports = function (app, guards) {
     'verification': {
       label: 'Verification',
       description: 'Alumni accounts and whether each is verified, with the last verification decision recorded against it.',
-      roles: ADMIN_ROLES,
+      roles: DEPT_ROLES,
+      scoped: 'u.department_id',
       filters: ['from', 'to', 'department', 'verified'],
       dateLabel: 'Account created',
       columns: [
@@ -522,6 +552,7 @@ module.exports = function (app, guards) {
         { key: 'full_name', header: 'Name' },
         { key: 'email', header: 'Email' },
         { key: 'department', header: 'Department' },
+        { key: 'department_code', header: 'Department code' },
         { key: 'batch', header: 'Batch' },
         { key: 'student_id', header: 'Student ID' },
         { key: 'verified', header: 'Verified' },
@@ -535,6 +566,7 @@ module.exports = function (app, guards) {
       async run(f) {
         const params = [];
         let where = "WHERE u.role = 'alumni'";
+        where += scope.sqlFor(f.user, 'u.department_id', params);
         where += rangeClause('u.created_at', f.range, params);
         if (f.department) { params.push(f.department); where += ` AND u.department = $${params.length}`; }
         if (f.verified === 'yes') where += ' AND u.is_verified';
@@ -547,6 +579,7 @@ module.exports = function (app, guards) {
            with no entry reports blank rather than a guessed date. */
         const { rows } = await db.query(`
           SELECT u.id AS user_id, u.full_name, u.email, u.department,
+                 dept.code AS department_code,
                  ap.batch, ap.student_id,
                  u.is_verified AS verified, u.status AS account_status,
                  u.created_via, u.created_at,
@@ -556,6 +589,7 @@ module.exports = function (app, guards) {
                  END AS days_awaiting
           FROM users u
           LEFT JOIN alumni_profiles ap ON ap.user_id = u.id
+          LEFT JOIN departments dept ON dept.id = u.department_id
           LEFT JOIN LATERAL (
             SELECT a.action, a.created_at
             FROM audit_logs a
@@ -628,6 +662,20 @@ module.exports = function (app, guards) {
 
   /* ═══ ROUTES ════════════════════════════════════════════════ */
 
+  /* A report a department admin may run MUST carry a department column, or the
+     scope clause has nothing to attach to and the report would return the whole
+     institution. Checked once, at mount, so the process refuses to start rather
+     than serving an unscoped institutional report to a department admin. This
+     is the kind of mistake that is invisible in review and obvious here. */
+  for (const [slug, spec] of Object.entries(REPORTS)) {
+    const departmental = spec.roles.some(r => !scope.isInstitutionWide(r) && r !== 'moderator');
+    if (departmental && !spec.scoped) {
+      throw new Error(
+        `routes_reports: "${slug}" is offered to a department-scoped role but declares no ` +
+        `scoped column. Either restrict its roles or give it one.`);
+    }
+  }
+
   const visibleTo = (role) => Object.entries(REPORTS)
     .filter(([, r]) => r.roles.includes(role))
     .map(([slug, r]) => ({
@@ -671,7 +719,10 @@ module.exports = function (app, guards) {
         module: req.query.module || null,
         eventId: /^\d+$/.test(String(req.query.eventId || '')) ? req.query.eventId : null,
         campaignId: /^\d+$/.test(String(req.query.campaignId || '')) ? req.query.campaignId : null,
-        limit: rowLimit(req.query, isCsv)
+        limit: rowLimit(req.query, isCsv),
+        /* The authenticated caller, so a report's own query can apply the
+           department clause. Never anything the caller sent. */
+        user: req.user
       };
     } catch (err) {
       if (err instanceof BadRequest) return res.status(400).json({ error: err.message });

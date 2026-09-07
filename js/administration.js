@@ -20,13 +20,21 @@ let _adminDirectory = null;   // last fetched list, for the detail view
    offer one the API would reject. super_admin is deliberately absent: platform
    authority is not handed out through a form. */
 let _assignableRoles = {};
+/* The reference departments, so the edit form can offer real ones. Loaded with
+   the page rather than per-modal: it is four rows and it does not change while
+   somebody is looking at it. */
+let adminDepartments = [];
 
 async function renderAdministrationPage() {
   const el = document.getElementById('administration-body');
   if (!el) return;
 
   el.innerHTML = '<div class="queue-sub" style="padding:16px">Loading administrators…</div>';
-  const res = await API.getAdministrators();
+  const [res, depts] = await Promise.all([API.getAdministrators(), API.getDepartments()]);
+  /* If the department list does not come back the page still renders: an empty
+     selector costs an administrator the ability to change a scope, which is
+     better than costing them the whole screen. */
+  adminDepartments = apiFailed(depts) ? [] : (depts.departments || []);
 
   if (apiFailed(res)) {
     el.innerHTML = renderErrorState(
@@ -102,6 +110,31 @@ function adminRow(a) {
 }
 
 /* ─── VIEW ───────────────────────────────────────────────── */
+/* Two different things are called "department" on an administrator, and running
+   them together is how somebody concludes a scope is set when it is not.
+
+   `department` is a free-text label — 'CSE Department', 'DIC Administration',
+   'System & Security'. It is what a person reads and it governs nothing.
+   `departmentId` is the relation every scope check is decided by.
+
+   This line reports the second, and says plainly when a department admin has
+   none: that account can reach no departmental record at all, which is the safe
+   default and a confusing one to meet without being told. */
+function governsLine(a) {
+  if (!a.departmentScoped) {
+    return a.role === 'moderator'
+      ? 'Moderation is platform-wide, not departmental'
+      : 'Every department — this role is institution-wide';
+  }
+  if (!a.departmentId) {
+    return '<span style="color:var(--amber-text);font-weight:650">No department assigned</span>' +
+           '<span style="display:block;font-size:11.5px;color:var(--text-secondary);line-height:1.45">' +
+           'Until one is set, this administrator can reach no alumni, events, reports or ' +
+           'audit entries. Edit the account to assign one.</span>';
+  }
+  return `${escapeHtml(a.departmentName || '')} <span class="card-badge teal">${escapeHtml(a.departmentCode || '')}</span>`;
+}
+
 function showAdministrator(id) {
   const a = (_adminDirectory || []).find(x => x.id === id);
   if (!a) return;
@@ -119,6 +152,7 @@ function showAdministrator(id) {
       ${row('Email', escapeHtml(a.email))}
       ${row('Phone', escapeHtml(a.phone || '—'))}
       ${row('Department', escapeHtml(a.department || '—'))}
+      ${row('Governs', governsLine(a))}
       ${row('Status', a.status === 'active' ? 'Active' : 'Suspended')}
       ${row('Last sign-in', when(a.lastLoginAt))}
       ${row('Password last changed', when(a.lastPasswordChangedAt))}
@@ -236,12 +270,26 @@ function showEditAdministrator(id) {
       <div class="field-grid-2">
         <div class="input-group"><label class="input-label" for="ea-phone">Phone</label>
           <input type="tel" id="ea-phone" class="form-input" value="${escapeHtml(a.phone || '')}" /></div>
-        <div class="input-group"><label class="input-label" for="ea-department">Department</label>
-          <input type="text" id="ea-department" class="form-input" value="${escapeHtml(a.department || '')}" /></div>
+        <div class="input-group"><label class="input-label" for="ea-department">Department label</label>
+          <input type="text" id="ea-department" class="form-input" value="${escapeHtml(a.department || '')}" />
+          <span style="font-size:11.5px;color:var(--text-muted)">Shown on the profile. Does not decide what they can see.</span></div>
       </div>
       <div class="input-group">
         <label class="input-label" for="ea-role">Permission role *</label>
         <select id="ea-role" class="form-select" required>${roles}</select>
+      </div>
+      <div class="input-group">
+        <label class="input-label" for="ea-department-id">Governs department</label>
+        <select id="ea-department-id" class="form-select">
+          <option value="">— none —</option>
+          ${(adminDepartments || []).map(d => `<option value="${d.id}"${
+            a.departmentId === d.id ? ' selected' : ''}>${escapeHtml(d.name)} (${escapeHtml(d.code)})</option>`).join('')}
+        </select>
+        <span style="font-size:11.5px;color:var(--text-muted);line-height:1.45;display:block;margin-top:5px">
+          This is what a department administrator's access is limited to. It has no effect on any
+          other role, which sees every department. Left as &ldquo;none&rdquo;, a department
+          administrator can reach nothing.
+        </span>
       </div>
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">
         The email address is the sign-in identifier and cannot be changed here.
@@ -260,6 +308,9 @@ async function submitEditAdministrator(e, id) {
   const res = await API.updateAdministrator(id, {
     fullName: v('ea-name'), designation: v('ea-designation'),
     phone: v('ea-phone'), department: v('ea-department'),
+    /* Sent as null rather than omitted when cleared, so "none" is an instruction
+       and not merely an absence the server would ignore. */
+    departmentId: document.getElementById('ea-department-id').value || null,
     role: document.getElementById('ea-role').value
   });
   if (apiFailed(res)) {

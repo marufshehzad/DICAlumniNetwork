@@ -144,7 +144,20 @@ const importRows = (n, extra = {}) => Array.from({ length: n }, (_, i) => ({
   ok('an alumni member cannot run a report at all', await probe('alumni-directory', T.alumni) === 403);
   ok('an alumni member cannot run the event report either', await probe('event-attendance', T.alumni) === 403);
   ok('a moderator cannot export the alumni directory', await probe('alumni-directory', T.moderator) === 403);
-  ok('a department admin cannot export the alumni directory', await probe('alumni-directory', T.dept) === 403);
+  /* Phase 7D §6: a department admin runs the alumni reports, restricted to its
+     own department by a SQL clause it cannot influence. Refusing outright was
+     the honest answer while there was no scope to restrict it to; now there is,
+     and the assertion is that the scope holds rather than that the door is
+     shut. The cross-department proof lives in tests/phase7d_architecture_scope.js. */
+  ok('a department admin CAN run the alumni directory, scoped',
+    await probe('alumni-directory', T.dept) === 200);
+  const deptRows = (await api('GET', '/api/reports/alumni-directory', { token: T.dept })).body;
+  const univRows = (await api('GET', '/api/reports/alumni-directory', { token: T.univ })).body;
+  ok('…and sees strictly fewer alumni than an institution-wide role',
+    deptRows.rowCount < univRows.rowCount, `${deptRows.rowCount} of ${univRows.rowCount}`);
+  ok('…all from a single department',
+    new Set(deptRows.rows.map(r => r.department_code)).size === 1,
+    [...new Set(deptRows.rows.map(r => r.department_code))].join(','));
   ok('a moderator CAN run the event attendance report', await probe('event-attendance', T.moderator) === 200);
   ok('a college admin can run the alumni directory', await probe('alumni-directory', T.univ) === 200);
   ok('a moderator cannot run the donation ledger', await probe('donation-ledger', T.moderator) === 403);
@@ -322,16 +335,15 @@ const importRows = (n, extra = {}) => Array.from({ length: n }, (_, i) => ({
     ok(`campaign ${row.campaign_id} reports the money that is actually settled`,
       Number(row.settled_amount) === Number(real), { reported: row.settled_amount, real });
   }
-  const stored = (await db.query('SELECT id, raised_amount, donors_count FROM campaigns ORDER BY id')).rows;
-  const drifted = stored.filter(c => {
-    const r = camp.body.rows.find(x => x.campaign_id === c.id);
-    return r && Number(c.raised_amount) !== Number(r.settled_amount);
-  });
-  ok('the stored raised_amount is NOT what the report shows where the two disagree',
-    drifted.every(c => {
-      const r = camp.body.rows.find(x => x.campaign_id === c.id);
-      return Number(r.settled_amount) !== Number(c.raised_amount);
-    }), drifted.map(c => c.id));
+  /* This asserted that the report disagreed with campaigns.raised_amount where
+     the stored counter had drifted. Phase 7D dropped that column: a counter
+     that was written by code, read by nothing, and stood at ৳3,442,532 against
+     ৳5,000 of settled giving. The assertion becomes the stronger one — the
+     column is gone, so there is no second answer left to disagree with. */
+  const storedCounters = (await db.query(`
+    SELECT COUNT(*)::int n FROM information_schema.columns
+     WHERE table_name='campaigns' AND column_name IN ('raised_amount','donors_count')`)).rows[0].n;
+  ok('no stored campaign counter survives to contradict the report', storedCounters === 0, storedCounters);
 
   const chapters = await api('GET', '/api/reports/chapter', { token: T.super });
   for (const row of chapters.body.rows) {

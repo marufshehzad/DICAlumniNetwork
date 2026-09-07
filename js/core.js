@@ -510,18 +510,9 @@ document.head.appendChild(style);
    binding; the pill is now inert rather than lying. */
 
 // ─── MOBILE PROGRESSIVE DISCLOSURE HELPER ───
-function toggleProgressiveDisclosure(targetId, btn) {
-  const target = document.getElementById(targetId);
-  if (!target) return;
-  const isHidden = target.classList.contains('hidden');
-  if (isHidden) {
-    target.classList.remove('hidden');
-    if (btn) btn.innerHTML = '<i data-lucide="chevron-up" class="ui-icon"></i> Show Less';
-  } else {
-    target.classList.add('hidden');
-    if (btn) btn.innerHTML = '<i data-lucide="chevron-down" class="ui-icon"></i> Show More';
-  }
-}
+/* toggleProgressiveDisclosure was removed in Phase 7D: no caller in any
+   script and no inline handler in either portal. Show More / Show Less is
+   done by the panels that need it. */
 
 // ─── INSTANT MOBILE & DESKTOP DOM INITIALIZER ────────────────
 let __appInitialized = false;

@@ -123,7 +123,21 @@ async function login(key, email) {
     const cn = await api('PUT', `/api/events/${evId}/cancel`, { as: role, body: { reason: 'x' } });
     check(`${role} CANNOT cancel an event`, cn.status === 403, `got ${cn.status}`);
     const au = await api('GET', '/api/audit-logs', { as: role });
-    check(`${role} CANNOT read the audit log`, au.status === 403, `got ${au.status}`);
+    if (role === 'dept') {
+      /* Phase 7D §7: a department admin reads a SCOPED audit log — its own
+         department's accounts and its own actions, never a platform-security
+         action. Asserted here as a narrower read rather than as no read. */
+      check(`${role} reads a SCOPED audit log`, au.status === 200, `got ${au.status}`);
+      const wide = await api('GET', '/api/audit-logs', { as: 'super' });
+      check(`${role}'s audit view is strictly narrower`,
+        au.body.total < wide.body.total, `${au.body.total} of ${wide.body.total}`);
+      check(`${role} sees no platform-security action`,
+        (au.body.entries || []).every(e =>
+          !/^(Administrator|Password|Signed In|Signed Out|Sign-In Failed|Database|Vault|DSAR|Bulk Import|Account Purged)/.test(e.action)),
+        'security actions leaked');
+    } else {
+      check(`${role} CANNOT read the audit log`, au.status === 403, `got ${au.status}`);
+    }
   }
 
   section('8c. PERMISSIONS — univ_admin & super_admin');
@@ -268,14 +282,27 @@ async function login(key, email) {
   check('deleting an event cascades tasks, assignees, notes, tickets, people, budget',
     left.rows[0].n === 0, `${left.rows[0].n} rows survived`);
 
-  // Legacy data preserved.
+  /* Phase 7D removed the superseded VARCHAR date columns. This used to assert
+     that events.event_date was preserved; it now asserts the stronger thing
+     that replaced it — the legacy column is gone AND every event carries a real
+     typed date, which is what the old column was only ever a partial copy of.
+     It was populated on 7 of 21 rows; starts_on is populated on all of them. */
   const legacy = await db.query(`
-    SELECT COUNT(*) FILTER (WHERE event_date IS NOT NULL)::int AS kept_date,
+    SELECT COUNT(*)::int AS total,
+           COUNT(starts_on)::int AS typed_date,
            COUNT(*) FILTER (WHERE price IS NOT NULL)::int AS kept_price FROM events`);
-  check('legacy event_date values preserved', legacy.rows[0].kept_date > 0, String(legacy.rows[0].kept_date));
+  const goneCols = await db.query(`
+    SELECT COUNT(*)::int n FROM information_schema.columns
+     WHERE table_name='events' AND column_name IN ('event_date','event_time')`);
+  check('the superseded VARCHAR date columns are gone', goneCols.rows[0].n === 0, String(goneCols.rows[0].n));
+  check('every event carries a real typed date instead',
+    legacy.rows[0].typed_date === legacy.rows[0].total,
+    `${legacy.rows[0].typed_date}/${legacy.rows[0].total}`);
   check('legacy price values preserved', legacy.rows[0].kept_price > 0, String(legacy.rows[0].kept_price));
-  const props = await db.query('SELECT COUNT(*)::int n FROM event_proposals');
-  check('event_proposals archive still intact', props.rows[0].n > 0, String(props.rows[0].n));
+  /* The proposal archive is retained under a name that says it is history —
+     renamed, not deleted. The row count assertion is unchanged. */
+  const props = await db.query('SELECT COUNT(*)::int n FROM legacy_event_proposals');
+  check('the event_proposals archive is still intact, retained as legacy', props.rows[0].n > 0, String(props.rows[0].n));
 
   /* ════════ 12. DATES & STATUS ════════ */
   section('12. DATES & STATUS');

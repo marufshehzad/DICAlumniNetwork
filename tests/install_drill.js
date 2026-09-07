@@ -10,7 +10,7 @@
    step 4 from nothing. When Phase 6 did, three separate faults stopped it:
 
      · migrate_v5.js aborted on an empty events table, so the install stopped
-       with 39 of 47 tables — on EVERY fresh database
+       with 39 of 48 tables — on EVERY fresh database
      · migrate_v2.js seeded invented vendors, phone numbers and a live poll
        into a database the runbook explicitly says not to seed
      · nothing could create the first administrator: the users table was empty,
@@ -86,7 +86,7 @@ const post = (p, body, token) => api(p, {
   ok('a fresh database has no users', scalar('SELECT count(*) FROM users', DB) === '0');
 
   let stoppedAt = null;
-  for (let v = 2; v <= 16; v++) {
+  for (let v = 2; v <= 19; v++) {
     const f = `migrate_v${v}.js`;
     if (!fs.existsSync(path.join(REPO, f))) continue;
     const r = inDb([f]);
@@ -101,7 +101,13 @@ const post = (p, body, token) => api(p, {
   ok('every migration v2..v13 applied without stopping', stoppedAt === null,
     stoppedAt ? `aborted at v${stoppedAt}` : '');
   const tables = scalar("SELECT count(*) FROM information_schema.tables WHERE table_schema='public'", DB);
-  ok('the installed schema has the full 47 tables', tables === '47', `${tables} tables`);
+  /* 48 as of Phase 7D: `departments` was added, and event_proposals was
+     renamed to legacy_event_proposals rather than dropped, which is net zero. */
+  ok('the installed schema has the full 48 tables', tables === '48', `${tables} tables`);
+  ok('the department reference table is part of a fresh install',
+    scalar("SELECT COUNT(*) FROM departments", DB) === '4', 'departments seeded');
+  ok('the retained proposal archive exists and is empty on a clean install',
+    scalar("SELECT COUNT(*) FROM legacy_event_proposals", DB) === '0', 'legacy table present');
 
   head('=== 2. Nothing was fabricated into a database nobody seeded ===');
   /* PRODUCTION_DEPLOYMENT_RUNBOOK step 4 says not to run seed.sql, precisely so

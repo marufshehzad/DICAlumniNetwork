@@ -227,26 +227,29 @@ function onSessionExpired() {
 }
 
 // ─── LOGIN FLOW ─────────────────────────────────────────────
-function goToStep2() {
-  document.getElementById('step-1').classList.add('hidden');
-  document.getElementById('step-2').classList.remove('hidden');
+/* Fills the sign-up form's Department select from the reference table. Fails
+   quietly: a member must be able to register even if this request does not
+   answer, and the field is optional by design, so an empty list costs them a
+   department rather than an account. */
+let __departmentsLoaded = false;
+async function loadSignupDepartments() {
+  const el = document.getElementById('signup-department');
+  if (!el || __departmentsLoaded) return;
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/departments/public`);
+    if (!res.ok) return;
+    const rows = await res.json();
+    if (!Array.isArray(rows) || !rows.length) return;
+    el.innerHTML = '<option value="">Select…</option>' +
+      rows.map(d => `<option value="${escapeHtml(String(d.id))}">${escapeHtml(d.name)}</option>`).join('');
+    __departmentsLoaded = true;
+  } catch { /* the field stays as it is */ }
 }
 
-function goToStep1() {
-  document.getElementById('step-2').classList.add('hidden');
-  document.getElementById('step-1').classList.remove('hidden');
-}
-
-function goToStep3() {
-  document.getElementById('step-2').classList.add('hidden');
-  document.getElementById('step-3').classList.remove('hidden');
-
-  setTimeout(() => {
-    document.querySelector('.sis-match-animation').style.display = 'none';
-    document.getElementById('sis-result').style.display = 'flex';
-    document.getElementById('continue-btn').classList.remove('hidden');
-  }, 2000);
-}
+/* goToStep1/2/3 were removed in Phase 7D. Nothing called them, and the
+   elements they addressed — step-2 and step-3 — do not exist in either
+   portal's markup; only step-1 does. They were the remains of a multi-step
+   sign-up that the single-panel form replaced. */
 
 function logout() {
   // Drop the session token first — otherwise "signing out" left a valid
@@ -292,6 +295,10 @@ function switchAuthMode(mode) {
 
   showLoginError('');
   showSignupError('');
+  /* Loaded when the panel is first opened rather than on page load: a visitor
+     who only signs in never needs the list, and the request is one fewer thing
+     between them and the form. */
+  if (isSignup) loadSignupDepartments();
 }
 
 function showSignupError(message) {
@@ -321,10 +328,17 @@ async function handleSignupSubmit(e) {
   const btn = document.getElementById('signup-submit-btn');
   btn.disabled = true; btn.textContent = 'Creating your account…';
 
+  const deptEl = document.getElementById('signup-department');
   const result = await API.register({
     name, email, password,
     hscPassingYear: document.getElementById('signup-hsc-year').value,
     hscGroup: document.getElementById('signup-hsc-group').value,
+    /* A department, not an HSC group. Registration used to store the HSC group
+       in the department column, so every self-registered account belonged to no
+       department and no department administrator could confirm it. Optional:
+       somebody who does not know theirs still registers, and an
+       institution-wide administrator confirms them as before. */
+    departmentId: deptEl && deptEl.value ? deptEl.value : undefined,
     mobile: document.getElementById('signup-mobile').value.trim(),
     bloodGroup: document.getElementById('signup-blood-group').value
   });

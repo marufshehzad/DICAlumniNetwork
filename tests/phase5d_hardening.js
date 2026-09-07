@@ -197,24 +197,34 @@ const src = f => fs.readFileSync(path.join(REPO, f), 'utf8').replace(/\r\n/g, '\
      ══════════════════════════════════════════════════════════ */
   console.log('\n=== F. stale counters carry a warning at every write site ===');
 
-  /* Anchor on the counter's own increment, not on the first UPDATE of that
-     table — these files update those tables for several unrelated reasons, and
-     searching for the first one looked past the annotated statement entirely. */
+  /* P5C-009 asked that these counters be LABELLED, because they were wrong and
+     still being written. Phase 7D removed them: every one was written by code
+     and read by none, and each had drifted far from the rows behind it —
+     ৳3,442,532 claimed against ৳5,000 settled, 41,994 chapter members against
+     0 memberships, 83 registrations against 4.
+
+     A removed counter cannot mislead anyone, so these assertions are now the
+     stronger form of the same requirement: the columns are gone, and no code
+     writes them. A label is a promise to be careful; an absent column needs no
+     care. */
   for (const [file, needle] of [['server.js', 'members_count = members_count + 1'],
                                 ['routes_events.js', 'registered_count = registered_count + 1'],
                                 ['routes_v2.js', 'raised_amount = raised_amount + ']]) {
-    const s = src(file);
-    const at = s.indexOf(needle);
-    ok(`${file}: the counter increment was located`, at > 0, needle);
-    /* Distance to the nearest preceding marker, rather than a fixed window —
-       the annotation sits above a sibling statement in one of these files, and
-       a fixed slice happened to cut it in half. */
-    const marker = s.lastIndexOf('NOT A SOURCE OF TRUTH', at);
-    ok(`${file}: it is marked NOT A SOURCE OF TRUTH`,
-      marker > 0 && at - marker < 1500, marker > 0 ? `gap ${at - marker}` : 'no marker');
+    ok(`${file}: no code writes the stale counter any more`, src(file).indexOf(needle) === -1, needle);
   }
-  ok('the seeded counter values were NOT silently rewritten',
-    (await db.query('SELECT SUM(members_count)::int n FROM chapters')).rows[0].n > 0);
+  const dropped = await db.query(`
+    SELECT COUNT(*)::int n FROM information_schema.columns
+     WHERE (table_name='campaigns' AND column_name IN ('raised_amount','donors_count'))
+        OR (table_name='chapters'  AND column_name IN ('members_count','events_count'))
+        OR (table_name='events'    AND column_name = 'registered_count')`);
+  ok('every stale counter column is gone from the schema', dropped.rows[0].n === 0, String(dropped.rows[0].n));
+  /* The figures those counters pretended to be are still computed from rows,
+     which is what made removing them safe. */
+  ok('campaign totals are still available as a real sum',
+    typeof (await db.query(
+      `SELECT COALESCE(SUM(amount),0)::int n FROM donations WHERE status='SUCCESS'`)).rows[0].n === 'number');
+  ok('chapter membership is still available as a real count',
+    typeof (await db.query('SELECT COUNT(*)::int n FROM chapter_memberships')).rows[0].n === 'number');
 
   console.log('\n' + '='.repeat(58));
   console.log(`  ${pass} passed, ${fail} failed`);
