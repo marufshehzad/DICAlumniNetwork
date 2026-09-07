@@ -71,7 +71,7 @@
             <button type="submit" class="btn btn-primary btn-full" id="login-submit-btn">Sign In to DIC</button>
               <button type="button" class="link-btn" onclick="showForgotPassword()">Forgot your password?</button>
           </form>
-          <p class="login-footer" style="margin-top:16px">DIC Official Alumni System | PDPA 2026 Compliant</p>
+          <p class="login-footer" style="margin-top:16px">DIC Official Alumni System</p>
           </div><!-- /auth-panel-signin -->
 
             <!-- A super admin has nobody above them to click "Reset password",
@@ -174,7 +174,7 @@
               </div>
               <label style="display:flex;align-items:flex-start;gap:10px;font-size:13px;color:var(--text-secondary);margin-bottom:14px;cursor:pointer">
                 <input type="checkbox" id="signup-consent" required />
-                <span>I consent to DIC storing and processing my alumni data in line with the PDPA 2026 privacy policy.</span>
+                <span>I agree to DIC storing and processing my alumni data as described in the DIC privacy policy.</span>
               </label>
               <div class="login-error hidden" id="signup-error" role="alert"></div>
               <button type="submit" class="btn btn-primary btn-full" id="signup-submit-btn">Create Account</button>
@@ -850,16 +850,16 @@
               <div class="card-header"><h2 class="card-title">Alumni Badges &amp; Achievements</h2></div>
               <div id="alumni-badges"></div>
             </div>
+            <!-- Verification status. Rendered by renderVerificationStatus()
+                 from users.is_verified, which is also what the server gate
+                 reads — the card cannot disagree with the guard. -->
+            <div class="glass-card mt-16" id="verification-status-card"></div>
+
+            <!-- Privacy centre (§20). Settings, location visibility, consent
+                 record, data download and deletion, in one place. -->
             <div class="glass-card mt-16">
-              <div class="card-header"><h2 class="card-title">Data Rights &amp; Compliance</h2></div>
-              <div class="dsar-section">
-                <p class="dsar-desc">PDPA 2026 — You have the right to access, export, and delete your personal data.</p>
-                <div class="dsar-actions">
-                  <button class="btn btn-outline" onclick="exportUserData('json')"><i data-lucide="package" class="ui-icon"></i> Export JSON</button>
-                  <button class="btn btn-outline" onclick="exportUserData('csv')"><i data-lucide="clipboard-list" class="ui-icon"></i> Export CSV</button>
-                  <button class="btn btn-danger" onclick="showDeleteAccount()"><i data-lucide="trash-2" class="ui-icon"></i> Request Deletion</button>
-                </div>
-              </div>
+              <div class="card-header"><h2 class="card-title">Privacy Centre</h2></div>
+              <div id="privacy-centre"></div>
             </div>
           </div>
         </div>

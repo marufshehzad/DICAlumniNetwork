@@ -672,6 +672,150 @@ function renderEngagementScore() {
    the bar is stated on the card. Two of the original six are gone entirely: "PWA
    Early Adopter" and "Community Champion — referred 10+ alumni" have no
    corresponding data anywhere. */
+/* ─── VERIFICATION STATUS (§4) ───────────────────────────────
+   Reads the same field the server gate reads, so the card and the guard
+   cannot drift apart. Deliberately silent about who is reviewing, how many
+   are ahead, and when — all internal. */
+const VERIFICATION_GATED_ACTIONS = [
+  'Registering for events',
+  'Applying for jobs and requesting referrals',
+  'Posting a job',
+  'Requesting mentorship',
+  'Joining or creating a chapter',
+  'Pledging a donation',
+  'Submitting a news story',
+  'Connecting with other members'
+];
+
+function renderVerificationStatus() {
+  const el = document.getElementById('verification-status-card');
+  if (!el) return;
+  const u = state.currentUser || {};
+  const suspended = u.status === 'suspended';
+  const verified = u.verified === true;
+
+  const state_ = suspended ? 'suspended' : verified ? 'verified' : 'unverified';
+  const head = {
+    verified:   { icon: 'badge-check',    title: 'Verified alumni member',
+                  sub: 'An administrator has confirmed your record. You have full access.' },
+    unverified: { icon: 'clock',          title: 'Verification pending',
+                  sub: 'Your account is active and a DIC administrator is reviewing your alumni record.' },
+    suspended:  { icon: 'ban',            title: 'Account suspended',
+                  sub: 'Contact a DIC administrator to discuss restoring access.' }
+  }[state_];
+
+  el.innerHTML =
+    '<div class="card-header"><h2 class="card-title">Account status</h2></div>' +
+    '<div class="verif-panel verif-' + state_ + '" role="status">' +
+      '<div class="verif-head">' +
+        '<i data-lucide="' + head.icon + '" class="ui-icon" aria-hidden="true"></i>' +
+        '<div><div class="verif-title">' + escapeHtml(head.title) + '</div>' +
+        '<div class="verif-sub">' + escapeHtml(head.sub) + '</div></div>' +
+      '</div>' +
+      (state_ === 'unverified' ? (
+        '<div class="verif-detail">' +
+          '<p class="verif-what">While your record is being checked you can complete your ' +
+          'profile, browse the directory, events and jobs, and manage your privacy and data. ' +
+          'These need verification first:</p>' +
+          '<ul class="verif-list">' +
+            VERIFICATION_GATED_ACTIONS.map(function (a) {
+              return '<li><i data-lucide="lock" class="ui-icon" aria-hidden="true"></i> ' + escapeHtml(a) + '</li>';
+            }).join('') +
+          '</ul>' +
+          '<p class="verif-how">Verification is carried out by DIC staff against the ' +
+          'institution\'s own records. A complete profile — full name, batch and department — ' +
+          'is what they check against, so filling those in helps.</p>' +
+        '</div>'
+      ) : '') +
+    '</div>';
+  if (window.lucide) lucide.createIcons();
+}
+
+/* ─── PRIVACY CENTRE (§20) ───────────────────────────────────
+   Settings, location visibility, consent record, download and deletion. Every
+   figure comes from an endpoint; nothing here is a placeholder. */
+async function renderPrivacyCentre() {
+  const el = document.getElementById('privacy-centre');
+  if (!el) return;
+  el.innerHTML = renderSkeletonCards(2);
+
+  const [schema, profile, consents, pending] = await Promise.all([
+    loadPrivacySchema(),
+    API.getMyProfile(),
+    API.getConsentHistory(),
+    API.getDeletionRequest()
+  ]);
+
+  if (apiFailed(profile)) {
+    el.innerHTML = renderErrorState('Could not load your privacy settings.', 'renderPrivacyCentre()');
+    return;
+  }
+  const settings = (profile && profile.privacy_settings) || {};
+  const fields = (schema && schema.fields) || [];
+  const labelFor = function (f) {
+    const cur = settings[f.name] || f.default;
+    return (f.optionLabels && f.optionLabels[cur]) || cur;
+  };
+
+  const rows = fields.map(function (f) {
+    return '<div class="pc-row">' +
+      '<span class="pc-row-key">' + escapeHtml(f.label) + '</span>' +
+      '<span class="pc-row-val">' + escapeHtml(labelFor(f)) + '</span></div>';
+  }).join('');
+
+  const consentRows = Array.isArray(consents) && consents.length
+    ? consents.map(function (c) {
+        return '<div class="pc-consent-row">' +
+          '<span class="pc-consent-state ' + (c.granted ? 'is-granted' : 'is-withdrawn') + '">' +
+            '<i data-lucide="' + (c.granted ? 'check' : 'x') + '" class="ui-icon" aria-hidden="true"></i> ' +
+            (c.granted ? 'Given' : 'Withdrawn') + '</span>' +
+          '<span class="pc-consent-type">' + escapeHtml(c.consent_type) + '</span>' +
+          '<span class="pc-consent-when">' + escapeHtml(formatDate(c.created_at)) + '</span>' +
+          '</div>';
+      }).join('')
+    : renderEmptyState('<i data-lucide="file-clock" class="ui-icon"></i>', 'No consent records yet',
+        'Choices you make about how DIC uses your data are recorded here.');
+
+  const del = (!apiFailed(pending) && pending)
+    ? '<div class="pc-deletion-pending" role="status">' +
+        '<i data-lucide="hourglass" class="ui-icon" aria-hidden="true"></i> ' +
+        'Deletion requested. Your account is scheduled to be removed on <strong>' +
+        escapeHtml(formatDate(pending.purge_after)) + '</strong>. You can cancel until then.' +
+      '</div>' +
+      '<button type="button" class="btn btn-primary" onclick="showDeleteAccount()">' +
+      '<i data-lucide="undo-2" class="ui-icon"></i> Review or cancel</button>'
+    : '<button type="button" class="btn btn-danger" onclick="showDeleteAccount()">' +
+      '<i data-lucide="trash-2" class="ui-icon"></i> Delete my account</button>';
+
+  el.innerHTML =
+    '<section class="pc-section"><h3 class="pc-heading">Who can see what</h3>' +
+      '<div class="pc-rows">' + rows + '</div>' +
+      '<button type="button" class="btn btn-outline btn-sm" onclick="showEditProfileV2()">' +
+      '<i data-lucide="pen-line" class="ui-icon"></i> Change these</button>' +
+    '</section>' +
+
+    '<section class="pc-section"><h3 class="pc-heading">Consent record</h3>' +
+      '<div class="pc-consents">' + consentRows + '</div>' +
+    '</section>' +
+
+    '<section class="pc-section"><h3 class="pc-heading">A copy of your data</h3>' +
+      '<p class="pc-note">A file containing what DIC holds about you. It lists the sections ' +
+      'it contains and the ones it leaves out, with the reason for each.</p>' +
+      '<div class="pc-actions">' +
+        '<button type="button" class="btn btn-outline" onclick="exportUserData(\'json\')">' +
+        '<i data-lucide="package" class="ui-icon"></i> Download JSON</button>' +
+        '<button type="button" class="btn btn-outline" onclick="exportUserData(\'csv\')">' +
+        '<i data-lucide="clipboard-list" class="ui-icon"></i> Download CSV</button>' +
+      '</div>' +
+    '</section>' +
+
+    '<section class="pc-section"><h3 class="pc-heading">Deleting your account</h3>' +
+      '<div class="pc-actions">' + del + '</div>' +
+    '</section>';
+
+  if (window.lucide) lucide.createIcons();
+}
+
 function renderAlumniBadges() {
   const el = document.getElementById('alumni-badges');
   if (!el) return;
@@ -998,10 +1142,33 @@ async function showDeleteAccount() {
       </div>
       <button class="btn btn-primary btn-full mt-16" onclick="cancelAccountDeletion()"><i data-lucide="undo-2" class="ui-icon"></i> Cancel deletion request</button>
     ` : `
-      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:14px">
-        Under PDPA 2026 your account enters a <strong>30-day grace period</strong> before permanent deletion.
-        You can cancel at any point during that window. We recommend exporting your data first.
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">
+        Your account enters a <strong>30-day grace period</strong> before it is permanently deleted.
+        You can cancel at any point during that window.
       </p>
+      <!-- §14/§15: what actually happens, taken from the purge job in jobs.js
+           rather than described in general terms. -->
+      <div class="del-what">
+        <div class="del-what-group">
+          <div class="del-what-head"><i data-lucide="trash-2" class="ui-icon" aria-hidden="true"></i> Permanently removed</div>
+          <p>Your profile and photo, your saved identity documents, your consent
+             records, notifications, connections, chapter memberships, event
+             registrations, job applications and referrals, jobs you posted,
+             mentorship records, poll votes and your news stories.</p>
+        </div>
+        <div class="del-what-group">
+          <div class="del-what-head"><i data-lucide="archive" class="ui-icon" aria-hidden="true"></i> Kept, with your name removed</div>
+          <p>Donation records are retained as financial records, with your name
+             replaced. Events you created and messages you sent stay, no longer
+             linked to your account.</p>
+        </div>
+        <div class="del-what-group">
+          <div class="del-what-head"><i data-lucide="shield" class="ui-icon" aria-hidden="true"></i> Kept as written</div>
+          <p>The administrative audit trail. Its entries are cryptographically
+             chained to one another, so altering one would break the record for
+             everything after it.</p>
+        </div>
+      </div>
       <button class="btn btn-outline btn-full" onclick="exportUserData('json')"><i data-lucide="package" class="ui-icon"></i> Export my data first</button>
       <div class="input-group mt-16">
         <label class="input-label" for="delete-reason">Reason (optional)</label>

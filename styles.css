@@ -5918,3 +5918,88 @@ textarea.form-input { resize: vertical; min-height: 100px; }
 .chapter-detail-place .ui-icon { width: 14px; height: 14px; }
 .chapter-place-unset { color: var(--text-muted); font-style: italic; }
 .chapter-place-edit { min-height: 26px; padding: 0 8px; font-size: 11px; }
+
+/* ─── PHASE 7C-1: ACCOUNT STATUS + PRIVACY CENTRE ───────────
+   Light, like everything else. State is carried by an icon and a sentence,
+   not by colour alone (§4) — the tint only reinforces what the words say. */
+.verif-panel {
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md, 14px);
+  padding: 14px 16px;
+}
+.verif-verified   { background: rgba(0,168,138,0.07);  border-color: rgba(0,120,106,0.28); }
+.verif-unverified { background: rgba(217,119,6,0.07);  border-color: rgba(146,64,14,0.26); }
+.verif-suspended  { background: rgba(220,38,38,0.06);  border-color: rgba(185,28,28,0.28); }
+.verif-head { display: flex; gap: 11px; align-items: flex-start; }
+.verif-head .ui-icon { width: 20px; height: 20px; flex-shrink: 0; margin-top: 1px; }
+.verif-verified   .verif-head > .ui-icon { color: var(--green-text); }
+.verif-unverified .verif-head > .ui-icon { color: var(--amber-text); }
+.verif-suspended  .verif-head > .ui-icon { color: var(--red-text); }
+.verif-title { font-size: 14px; font-weight: 700; color: var(--text-primary); }
+.verif-sub   { font-size: 12.5px; color: var(--text-secondary); margin-top: 2px; }
+.verif-detail { margin-top: 12px; border-top: 1px solid var(--border-glass); padding-top: 12px; }
+.verif-what, .verif-how { font-size: 12.5px; color: var(--text-secondary); margin: 0 0 8px; }
+.verif-how { margin-top: 10px; margin-bottom: 0; }
+.verif-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.verif-list li {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px; color: var(--text-primary);
+}
+.verif-list .ui-icon { width: 13px; height: 13px; color: var(--text-muted); flex-shrink: 0; }
+
+.pc-section { padding: 14px 0; border-bottom: 1px solid var(--border-glass); }
+.pc-section:last-child { border-bottom: none; padding-bottom: 0; }
+.pc-section:first-child { padding-top: 0; }
+.pc-heading { font-size: 13px; font-weight: 700; color: var(--text-primary); margin: 0 0 10px; }
+.pc-rows { display: grid; gap: 6px; margin-bottom: 10px; }
+.pc-row {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  font-size: 12.5px; padding: 7px 10px;
+  background: var(--bg-deep); border-radius: 8px;
+}
+.pc-row-key { color: var(--text-secondary); }
+.pc-row-val { color: var(--text-primary); font-weight: 600; text-align: right; }
+
+.pc-consents { display: grid; gap: 6px; }
+.pc-consent-row {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
+  font-size: 12.5px; padding: 7px 10px;
+  background: var(--bg-deep); border-radius: 8px;
+}
+.pc-consent-state { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; }
+.pc-consent-state .ui-icon { width: 13px; height: 13px; }
+.pc-consent-state.is-granted   { color: var(--green-text); }
+.pc-consent-state.is-withdrawn { color: var(--text-secondary); }
+.pc-consent-type { color: var(--text-primary); overflow-wrap: anywhere; }
+.pc-consent-when { color: var(--text-secondary); white-space: nowrap; }
+
+.pc-note { font-size: 12.5px; color: var(--text-secondary); margin: 0 0 10px; }
+.pc-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.pc-deletion-pending {
+  display: flex; align-items: flex-start; gap: 8px;
+  font-size: 12.5px; color: var(--text-primary);
+  background: rgba(217,119,6,0.08); border: 1px solid rgba(146,64,14,0.26);
+  border-radius: 8px; padding: 10px 12px; margin-bottom: 10px;
+}
+.pc-deletion-pending .ui-icon { width: 15px; height: 15px; color: var(--amber-text); flex-shrink: 0; }
+
+/* What deletion actually does, shown before it is requested (§14). */
+.del-what { display: grid; gap: 10px; margin-bottom: 14px; }
+.del-what-group {
+  border: 1px solid var(--border-glass); border-radius: 10px;
+  padding: 10px 12px; background: var(--bg-deep);
+}
+.del-what-head {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12.5px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px;
+}
+.del-what-head .ui-icon { width: 14px; height: 14px; color: var(--text-secondary); }
+.del-what-group p { margin: 0; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+
+@media (max-width: 480px) {
+  .pc-row, .pc-consent-row { grid-template-columns: none; }
+  .pc-row { flex-direction: column; gap: 2px; }
+  .pc-row-val { text-align: left; }
+  .pc-consent-row { display: flex; flex-wrap: wrap; }
+  .pc-actions .btn { width: 100%; }
+}

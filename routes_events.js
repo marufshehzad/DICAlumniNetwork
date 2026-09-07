@@ -72,7 +72,7 @@ const STANDARD_CHECKLIST = [
 ];
 
 module.exports = function mountEvents(app, guards) {
-  const { requireAuth, requireRole, ADMIN_ROLES, MODERATOR_ROLES, writeAudit , serverError} = guards;
+  const { requireAuth, requireVerified, requireRole, ADMIN_ROLES, MODERATOR_ROLES, writeAudit , serverError} = guards;
 
   /* Phase 5F: this returned err.message to the caller. GET /api/events/:id with
      a non-numeric id was enough to read PostgreSQL's own type error back. The
@@ -548,7 +548,7 @@ module.exports = function mountEvents(app, guards) {
      Extended with ticket_type_id and the registration window.
      ══════════════════════════════════════════════════════════ */
 
-  app.post('/api/events/:id/register', requireAuth, (req, res) => ok(res, async () => {
+  app.post('/api/events/:id/register', requireVerified, (req, res) => ok(res, async () => {
     /* No signing key, no ticket. Issuing one anyway would hand out a QR that
        check-in could never trust, which is worse than refusing. */
     if (!ticketSigningReady) {

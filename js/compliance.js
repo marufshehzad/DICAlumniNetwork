@@ -22,7 +22,7 @@ async function renderComplianceGrid() {
     return;
   }
 
-  const labels = { compliant: '<i data-lucide="check" class="ui-icon"></i> Compliant', pending: '<i data-lucide="clock" class="ui-icon"></i> No data yet', at_risk: '<i data-lucide="triangle-alert" class="ui-icon"></i> Action required' };
+  const labels = { compliant: '<i data-lucide="check" class="ui-icon"></i> Active', pending: '<i data-lucide="clock" class="ui-icon"></i> No data yet', at_risk: '<i data-lucide="triangle-alert" class="ui-icon"></i> Action required' };
   el.innerHTML = items.map(c => `
     <div class="compliance-card ${c.status}">
       <div class="compliance-icon">${emojiIcon(c.icon, 'shield-check')}</div>

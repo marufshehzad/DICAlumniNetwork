@@ -74,7 +74,7 @@ async function writeAudit(action, meta, icon = '🛡', ctx = {}) {
 
 const ref = (prefix) => `${prefix}-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 
-module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, MODERATOR_ROLES, serverError }) {
+module.exports = function mountV2(app, { requireAuth, requireVerified, requireRole, ADMIN_ROLES, MODERATOR_ROLES, serverError }) {
 
   /* Phase 5F: the raw exception text used to be the response body, so any
      signed-in caller could read PostgreSQL's own error strings. It is logged
@@ -115,7 +115,7 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
     res.json(rows.rows);
   }));
 
-  app.post('/api/jobs', requireAuth, (req, res) => ok(res, async () => {
+  app.post('/api/jobs', requireVerified, (req, res) => ok(res, async () => {
     const { title, company, salary, type, location, tags, emoji, workMode } = req.body;
     if (!title || !title.trim()) return res.status(400).json({ error: 'Job title is required' });
     if (!company || !company.trim()) return res.status(400).json({ error: 'Company is required' });
@@ -179,7 +179,7 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
     res.json({ success: true });
   }));
 
-  app.post('/api/jobs/:id/apply', requireAuth, (req, res) => ok(res, async () => {
+  app.post('/api/jobs/:id/apply', requireVerified, (req, res) => ok(res, async () => {
     const jobId = parseInt(req.params.id);
     const { coverNote, resumeUrl } = req.body || {};
 
@@ -221,7 +221,7 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
     res.json(rows.rows);
   }));
 
-  app.post('/api/jobs/:id/refer', requireAuth, (req, res) => ok(res, async () => {
+  app.post('/api/jobs/:id/refer', requireVerified, (req, res) => ok(res, async () => {
     const jobId = parseInt(req.params.id);
     const { message } = req.body || {};
     const job = await db.query('SELECT title, posted_by_id FROM jobs WHERE id=$1', [jobId]);
@@ -324,7 +324,7 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
      What the platform can honestly record today is an intention to give. That
      is what this writes. Money becomes money only when a member of staff
      confirms it arrived, through record-payment below. */
-  app.post('/api/donations', requireAuth, (req, res) => ok(res, async () => {
+  app.post('/api/donations', requireVerified, (req, res) => ok(res, async () => {
     const { campaignId, amount, isAnonymous, note } = req.body;
     const value = parseFloat(amount);
     if (!value || value <= 0) return res.status(400).json({ error: 'A positive amount is required' });
@@ -596,7 +596,7 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
     res.json(rows.rows);
   }));
 
-  app.post('/api/mentorships', requireAuth, (req, res) => ok(res, async () => {
+  app.post('/api/mentorships', requireVerified, (req, res) => ok(res, async () => {
     // matchScore used to be read from the request body and stored as though it
     // had been computed. Any caller could write any number into the column, and
     // the browser was sending back whatever the suggestion list had shown it.
@@ -685,7 +685,7 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
     res.json(rows.rows);
   }));
 
-  app.post('/api/connections/:userId', requireAuth, (req, res) => ok(res, async () => {
+  app.post('/api/connections/:userId', requireVerified, (req, res) => ok(res, async () => {
     const target = parseInt(req.params.userId);
     if (target === req.user.uid) return res.status(400).json({ error: 'You cannot connect with yourself' });
     const exists = await db.query(

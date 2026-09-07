@@ -179,6 +179,8 @@ function showPage(page) {
              'profile-completeness-items');
       render(window.renderEngagementScore);
       render(window.renderAlumniBadges);
+      render(window.renderVerificationStatus);
+      render(window.renderPrivacyCentre);
     },
     analytics:      () => {
       if (!state.analyticsChart && typeof initAnalyticsChart === 'function') {

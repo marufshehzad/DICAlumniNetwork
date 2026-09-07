@@ -343,7 +343,7 @@ async function attachUser(req, res, next) {
 
   try {
     const r = await db.query(
-      'SELECT id, role, status, token_version, must_change_password FROM users WHERE id = $1',
+      'SELECT id, role, status, token_version, must_change_password, is_verified FROM users WHERE id = $1',
       [payload.uid]);
     // Account deleted since the token was issued — the token is now inert.
     if (r.rows.length === 0) { req.user = null; return next(); }
@@ -370,7 +370,11 @@ async function attachUser(req, res, next) {
       req.suspended = true;
       return next();
     }
-    req.user = { ...payload, role: r.rows[0].role };
+    /* is_verified rides along on the row already being fetched, the same
+       reasoning the status check above gives. It is read from the database
+       rather than the token so revoking a verification takes effect on the
+       next request instead of when the token expires. */
+    req.user = { ...payload, role: r.rows[0].role, verified: r.rows[0].is_verified === true };
     req.mustChangePassword = r.rows[0].must_change_password === true;
   } catch {
     // The database is unreachable. Fail closed rather than fall back to the
@@ -448,6 +452,27 @@ function numericParam(name) {
 }
 for (const p of ['id', 'userId', 'taskId', 'personId', 'ttId', 'eventId', 'itemId', 'vaultId']) {
   app.param(p, numericParam(p));
+}
+
+/* Actions that reach another member, commit the institution, or publish.
+   See the Phase 7C-1 entry in PHASE_LOG.md for the policy and its reasoning.
+
+   The message names the requirement and stops there: which administrator is
+   reviewing, how long the queue is and why an account was not yet verified
+   are all internal, and a rejected caller learning them is the leak this
+   phrasing avoids. */
+const VERIFICATION_REQUIRED = {
+  error: 'Alumni verification is required for this action.',
+  code: 'verification_required'
+};
+
+function requireVerified(req, res, next) {
+  if (req.suspended) return res.status(403).json(SUSPENDED);
+  if (req.staleSession) return res.status(401).json(STALE);
+  if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+  if (enrolmentBlocked(req)) return res.status(403).json(MUST_CHANGE);
+  if (req.user.verified !== true) return res.status(403).json(VERIFICATION_REQUIRED);
+  next();
 }
 
 function requireAuth(req, res, next) {
@@ -1621,7 +1646,7 @@ app.get('/api/chapters', requireAuth, async (req, res) => {
 // which left the queue permanently empty.
 const CHAPTER_AUTO_APPROVE_ROLES = ['super_admin', 'univ_admin', 'dept_admin'];
 
-app.post('/api/chapters', requireAuth, async (req, res) => {
+app.post('/api/chapters', requireVerified, async (req, res) => {
   const { name, type, icon, description, parentId, placeId } = req.body;
 
   if (!name || !name.trim()) {
@@ -1720,7 +1745,7 @@ app.put('/api/chapters/:id/place', requireRole(...ADMIN_ROLES), async (req, res)
   }
 });
 
-app.post('/api/chapters/:id/join', requireAuth, async (req, res) => {
+app.post('/api/chapters/:id/join', requireVerified, async (req, res) => {
   const chapterId = parseInt(req.params.id);
   const targetUserId = req.user.uid; // was `userId || 5` from the request body
 
@@ -1814,7 +1839,7 @@ app.get('/api/stories', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/stories', requireAuth, async (req, res) => {
+app.post('/api/stories', requireVerified, async (req, res) => {
   const { title, category, content, emoji } = req.body;
 
   if (!title || !title.trim() || !content || !content.trim()) {
@@ -2787,7 +2812,7 @@ app.get('/api/verification-queue', requireRole(...MODERATOR_ROLES), async (req, 
   }
 });
 
-const guards = { requireAuth, requireRole, ADMIN_ROLES, MODERATOR_ROLES, serverError };
+const guards = { requireAuth, requireVerified, requireRole, ADMIN_ROLES, MODERATOR_ROLES, serverError };
 
 // v2: events, ticketing, jobs, campaigns/donations, custom fields,
 // mentorship, connections, polls, broadcasts, audit log.

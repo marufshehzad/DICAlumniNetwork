@@ -2836,3 +2836,249 @@ and loading states. `tests/install_drill.js` now applies migrations through v14.
 ### Next phase
 
 **Phase 7C.** Not started.
+
+---
+
+## PHASE 7C-1 — Alumni & Privacy Completeness
+
+**Status:** **COMPLETE**
+**Date:** 2026-09-07
+**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Parent:** `d06e09c`
+
+### The audit, before anything was changed
+
+Re-verified against the running system rather than read from the Master Audit,
+because later phases had already closed several of its findings.
+
+| § | Item | State |
+|---|---|---|
+| 2 | Verification lifecycle — unverified on signup, staff-only, audited, unforgeable | **READY** |
+| 3 | Verification affects capability | **BROKEN** |
+| 4 | Verification visible to the member | **MISSING** |
+| 5 | Privacy settings persist UI → API → database → next session | **READY** |
+| 6/7 | Privacy applied consistently, including location | **READY** |
+| 8 | Consent history screen | **MISSING** (endpoint since day one, never a caller) |
+| 9 | Consent management | **PARTIAL** |
+| 10 | Data export scope | **PARTIAL** — 6 record types absent |
+| 11 | Export declares what it omits | **MISSING** |
+| 12 | Export security and ownership | **READY** |
+| 13 | Deletion request → grace → cancel → purge | **READY** |
+| 14 | Deletion explains what will happen | **PARTIAL** |
+| 16/17 | Alumni lifecycle state | **READY** — nothing to build |
+| 18 | Profile ownership, no IDOR | **READY** |
+| 28 | No legal overclaiming | **BROKEN** |
+
+Most of it was already right. Two things were not, and one of them mattered.
+
+### is_verified was decorative
+
+The Master Audit's finding still held, and this is what it looked like measured
+rather than described. A freshly self-registered account — nobody had checked
+who they were — could:
+
+```
+job application      200 ALLOWED        posting a job        200 ALLOWED
+mentorship request   200 ALLOWED        submitting a story   200 ALLOWED
+chapter join         200 ALLOWED        creating a chapter   200 ALLOWED
+donation pledge      200 ALLOWED
+```
+
+`is_verified` drove a badge, a queue and two dashboard counts. It gated
+nothing.
+
+**The policy now enforced**, server-side, in `requireVerified`:
+
+*Requires verification* — anything that reaches another member, commits the
+institution, or publishes: registering for an event, applying for a job,
+requesting a referral, posting a job, requesting mentorship, joining or
+creating a chapter, pledging a donation, submitting a story, requesting a
+connection. Ten routes.
+
+*Deliberately not gated* — completing the profile (it is what verification is
+judged on), browsing the directory, and **consent, data export and deletion**.
+A member's rights over their own data cannot be conditional on the institution
+getting round to them.
+
+The refusal is `403 "Alumni verification is required for this action."` with a
+`verification_required` code and nothing else: no queue position, no reviewer,
+no estimated date. Staff are unaffected — accounts created by an administrator
+and accounts from bulk import are both inserted `is_verified = TRUE`; only
+self-signup starts unverified, which is the case the gate exists for.
+
+`is_verified` is read from the row `attachUser` already fetches, so revoking a
+verification takes effect on the next request rather than when the token
+expires — the same reasoning the suspension check gives.
+
+### Verification, made visible (§4)
+
+An account status card on My DIC Profile naming the state — **Verified**,
+**Verification pending**, or **Suspended** — carried by an icon and a sentence
+rather than by colour. For a pending account it lists what they *can* do, the
+eight things that are waiting, and how verification is decided: *"by DIC staff
+against the institution's own records. A complete profile — full name, batch and
+department — is what they check against."* Nothing about who is reviewing or
+when.
+
+### Privacy Centre (§20)
+
+Replaces a card offering two export buttons and a delete button. Four sections:
+the privacy settings as they currently stand, the **consent record** (§8 — the
+endpoint had no caller since it was written), a data download that explains
+itself, and deletion.
+
+### The data export was incomplete and did not say so (§10, §11)
+
+It returned eight sections and named none of the ones it left out — the shape
+of export that reads as complete without being it. Absent: job applications,
+referral requests, connections, notifications, identity-vault presence, and the
+member's own deletion history.
+
+Now **eighteen sections**, each with a record count, plus a named
+`omittedSections` list with a reason for each:
+
+- **credentials** — passwords, hashes, session and reset tokens are never
+  exported. Authentication material, not personal data owed back.
+- **identityVault.contents** — the encrypted value is withheld; its presence,
+  type and last four characters are included. Releasing plaintext is an
+  administrator action, separately authorised and separately audited, with no
+  self-service route. §10's "metadata unless policy explicitly supports
+  plaintext release" — and no such policy exists.
+- **auditTrail** — an institutional record, hash-chained.
+- **otherMembers** — only this account's side of a shared record.
+
+A name-based scrub drops any key matching password/hash/token/secret/cipher/
+auth_tag regardless of which table it came from, because `alumni_profiles` is
+selected with `*` and a credential column added later would otherwise ride out
+unnoticed. Privacy settings are passed through `privacy.effective()`: the
+stored JSONB still carries `cgpa`, `github`, `address` and `linkedin` from an
+older schema, and exporting them would show a member controls they do not have.
+
+**A defect the widening exposed.** The new queries carried
+`.catch(() => ({ rows: [] }))`. Removing those turned a silent empty section
+into a 500 that named the cause: `column p.role does not exist`. In an export,
+a broken query returning an empty array is indistinguishable from a member
+having no records — the worst failure mode this endpoint has. There are now no
+fallbacks; a failure is a 500 with a request id.
+
+### Deletion, spelled out (§14, §15)
+
+The purge job already implemented §15's taxonomy precisely. The dialog now says
+so before the request is made, in three labelled groups:
+
+- **Permanently removed** — profile, identity documents, consent records,
+  notifications, connections, chapter memberships, event registrations, job
+  applications and referrals, jobs posted, mentorships, poll votes, stories.
+- **Kept, with your name removed** — donations are retained as financial
+  records with `donor_name` overwritten; events created and messages sent
+  survive, detached.
+- **Kept as written** — the audit trail, because its entries are SHA-256
+  chained and rewriting one invalidates every verification after it.
+
+### Alumni status: nothing was built, deliberately (§16, §17)
+
+`users.status` already exists with a CHECK constraint allowing exactly
+`active` and `suspended`, defaulting to active, enforced both at login and in
+`attachUser` on every request. The four states §17 asks to keep distinct
+already are, in different places:
+
+| State | Where it lives |
+|---|---|
+| Suspended | `users.status = 'suspended'` |
+| Deletion requested | `deletion_requests.status = 'pending'` |
+| Purged | the row is gone |
+| Deactivated | **does not exist** |
+
+§16 says not to add a taxonomy the model does not need. It does not need one,
+so none was added. Documenting that was the work.
+
+### Legal overclaiming, removed (§28)
+
+*"PDPA 2026 Compliant"* sat in the login footer of every visit. Three more
+places attributed application behaviour to a statute — the signup consent line,
+the data-rights card and the deletion dialog — and an admin subtitle named two
+acts. No legal assessment of this platform exists in the repository, so those
+were claims the software was making on the institution's behalf. All replaced
+with concrete descriptions of what the system does. An admin status pill
+reading "Compliant" now reads "Active", which is what it measures.
+
+Left alone: `consent_logs.policy_version`, which defaults to `'PDPA-2026.1'`.
+Rewriting stored values would make old and new consent records incomparable for
+no gain. **Institutional dependency:** DIC should supply the identifier of its
+own published privacy policy, and the default should become that.
+
+### Two regressions caused, and how
+
+**The security smoke suite went red.** Its member fixture registers an account,
+which now starts unverified, so a job-posting assertion and two XSS assertions
+began failing on 403. The fixture — not the assertion — was wrong: the suite's
+subject is an ordinary *verified* member, and those tests are about output
+escaping, not verification. It now verifies its fixture the same way it
+promotes roles. Its route parser also learned `requireVerified`, which it had
+been reading as "unguarded".
+
+**An unrelated acceptance assertion went red.** Two earlier runs of the new
+suite threw part way through, and the error path exited before cleanup, leaving
+probe accounts behind; `acceptance` picks a profile with
+`SELECT ... LIMIT 1` and no `ORDER BY` and quietly picked one up. Cleanup now
+runs on the error path too. The audit probe had also left a member's location
+privacy on `private` — its "restore" read the value at the start of each run,
+so re-running it restored the wrong thing. `phase7b_location` caught that one.
+
+### Database
+
+**No schema change.** Nothing this phase needed a column. `is_verified`,
+`users.status`, `consent_logs` and `deletion_requests` all already existed;
+what was missing was enforcement, an interface and honesty about scope.
+
+### API
+
+| Route | Change |
+|---|---|
+| 10 write routes | now behind `requireVerified` |
+| `GET /api/dsar/export` | 8 → 18 sections; included/omitted manifest; credential scrub; effective privacy settings; no silent fallbacks |
+| `attachUser` | carries `is_verified` on the session |
+
+### Tests
+
+```
+26 suites                    1,951 passed, 0 failed
+  of which phase7c1_privacy        125   (new)
+  the 25 pre-existing suites     1,826   unchanged, still 0 failed
+```
+
+`tests/phase7c1_privacy.js` covers §24 A–M: the lifecycle and its unforgeability,
+each of the ten gated actions and its message, the eight rights an unverified
+member keeps, no over-reach on a verified one, privacy persistence and
+validation, a private location absent from directory, map, mentor suggestions
+and city filtering **for all five roles**, consent ownership across roles,
+export completeness and credential-freedom, the 30-day grace period, the purge
+predicate refusing both an in-grace and a cancelled request, suspension, and
+IDOR.
+
+### Browser verification
+
+Privacy Centre, account status, consent history, data download and the deletion
+dialog at 360 · 390 · 430 · 768 · 1024 · 1280 · 1440: **no overflow, nothing
+clipped, no console errors.** The deletion dialog fits 360px with all three
+groups readable. Verified and unverified states both checked in the interface.
+
+### Limitations
+
+- **The consent vocabulary is thin.** Three types exist in the data
+  (`data_processing`, `marketing_email`, and one row of injection-test residue
+  a dev database picked up). The screen shows what is there; it does not invent
+  a catalogue. A real consent taxonomy is an institutional decision.
+- **Consent is append-only.** History is complete because every grant and
+  withdrawal is its own row, but there is no "current state" table — the latest
+  row per type is the current state. Adequate, and worth knowing.
+- **`policy_version` names a statute rather than a DIC policy document.** See
+  above; DIC's own identifier is needed.
+- **No legal assessment exists.** Nothing here claims one. The wording
+  describes behaviour only.
+- **Verification has no member-visible history.** The audit trail records every
+  verify and revoke, but a member sees only their current state.
+
+### Next phase
+
+**Phase 7C-2.** Not started.

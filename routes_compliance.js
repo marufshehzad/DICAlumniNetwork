@@ -10,6 +10,7 @@
 
 const db = require('./db');
 const auditChain = require('./audit_chain');
+const privacy = require('./privacy');
 
 module.exports = function mountCompliance(app, {
   requireAuth, requireRole, ADMIN_ROLES,
@@ -172,29 +173,131 @@ module.exports = function mountCompliance(app, {
     const uid = req.user.uid;
     const format = (req.query.format || 'json').toLowerCase();
 
-    const [user, profile, donations, registrations, mentorships, memberships, consents, stories] =
+    /* Phase 7C-1 widened this. It previously returned eight sections and named
+       none of the ones it left out, which is the shape of export that reads as
+       complete without being it: job applications, referrals, connections,
+       notifications, the identity vault and the member's own deletion history
+       were all absent and unmentioned. */
+    const [user, profile, donations, registrations, mentorships, memberships,
+           consents, stories, applications, referrals, connections, notifications,
+           vault, deletions, eventPeople, taskWork] =
       await Promise.all([
-        db.query('SELECT id, email, full_name, role, department, created_at FROM users WHERE id=$1', [uid]),
+        db.query(`SELECT id, email, full_name, role, role_label, department, designation,
+                         phone, status, is_verified, created_via, created_at, last_login_at
+                    FROM users WHERE id=$1`, [uid]),
         db.query('SELECT * FROM alumni_profiles WHERE user_id=$1', [uid]),
         db.query('SELECT amount, currency, payment_gateway, status, receipt_code, created_at FROM donations WHERE donor_user_id=$1', [uid]),
         db.query('SELECT ticket_code, status, checked_in, created_at FROM event_registrations WHERE user_id=$1', [uid]),
         db.query('SELECT subject, status, created_at FROM mentorships WHERE mentor_id=$1 OR mentee_id=$1', [uid]),
         db.query('SELECT chapter_id, joined_at FROM chapter_memberships WHERE user_id=$1', [uid]),
-        db.query('SELECT consent_type, granted, policy_version, created_at FROM consent_logs WHERE user_id=$1', [uid]),
-        db.query('SELECT title, status, created_at FROM stories WHERE author_id=$1', [uid])
+        db.query('SELECT consent_type, granted, policy_version, created_at FROM consent_logs WHERE user_id=$1 ORDER BY created_at DESC', [uid]),
+        db.query('SELECT title, status, created_at FROM stories WHERE author_id=$1', [uid]),
+        db.query(`SELECT j.title, j.company, a.status, a.cover_note, a.created_at
+                    FROM job_applications a JOIN jobs j ON j.id = a.job_id
+                   WHERE a.applicant_id=$1 ORDER BY a.created_at DESC`, [uid]),
+        db.query(`SELECT j.title, j.company, r.status, r.created_at
+                    FROM job_referrals r JOIN jobs j ON j.id = r.job_id
+                   WHERE r.requester_id=$1 ORDER BY r.created_at DESC`, [uid]),
+        db.query(`SELECT CASE WHEN requester_id=$1 THEN 'sent' ELSE 'received' END AS direction,
+                         status, created_at
+                    FROM connections WHERE requester_id=$1 OR addressee_id=$1
+                   ORDER BY created_at DESC`, [uid]),
+        db.query('SELECT title, subtitle, is_unread, created_at FROM notifications WHERE user_id=$1 ORDER BY created_at DESC', [uid]),
+        /* Presence and metadata only — never ciphertext, iv or auth tag. See
+           the omittedSections note below for the reasoning. */
+        db.query('SELECT field_type, last_four, created_at FROM identity_vault WHERE user_id=$1', [uid]),
+        db.query('SELECT status, reason, created_at, purge_after, purged_at FROM deletion_requests WHERE user_id=$1 ORDER BY created_at DESC', [uid]),
+        db.query(`SELECT e.title AS event, p.role_in_event, p.committee, p.created_at
+                    FROM event_people p JOIN events e ON e.id = p.event_id
+                   WHERE p.user_id=$1`, [uid]),
+        db.query(`SELECT e.title AS event, t.title AS task, t.status
+                    FROM event_task_assignees a
+                    JOIN event_tasks t ON t.id = a.task_id
+                    JOIN events e ON e.id = t.event_id
+                   WHERE a.user_id=$1`, [uid])
       ]);
 
-    const bundle = {
-      exportedAt: new Date().toISOString(),
-      policyVersion: 'PDPA-2026.1',
-      subject: user.rows[0] || null,
-      profile: profile.rows[0] || null,
+    /* No query above carries a .catch fallback. In an export, a broken query
+       returning an empty array is indistinguishable from a member having no
+       records — the worst possible failure mode for this endpoint. A failure
+       here becomes a 500 with a request id, which is honest.
+
+       A defence rather than a description: alumni_profiles is selected with *,
+       so a column added later that happens to hold a credential would ride out
+       in this bundle without anyone noticing. Anything whose NAME looks like a
+       secret is dropped here regardless of which table it came from. */
+    const SECRET_KEY = /password|passwd|hash|token|secret|salt|cipher|ciphertext|auth_tag|\biv\b|private_key|api_key/i;
+    const scrub = (row) => {
+      if (!row || typeof row !== 'object') return row;
+      const out = {};
+      for (const [k, v] of Object.entries(row)) if (!SECRET_KEY.test(k)) out[k] = v;
+      return out;
+    };
+    const scrubAll = (rows) => rows.map(scrub);
+
+    const profileRow = scrub(profile.rows[0] || null);
+    /* Lifted out of the profile blob so a reader can find them. They are the
+       two things a member is most likely to be checking. */
+    /* Passed through privacy.effective() so the export shows the settings that
+       actually apply. The stored JSONB still carries keys from an older schema
+       — cgpa, github, address, linkedin — that no longer control anything;
+       exporting them would show a member controls they do not have. */
+    const privacySettings = privacy.effective(profileRow && profileRow.privacy_settings);
+    const location = profileRow ? {
+      city: profileRow.city, district: profileRow.district, division: profileRow.division,
+      country: profileRow.country, postal_code: profileRow.postal_code,
+      place_id: profileRow.place_id,
+      awaiting_confirmation: profileRow.location_needs_confirmation
+    } : null;
+
+    const sections = {
+      account: user.rows[0] || null,
+      profile: profileRow,
+      privacySettings,
+      location,
+      consentHistory: consents.rows,
       donations: donations.rows,
       eventRegistrations: registrations.rows,
+      eventRoles: eventPeople.rows,
+      eventTaskAssignments: taskWork.rows,
+      jobApplications: scrubAll(applications.rows),
+      jobReferralRequests: referrals.rows,
       mentorships: mentorships.rows,
       chapterMemberships: memberships.rows,
-      consentHistory: consents.rows,
-      stories: stories.rows
+      connections: connections.rows,
+      stories: stories.rows,
+      notifications: notifications.rows,
+      identityVault: vault.rows,
+      deletionRequests: deletions.rows
+    };
+
+    const countOf = (v) => Array.isArray(v) ? v.length : (v ? 1 : 0);
+
+    const bundle = {
+      export: {
+        generatedAt: new Date().toISOString(),
+        account: { id: uid, email: user.rows[0]?.email || null, name: user.rows[0]?.full_name || null },
+        format,
+        /* Named individually, with a count, so "empty" and "not included" are
+           distinguishable — an export that simply omits a heading looks the
+           same as one where the member has no rows. */
+        includedSections: Object.entries(sections).map(([name, v]) => ({ name, records: countOf(v) })),
+        /* §11: an export that leaves something out has to say so, and say why.
+           Claiming completeness while withholding is the failure this list
+           exists to prevent. */
+        omittedSections: [
+          { name: 'credentials',
+            reason: 'Passwords, password hashes, session tokens and password-reset tokens are never exported. They are authentication material, not personal data a member needs returned.' },
+          { name: 'identityVault.contents',
+            reason: 'The encrypted value itself is withheld. Its presence, type and last four characters are included above. Releasing the plaintext is an administrator action that is separately authorised and separately audited; there is no self-service route to it.' },
+          { name: 'auditTrail',
+            reason: 'The hash-chained audit log records administrative actions across the institution and is retained as an institutional record. Entries naming this account are not extracted here.' },
+          { name: 'otherMembers',
+            reason: 'Where a record involves another member — the other side of a connection, a mentor, a job poster — only this account\'s side is included.' }
+        ],
+        note: 'This file contains the personal data this platform holds about the named account. It is produced by the application from its own database at the time shown above.'
+      },
+      ...sections
     };
 
     await writeAudit('DSAR Export', `user ${uid} exported their data as ${format.toUpperCase()}`, '📦');

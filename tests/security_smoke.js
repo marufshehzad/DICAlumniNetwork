@@ -105,6 +105,13 @@ async function member(tag) {
     hscPassingYear: 2019, hscGroup: 'Science', mobile: '+880 1700-000123'
   });
   if (!r.body?.token) throw new Error(`register ${tag}: ${r.status} ${JSON.stringify(r.body)}`);
+  /* Phase 7C-1 made is_verified load-bearing: a self-registered account cannot
+     post a job, apply for one, or reach another member until staff verify it.
+     This suite's subject is an ordinary VERIFIED member — the escaping and
+     authorisation assertions below are about what such a member can do — so the
+     fixture is verified here, the same way promote() sets a role. The gate
+     itself is covered by tests/phase7c1_privacy.js. */
+  await db.query(`UPDATE users SET is_verified = TRUE WHERE id = $1`, [r.body.user.id]);
   return { email, tag, token: r.body.token, uid: r.body.user.id };
 }
 
@@ -135,6 +142,9 @@ function routesFromSource() {
       const g = /requireRole\(([^)]*)\)/.exec(rest);
       if (g) guard = 'role:' + g[1].replace(/\.\.\./g, '').trim();
       else if (/requireScheduler/.test(rest)) guard = 'scheduler';
+      // Phase 7C-1: a signed-in AND verified member. Strictly stronger than
+      // requireAuth, so it counts as guarded everywhere auth does.
+      else if (/requireVerified/.test(rest)) guard = 'verified';
       else if (/requireAuth/.test(rest)) guard = 'auth';
       out.push({ method: method.toUpperCase(), route, guard, where: `${f}:${i + 1}` });
     });
