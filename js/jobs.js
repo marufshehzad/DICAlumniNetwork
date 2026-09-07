@@ -73,6 +73,14 @@ function showPostJobModal(job) {
               .map(o => { const [v,l] = o.split(':');
                 return `<option value="${v}" ${editing && job.type === v ? 'selected' : ''}>${l}</option>`; }).join('')}
           </select></div>
+        <div class="input-group"><label class="input-label" for="job-work-mode">Work mode</label>
+          <select id="job-work-mode" class="form-select">
+            ${[':Not specified', 'onsite:On-site', 'remote:Remote', 'hybrid:Hybrid']
+              .map(o => { const i = o.indexOf(':'); const v = o.slice(0, i), l = o.slice(i + 1);
+                return `<option value="${v}" ${editing && (job.work_mode || '') === v ? 'selected' : ''}>${l}</option>`; }).join('')}
+          </select></div>
+      </div>
+      <div class="field-grid-2">
         <div class="input-group"><label class="input-label" for="job-location">Location</label>
           <!-- value="Dhaka" was prefilled, so an unedited posting recorded
                Dhaka whether or not the role was there. Blank by default. -->
@@ -174,7 +182,12 @@ async function renderJobsEnhanced(filter = '') {
         <div class="job-title">${escapeHtml(j.title)}</div>
         <div class="job-company">${escapeHtml(j.company)}</div>
         <div class="job-meta">
-          <span class="job-meta-item"><i data-lucide="map-pin" class="ui-icon"></i> ${escapeHtml(j.location || '—')}</span>
+          <span class="job-meta-item"><i data-lucide="map-pin" class="ui-icon"></i> ${escapeHtml(j.location || 'Location not stated')}</span>
+          ${j.work_mode ? `<span class="job-meta-item"><i data-lucide="${
+              j.work_mode === 'remote' ? 'globe' : j.work_mode === 'hybrid' ? 'shuffle' : 'building-2'
+            }" class="ui-icon" aria-hidden="true"></i> ${
+              j.work_mode === 'onsite' ? 'On-site' : j.work_mode === 'remote' ? 'Remote' : 'Hybrid'
+            }</span>` : ''}
           <span class="job-meta-item"><i data-lucide="user" class="ui-icon"></i> ${escapeHtml(j.posted_by_name || 'DIC Alumni')}</span>
           <span class="job-meta-item"><i data-lucide="clock" class="ui-icon" aria-hidden="true"></i> ${escapeHtml(formatRelativeTime(j.created_at))}</span>
           <span class="job-meta-item"><i data-lucide="download" class="ui-icon"></i> ${j.applicants} applicant${j.applicants === 1 ? '' : 's'}</span>
@@ -331,6 +344,7 @@ async function handlePostJobSubmit(e, jobId = null) {
     company: document.getElementById('job-company').value.trim(),
     type: document.getElementById('job-type').value,
     location: document.getElementById('job-location').value.trim(),
+    workMode: document.getElementById('job-work-mode').value,
     salary: document.getElementById('job-salary').value.trim(),
     tags: document.getElementById('job-tags').value
   };

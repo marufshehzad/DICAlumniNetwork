@@ -256,6 +256,20 @@ module.exports = function mountEvents(app, guards) {
     });
   }));
 
+  /* A venue coordinate is optional, but a half of one is not a place. Returns
+     {lat, lng} or an {error}; an empty pair means "not supplied". */
+  function venueCoords(b) {
+    const has = v => v !== undefined && v !== null && String(v).trim() !== '';
+    const hasLat = has(b.latitude), hasLng = has(b.longitude);
+    if (!hasLat && !hasLng) return { lat: null, lng: null };
+    if (hasLat !== hasLng) return { error: 'A venue needs both a latitude and a longitude, or neither' };
+    const lat = Number(b.latitude), lng = Number(b.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { error: 'Venue coordinates must be numbers' };
+    if (lat < -90 || lat > 90) return { error: 'Latitude must be between -90 and 90' };
+    if (lng < -180 || lng > 180) return { error: 'Longitude must be between -180 and 180' };
+    return { lat, lng };
+  }
+
   /* ─── CREATE (the single event creation workflow) ─── */
   app.post('/api/events', requireRole(...MODERATOR_ROLES), (req, res) => ok(res, async () => {
     const b = req.body || {};
@@ -264,6 +278,8 @@ module.exports = function mountEvents(app, guards) {
 
     if (!title) return res.status(400).json({ error: 'Event title is required' });
     if (!venue) return res.status(400).json({ error: 'Venue is required' });
+    const coords = venueCoords(b);
+    if (coords.error) return res.status(400).json({ error: coords.error });
     if (!b.startsOn) return res.status(400).json({ error: 'Event date is required' });
     if (isNaN(Date.parse(b.startsOn))) return res.status(400).json({ error: 'Event date is not a valid date' });
 
@@ -294,10 +310,11 @@ module.exports = function mountEvents(app, guards) {
       const row = await client.query(`
         INSERT INTO events
           (title, description, event_type, type, starts_on, start_time, end_time, venue,
+           address, latitude, longitude,
            capacity, organizer_department, visibility, status, approval_status,
            registration_opens_at, registration_closes_at, waitlist_enabled, is_paid,
            cover_image_url, created_by, updated_by, approved_by, approved_at, price)
-        VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10,'upcoming',$11,$12,$13,$14,$15,$16,$17,$17,$18,$19,$20)
+        VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$21,$22,$23,$8,$9,$10,'upcoming',$11,$12,$13,$14,$15,$16,$17,$17,$18,$19,$20)
         RETURNING *`,
         [title, b.description || null, eventType, b.startsOn, b.startTime || null, b.endTime || null,
          venue, capacity, b.organizerDepartment || null, visibility, approvalStatus,
@@ -305,7 +322,8 @@ module.exports = function mountEvents(app, guards) {
          b.waitlistEnabled !== false, isPaid, b.coverImageUrl || null, req.user.uid,
          approvalStatus === 'approved' ? req.user.uid : null,
          approvalStatus === 'approved' ? new Date() : null,
-         isPaid ? 'Paid' : 'Free']);
+         isPaid ? 'Paid' : 'Free',
+         String(b.address || '').trim() || null, coords.lat, coords.lng]);
 
       const event = row.rows[0];
 
@@ -354,7 +372,7 @@ module.exports = function mountEvents(app, guards) {
     const b = req.body || {};
 
     const map = {
-      title: 'title', description: 'description', venue: 'venue',
+      title: 'title', description: 'description', venue: 'venue', address: 'address',
       startsOn: 'starts_on', startTime: 'start_time', endTime: 'end_time',
       capacity: 'capacity', organizerDepartment: 'organizer_department',
       coverImageUrl: 'cover_image_url',
@@ -374,6 +392,12 @@ module.exports = function mountEvents(app, guards) {
     if (b.visibility !== undefined) {
       if (!VISIBILITIES.includes(b.visibility)) return res.status(400).json({ error: 'Unknown visibility' });
       vals.push(b.visibility); sets.push(`visibility = $${vals.length}`);
+    }
+    if (b.latitude !== undefined || b.longitude !== undefined) {
+      const c = venueCoords(b);
+      if (c.error) return res.status(400).json({ error: c.error });
+      vals.push(c.lat); sets.push(`latitude = $${vals.length}`);
+      vals.push(c.lng); sets.push(`longitude = $${vals.length}`);
     }
     if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
 

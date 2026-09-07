@@ -1131,7 +1131,7 @@ const ALUMNI_SORTS = {
 };
 
 app.get('/api/alumni', requireAuth, async (req, res) => {
-  const { search, dept, batch, domain, mentor, sort, country, city, placeId } = req.query;
+  const { search, dept, batch, domain, mentor, sort, country, city, placeId, division, district } = req.query;
   const limit = Math.min(parseInt(req.query.limit) || 12, 100);
   const offset = Math.max(parseInt(req.query.offset) || 0, 0);
 
@@ -1181,6 +1181,16 @@ app.get('/api/alumni', requireAuth, async (req, res) => {
   if (city) {
     params.push(String(city).toLowerCase());
     where.push(`LOWER(lp.city) = $${params.length}`);
+    where.push(privacy.DIRECTORY_VISIBLE_SQL);
+  }
+  if (division) {
+    params.push(String(division).toLowerCase());
+    where.push(`LOWER(lp.division) = $${params.length}`);
+    where.push(privacy.DIRECTORY_VISIBLE_SQL);
+  }
+  if (district) {
+    params.push(String(district).toLowerCase());
+    where.push(`LOWER(lp.district) = $${params.length}`);
     where.push(privacy.DIRECTORY_VISIBLE_SQL);
   }
   if (placeId && Number.isInteger(parseInt(placeId, 10))) {
@@ -1532,7 +1542,11 @@ app.get('/api/profile/privacy-schema', requireAuth, (req, res) => {
    earlier and would match "location-filters" as an id. */
 app.get('/api/locations/filters', requireAuth, async (req, res) => {
   try {
-    const [countries, cities] = await Promise.all([
+    /* Divisions and districts are queried the same way as countries and
+       cities: grouped over the places alumni are actually in. A division
+       nobody lives in produces no row, so the interface can never render a
+       chip that would return an empty directory. */
+    const [countries, cities, divisions, districts] = await Promise.all([
       db.query(`
         SELECT lp.country_code AS code, lp.country, COUNT(*)::int AS n
           FROM alumni_profiles ap
@@ -1546,9 +1560,28 @@ app.get('/api/locations/filters', requireAuth, async (req, res) => {
           JOIN location_places lp ON lp.id = ap.place_id
          WHERE ${privacy.DIRECTORY_VISIBLE_SQL}
          GROUP BY lp.id, lp.city, lp.country, lp.country_code
-         ORDER BY n DESC, lp.city`)
+         ORDER BY n DESC, lp.city`),
+      db.query(`
+        SELECT lp.division, lp.country, lp.country_code AS code, COUNT(*)::int AS n
+          FROM alumni_profiles ap
+          JOIN location_places lp ON lp.id = ap.place_id
+         WHERE ${privacy.DIRECTORY_VISIBLE_SQL} AND lp.division IS NOT NULL
+         GROUP BY lp.division, lp.country, lp.country_code
+         ORDER BY n DESC, lp.division`),
+      db.query(`
+        SELECT lp.district, lp.division, lp.country_code AS code, COUNT(*)::int AS n
+          FROM alumni_profiles ap
+          JOIN location_places lp ON lp.id = ap.place_id
+         WHERE ${privacy.DIRECTORY_VISIBLE_SQL} AND lp.district IS NOT NULL
+         GROUP BY lp.district, lp.division, lp.country_code
+         ORDER BY n DESC, lp.district`)
     ]);
-    res.json({ countries: countries.rows, cities: cities.rows });
+    res.json({
+      countries: countries.rows,
+      cities: cities.rows,
+      divisions: divisions.rows,
+      districts: districts.rows
+    });
   } catch (err) {
     serverError(res, err, 'api');
   }
@@ -1560,12 +1593,20 @@ app.get('/api/chapters', requireAuth, async (req, res) => {
     // members_count is derived from chapter_memberships rather than trusted
     // from the denormalised column, and is_member reflects the real session
     // user instead of a hardcoded Set([1, 3]) in the browser.
+    /* The chapter's own location, from the shared reference table. It is the
+       institution's city, never an aggregate of where its members live. */
     const result = await db.query(`
       SELECT c.*,
+             lp.city        AS place_city,
+             lp.country     AS place_country,
+             lp.country_code AS place_country_code,
+             lp.latitude::float8  AS place_latitude,
+             lp.longitude::float8 AS place_longitude,
              (SELECT COUNT(*)::int FROM chapter_memberships m WHERE m.chapter_id = c.id) AS member_rows,
              EXISTS (SELECT 1 FROM chapter_memberships m
                      WHERE m.chapter_id = c.id AND m.user_id = $1) AS is_member
       FROM chapters c
+      LEFT JOIN location_places lp ON lp.id = c.place_id
       WHERE c.status = 'approved'
       ORDER BY c.id ASC
     `, [req.user.uid]);
@@ -1581,7 +1622,7 @@ app.get('/api/chapters', requireAuth, async (req, res) => {
 const CHAPTER_AUTO_APPROVE_ROLES = ['super_admin', 'univ_admin', 'dept_admin'];
 
 app.post('/api/chapters', requireAuth, async (req, res) => {
-  const { name, type, icon, description, parentId } = req.body;
+  const { name, type, icon, description, parentId, placeId } = req.body;
 
   if (!name || !name.trim()) {
     return res.status(400).json({ error: 'Chapter name is required' });
@@ -1592,13 +1633,26 @@ app.post('/api/chapters', requireAuth, async (req, res) => {
   const createdById = req.user.uid;
   const status = CHAPTER_AUTO_APPROVE_ROLES.includes(createdByRole) ? 'approved' : 'pending_review';
 
+  /* A place is optional, but a place that does not exist is a typo, not a
+     location. Resolved against the table rather than trusted from the body. */
+  let place = null;
+  if (placeId !== undefined && placeId !== null && String(placeId).trim() !== '') {
+    const pid = Number(placeId);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      return res.status(400).json({ error: 'Chapter location is not a valid place' });
+    }
+    const found = await db.query('SELECT id FROM location_places WHERE id = $1 AND is_active', [pid]);
+    if (!found.rows.length) return res.status(400).json({ error: 'Chapter location is not a known place' });
+    place = pid;
+  }
+
   try {
     const result = await db.query(`
-      INSERT INTO chapters (name, type, icon, description, parent_id, status, created_by_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      INSERT INTO chapters (name, type, icon, description, parent_id, status, created_by_id, place_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *
     `, [name.trim(), (type || 'regional').toLowerCase(), icon || '🏫', description || '',
-        parentId || null, status, createdById || null]);
+        parentId || null, status, createdById || null, place]);
 
     /* Surface the submission to everyone who can actually act on it. This used
        to insert a single row with target_role = 'super_admin', so a moderator or
@@ -1616,6 +1670,51 @@ app.post('/api/chapters', requireAuth, async (req, res) => {
     }
 
     res.json({ chapter: result.rows[0], status });
+  } catch (err) {
+    serverError(res, err, 'api');
+  }
+});
+
+/* Sets or clears a chapter's location. Chapters had no update route, so the
+   three regional chapters that predate this phase could never be placed.
+   Admin-only and audited, because a chapter's location is institutional
+   information rather than something any member may edit. Passing null clears
+   it, which is the correct answer for a chapter that spans more than a city. */
+app.put('/api/chapters/:id/place', requireRole(...ADMIN_ROLES), async (req, res) => {
+  // app.param already refuses a non-numeric :id before this runs.
+  const id = parseInt(req.params.id, 10);
+  const raw = (req.body || {}).placeId;
+
+  let place = null;
+  if (raw !== undefined && raw !== null && String(raw).trim() !== '') {
+    const pid = Number(raw);
+    if (!Number.isInteger(pid) || pid <= 0) {
+      return res.status(400).json({ error: 'Chapter location is not a valid place' });
+    }
+    const found = await db.query('SELECT id FROM location_places WHERE id = $1 AND is_active', [pid]);
+    if (!found.rows.length) return res.status(400).json({ error: 'Chapter location is not a known place' });
+    place = pid;
+  }
+
+  try {
+    const row = await db.query(
+      `UPDATE chapters SET place_id = $2 WHERE id = $1
+       RETURNING id, name, place_id`, [id, place]);
+    if (!row.rows.length) return res.status(404).json({ error: 'Chapter not found' });
+
+    await writeAuditSafe(
+      place ? 'Chapter Location Set' : 'Chapter Location Cleared',
+      `Chapter ${id} ${place ? 'placed in place ' + place : 'location cleared'}`,
+      'map-pin', auditCtx(req, 'chapter', id));
+
+    const full = await db.query(`
+      SELECT c.id, c.name, c.place_id,
+             lp.city AS place_city, lp.country AS place_country,
+             lp.country_code AS place_country_code,
+             lp.latitude::float8 AS place_latitude, lp.longitude::float8 AS place_longitude
+        FROM chapters c LEFT JOIN location_places lp ON lp.id = c.place_id
+       WHERE c.id = $1`, [id]);
+    res.json(full.rows[0]);
   } catch (err) {
     serverError(res, err, 'api');
   }

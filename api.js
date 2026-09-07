@@ -118,7 +118,7 @@ const API = {
 
   // Returns { alumni, total, limit, offset } or null when the request fails.
   async getAlumni({ search = '', dept = '', batch = '', domain = '', mentor = false,
-                    country = '', city = '', placeId = '',
+                    country = '', city = '', placeId = '', division = '', district = '',
                     sort = 'name', limit = 12, offset = 0 } = {}) {
     try {
       const qs = new URLSearchParams();
@@ -132,6 +132,8 @@ const API = {
       if (country) qs.set('country', country);
       if (city) qs.set('city', city);
       if (placeId) qs.set('placeId', placeId);
+      if (division) qs.set('division', division);
+      if (district) qs.set('district', district);
       qs.set('sort', sort);
       qs.set('limit', limit);
       qs.set('offset', offset);
@@ -438,6 +440,9 @@ Object.assign(API, {
   getLocationPlaces:    ()          => apiRequest('GET',    '/api/locations/places'),
   // Directory filter options, built from alumni who are actually there.
   getLocationFilters:   ()          => apiRequest('GET',    '/api/locations/filters'),
+  // Sets or clears a chapter's institution-level location. Admin-only server
+  // side; passing null clears it, which is right for a multi-city chapter.
+  setChapterPlace:      (id, placeId) => apiRequest('PUT',  `/api/chapters/${id}/place`, { placeId }),
   // The field-privacy contract the server enforces, so the browser renders it
   // rather than keeping its own copy that drifts out of step.
   getPrivacySchema:     ()          => apiRequest('GET',    '/api/profile/privacy-schema'),

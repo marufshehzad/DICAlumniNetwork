@@ -677,6 +677,11 @@
               <button type="button" class="map-mode-btn" data-map-mode="countries"
                       onclick="setMapMode('countries')">Countries</button>
             </div>
+            <div class="map-search">
+              <span class="map-search-icon"><i data-lucide="search" class="ui-icon" aria-hidden="true"></i></span>
+              <input type="search" id="map-search" class="form-input" aria-label="Search the map by city or country"
+                     placeholder="Search a city or country" oninput="setMapQuery(this.value)" />
+            </div>
             <div class="map-zoom" role="group" aria-label="Map zoom">
               <button type="button" class="map-zoom-btn" onclick="mapZoomOut()" aria-label="Zoom out">−</button>
               <button type="button" class="map-zoom-btn" onclick="mapZoomIn()" aria-label="Zoom in">+</button>
@@ -694,7 +699,13 @@
               <div class="map-clusters" id="map-clusters"></div>
               <div class="map-empty hidden" id="map-empty">
                 <i data-lucide="map-pin-off" class="ui-icon"></i>
-                <p>No confirmed locations to display yet.</p>
+                <p id="map-empty-text">No confirmed locations to display yet.</p>
+              </div>
+              <!-- Shown while GET /api/stats/map is in flight, so the canvas is
+                   never an empty rectangle that looks like an answer. -->
+              <div class="map-loading hidden" id="map-loading">
+                <span class="map-loading-dot"></span>
+                <p>Loading alumni locations…</p>
               </div>
               <div class="map-detail hidden" id="map-detail"></div>
             </div>

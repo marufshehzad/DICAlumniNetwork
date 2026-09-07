@@ -85,17 +85,24 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
      They are one lifecycle and were previously split across three files. */
 
 
+  /* The three real answers to "where does this work happen". Kept beside the
+     routes that use it and mirrored by the jobs_work_mode_valid constraint. */
+  const WORK_MODES = ['onsite', 'remote', 'hybrid'];
+
   /* ══════════════════════════════════════════════════════════
      JOBS — CRUD, applications, referrals (REQ-07)
      ══════════════════════════════════════════════════════════ */
 
   app.get('/api/jobs', requireAuth, (req, res) => ok(res, async () => {
-    const { search, type, location } = req.query;
+    const { search, type, location, workMode } = req.query;
     const where = [], params = [req.user.uid];
     if (search) { params.push(`%${search.toLowerCase()}%`);
       where.push(`(LOWER(j.title) LIKE $${params.length} OR LOWER(j.company) LIKE $${params.length} OR LOWER(ARRAY_TO_STRING(j.tags,',')) LIKE $${params.length})`); }
     if (type && type !== 'all')     { params.push(type); where.push(`j.type = $${params.length}`); }
     if (location && location !== 'all') { params.push(`%${location.toLowerCase()}%`); where.push(`LOWER(j.location) LIKE $${params.length}`); }
+    // Only the three real answers filter; anything else is ignored rather
+    // than passed to the database as a value it would never match.
+    if (WORK_MODES.includes(workMode)) { params.push(workMode); where.push(`j.work_mode = $${params.length}`); }
 
     const rows = await db.query(`
       SELECT j.*,
@@ -109,7 +116,7 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
   }));
 
   app.post('/api/jobs', requireAuth, (req, res) => ok(res, async () => {
-    const { title, company, salary, type, location, tags, emoji } = req.body;
+    const { title, company, salary, type, location, tags, emoji, workMode } = req.body;
     if (!title || !title.trim()) return res.status(400).json({ error: 'Job title is required' });
     if (!company || !company.trim()) return res.status(400).json({ error: 'Company is required' });
 
@@ -117,11 +124,19 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
     const tagArray = Array.isArray(tags) ? tags
                    : String(tags || '').split(',').map(t => t.trim()).filter(Boolean);
 
+    if (workMode !== undefined && workMode !== null && workMode !== '' && !WORK_MODES.includes(workMode)) {
+      return res.status(400).json({ error: 'Work mode must be onsite, remote or hybrid' });
+    }
+
     const row = await db.query(`
-      INSERT INTO jobs (emoji, title, company, salary, type, location, posted_by_id, posted_by_name, tags, days_ago)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0) RETURNING *
+      INSERT INTO jobs (emoji, title, company, salary, type, location, work_mode, posted_by_id, posted_by_name, tags, days_ago)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,0) RETURNING *
     `, [emoji || '💼', title.trim(), company.trim(), salary || 'Negotiable',
-        (type || 'fulltime').toLowerCase(), location || 'Dhaka',
+        (type || 'fulltime').toLowerCase(),
+        // Was `location || 'Dhaka'`: a posting submitted without a location
+        // recorded Dhaka anyway. An unstated location stays unstated.
+        String(location || '').trim() || null,
+        WORK_MODES.includes(workMode) ? workMode : null,
         req.user.uid, poster.rows[0]?.full_name || 'DIC Alumni', tagArray]);
 
     await db.query(`INSERT INTO notifications (target_role, icon, title, subtitle) VALUES ('alumni','💼','New Job Posted',$1)`,
@@ -136,12 +151,19 @@ module.exports = function mountV2(app, { requireAuth, requireRole, ADMIN_ROLES, 
     if (owner.rows[0].posted_by_id !== req.user.uid && !ADMIN_ROLES.includes(req.user.role)) {
       return res.status(403).json({ error: 'You can only edit your own postings' });
     }
-    const { title, company, salary, type, location } = req.body;
+    const { title, company, salary, type, location, workMode } = req.body;
+    if (workMode !== undefined && workMode !== null && workMode !== '' && !WORK_MODES.includes(workMode)) {
+      return res.status(400).json({ error: 'Work mode must be onsite, remote or hybrid' });
+    }
+    // An explicit empty string clears the mode; undefined leaves it alone.
+    const nextMode = workMode === undefined ? null
+                   : (WORK_MODES.includes(workMode) ? workMode : null);
     const row = await db.query(`
       UPDATE jobs SET title=COALESCE($2,title), company=COALESCE($3,company), salary=COALESCE($4,salary),
-                      type=COALESCE($5,type), location=COALESCE($6,location)
+                      type=COALESCE($5,type), location=COALESCE($6,location),
+                      work_mode = CASE WHEN $7::boolean THEN $8 ELSE work_mode END
       WHERE id=$1 RETURNING *
-    `, [id, title, company, salary, type, location]);
+    `, [id, title, company, salary, type, location, workMode !== undefined, nextMode]);
     res.json(row.rows[0]);
   }));
 

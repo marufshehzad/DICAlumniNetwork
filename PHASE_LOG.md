@@ -2634,3 +2634,205 @@ changing them would mean redesigning it: `codex-grid-background`, `dark-glow`,
 
 **Phase 7B.** Phase 7A's remit was consistency, accessibility, mobile and
 interaction quality; it added no business feature and changed no permission.
+
+---
+
+## PHASE 7B — Real Location System + Location Privacy
+
+**Status:** **COMPLETE**
+**Date:** 2026-09-07
+**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Parent:** `d5a16ea`
+
+### The audit was stale, and re-reading it was the point
+
+`LOCATION_SYSTEM_AUDIT.md` opens with "no coordinates exist anywhere · no map
+library exists · the user cannot enter their own city · both account-creation
+paths hardcode 'Dhaka','Bangladesh' · the Share My Location toggle does
+nothing". **None of that is true any more.** It is the audit that *commissioned*
+Phase 5B, and Phase 5B answered it: `location_places` (99 cities with real
+coordinates), `alumni_profiles.place_id`, a Country → City picker, three
+privacy levels enforced in SQL, and a server-aggregated map with clustering.
+
+§1 said not to assume the earlier findings still held. They did not, and taking
+them at face value would have meant rebuilding a working system. What follows is
+what was actually missing.
+
+### Findings
+
+**Three of the four location domains were never modelled.** Alumni location was
+complete. Events had `venue VARCHAR(255)` and nothing else — no address, no
+coordinates. Jobs had free-text `location` and no way to say whether attendance
+was required. Chapters had **no location columns at all**, while three of the
+five are `regional`.
+
+**The job board still fabricated a city.** `POST /api/jobs` stored
+`location || 'Dhaka'`. Phase 5A removed the same prefill from the form and left
+a comment saying so — the *server* default survived, so a posting submitted with
+the location blank recorded Dhaka anyway. Exactly the fabrication class v13
+removed from alumni profiles, in the one place nobody re-checked.
+
+**Dead code was still carrying invented location data.** A block in
+`js/dashboard.js` held a hardcoded per-country alumni distribution — BD 8,241 ·
+UK 1,240 · USA 987 · Canada 542 — labelled "Alumni Count", plus a 12,847 alumni
+counter. None of it was on screen (`#kpi-alumni`, `#main-chart` and
+`.chart-tabs` exist in neither portal, and `animateKPIs`,
+`initDashboardChart` and `switchChart` were each referenced only by their own
+definition), but it sat one wire-up away from being believed. The real figure is
+1. **99 lines removed.** Found by this phase's own new test, not by reading.
+
+**The test harness had been running against a stale server.** `npm test`
+expects an application already listening on 8123; the process there had been
+started before this phase's edits, so the first full run reported a 404 on a
+route that answers 401 correctly. Restarting it — with `NODE_ENV=production`,
+which two suites require — turned 2 failures into 0. Phase 7A's results were
+unaffected: it changed no server code.
+
+### The data, as it actually stands
+
+| | |
+|---|---|
+| Alumni profiles | **14** |
+| With a confirmed place | **1** |
+| Flagged `location_needs_confirmation` | **13** |
+| Location privacy: public / alumni (default) / private | **1 / 13 / 0** |
+| Reference places | **99** cities, 45 countries |
+| …carrying a division | 57 |
+| …carrying a district | 30 |
+
+The map therefore shows **one alumnus in Chattogram**, and says so: *"1 city
+across 1 country, 1 alumni who chose to appear on the map. 13 profiles carry a
+location recorded automatically before it could be confirmed; they are not shown
+here."* That is §14's instruction — show the sparse real data — and it is Phase
+5B's refusal to convert fabricated values into structured ones still holding.
+
+### Database (`migrate_v14.js` / `schema_v14.sql`)
+
+Applied in a transaction, dry-run first, with a fingerprint proving no existing
+value moved.
+
+- `events.address TEXT`, `events.latitude/longitude NUMERIC(9,6)`
+- `jobs.work_mode VARCHAR(20)`
+- `chapters.place_id INT REFERENCES location_places(id)`
+- constraints: `events_coords_paired` (a half coordinate is not a place),
+  `events_coords_range`, `events_coords_range_lng`, `jobs_work_mode_valid`
+- indexes: `idx_chapters_place`, `idx_places_district`
+
+Every column is nullable with no default. **Nothing was back-filled**: 0 events
+gained an address, 0 jobs gained a work mode, 0 chapters gained a place. The
+verification asserts each of those zeros.
+
+No coordinate column was added to `alumni_profiles`, and the migration asserts
+that too. A person is not a point; a city is.
+
+### API
+
+| Route | Change |
+|---|---|
+| `POST/PUT /api/events` | `address`, validated `latitude`/`longitude` |
+| `POST/PUT /api/jobs` | `workMode`; the `'Dhaka'` default removed |
+| `GET /api/jobs` | `?workMode=` filter |
+| `GET /api/alumni` | `?division=`, `?district=`, each carrying the same privacy constraint as country and city |
+| `GET /api/locations/filters` | now returns `divisions` and `districts` |
+| `GET /api/chapters` | joins the chapter's place |
+| **`PUT /api/chapters/:id/place`** | **new** — admin-only, audited, sets or clears |
+
+Chapters had no update route at all, so the three regional chapters could never
+have been placed. One focused route was added rather than a general chapter
+editor.
+
+### UI
+
+- **Map:** a labelled search that filters what the server already sent (never
+  re-queries, never recomputes a count), and a loading state so an empty canvas
+  is never mistaken for "nobody has a location". "No locations yet" and "no
+  match for your search" are now different messages.
+- **Directory:** division and district chips, shown only when there is more than
+  one to choose between — with a single division the chip selects exactly what
+  the country chip already does. All four location filters are mutually
+  exclusive.
+- **Jobs:** a Work mode field defaulting to *Not specified*, and a card badge
+  that appears only when a poster actually chose one.
+- **Events:** an Address field in both the wizard and the edit form, and a
+  **derived** Directions link — built at render time, so there is no stored URL
+  to validate or poison.
+- **Chapters:** the institution's city, with an admin-only picker. A chapter
+  with no single city says "No location set" rather than guessing.
+
+### Privacy behaviour
+
+Unchanged, because it was already right: `privacy.js` defines three levels for
+`location`, defaults to `alumni`, and has **no staff bypass** — a private
+location is private for every role including super_admin. The map counts
+`= 'public'`; the directory excludes `= 'private'`.
+
+Verified per role rather than asserted. All five roles see the same map total
+(1), and an anonymous caller gets 401 from all three location endpoints. No
+role's directory response contains a coordinate, a street address or a postal
+code. The division and district filters carry the same constraint as country and
+city, so a member who hides their city cannot be found by filtering for their
+division either.
+
+### Map technology (§13)
+
+Documented in **`MAP_TECHNOLOGY.md`**. The answer is unusual and worth stating:
+**there is no map library and no tile provider.** No Leaflet, Mapbox, MapLibre,
+OpenLayers, Google Maps, D3-geo or TopoJSON appears anywhere in the repository.
+The map is an equirectangular projection, a graticule drawn into an inline
+`<svg>`, and cluster badges positioned as ordinary DOM elements, over
+coordinates that belong to cities.
+
+Consequently: **no API key, no account, no quota, no billing, no attribution
+obligation, no CSP change, and it works offline.** The one external map
+reference is the event Directions link, which points at OpenStreetMap, loads
+nothing, and sends only venue information that is already public.
+
+### Data normalization (§6)
+
+No new strategy was needed — `location.js` already implements one, and it is
+the right one: explicit aliases only (`chittagong → Chattogram`,
+`bogra → Bogura`, `usa → United States`), documented renames and spellings the
+institution's own records use. Ambiguous input resolves to nothing rather than
+to something confident and wrong, and an unresolved location stays unresolved
+rather than defaulting to Dhaka. Existing values are still not rewritten; the
+13 unconfirmed rows are flagged, not converted.
+
+### Mobile (§16)
+
+The map at 360 · 390 · 430 · 768 · 1024 · 1280 · 1440: **zero horizontal
+overflow, zero clipped controls, the search visible at every width.** The
+toolbar wraps to three rows on a phone — modes, then search, then zoom — and the
+canvas tracks the viewport from 342px to 874px.
+
+### Tests
+
+```
+25 suites                    1,826 passed, 0 failed
+  of which phase7b_location        84   (new)
+  the 24 pre-existing suites    1,742   unchanged, still 0 failed
+```
+
+`tests/phase7b_location.js` covers the four domains and their separation, that a
+person is never a coordinate, privacy for all five roles plus anonymous, map
+aggregation checked against its own SQL, every filter, event venue validation
+and persistence, job work mode, chapter location and its refusals, and the empty
+and loading states. `tests/install_drill.js` now applies migrations through v14.
+
+### Limitations
+
+- **The map has one point on it.** Nothing engineering can do about that: 13 of
+  14 profiles carry a location that was fabricated before Phase 5B and is
+  flagged for the member to confirm. The system is waiting on people, correctly.
+- **Division and district chips are built but not currently shown**, because one
+  division is not a choice. They appear as soon as alumni confirm cities in more
+  than one.
+- **Event coordinates must be typed.** There is no geocoder, so an organiser who
+  wants a precise pin has to supply the numbers; the Directions link falls back
+  to searching the address, which is the common case.
+- **No reverse geocoding, no GPS, no live location** — deliberately, per §3.
+- `location_places` covers 99 cities. A member in a city outside it cannot pick
+  one; the reference table is extended by migration, not by users.
+
+### Next phase
+
+**Phase 7C.** Not started.

@@ -273,104 +273,17 @@ function renderSuperTotals(s) {
     <div class="totals-row"><span class="totals-key">${k}</span><span class="totals-val">${v}</span></div>`).join('')}</div>`;
 }
 
-// ─── KPI ANIMATIONS ─────────────────────────────────────────
-function animateKPIs() {
-  // Alumni counter
-  animateCounter('kpi-alumni', 0, 12847, 1200, v => v.toLocaleString());
-  // Funds counter
-  animateCounter('kpi-funds', 0, 24.7, 1400, v => '৳' + v.toFixed(1) + 'L');
-  // Mentors counter
-  animateCounter('kpi-mentors', 0, 1203, 1000, v => Math.floor(v).toLocaleString());
-  // Events counter
-  animateCounter('kpi-events', 0, 47, 800, v => Math.floor(v));
-}
+/* A block of KPI counters and a chart configuration stood here, none of it
+   reachable: #kpi-alumni, #main-chart and .chart-tabs exist in neither
+   portal, and animateKPIs / initDashboardChart / switchChart were each
+   referenced only by their own definition.
 
-function animateCounter(id, from, to, duration, formatter) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  const start = performance.now();
-  function update(ts) {
-    const elapsed = ts - start;
-    const progress = Math.min(elapsed / duration, 1);
-    const ease = 1 - Math.pow(1 - progress, 3);
-    el.textContent = formatter(from + (to - from) * ease);
-    if (progress < 1) requestAnimationFrame(update);
-  }
-  requestAnimationFrame(update);
-}
-
-// ─── CHARTS ─────────────────────────────────────────────────
-const CHART_DATA = {
-  engagement: {
-    labels: ['Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'],
-    data: [1240, 1380, 1520, 1690, 1820, 2100, 2340, 2580, 2820, 3100, 3540, 4120],
-    label: 'Active Alumni',
-    color: '#0B3897',
-  },
-  donations: {
-    labels: ['Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'],
-    data: [84000, 102000, 98000, 145000, 312000, 187000, 203000, 241000, 289000, 334000, 412000, 487000],
-    label: 'Donations (৳)',
-    color: '#00D4AA',
-  },
-  geographic: {
-    labels: ['BD', 'UK', 'USA', 'Canada', 'UAE', 'Australia', 'Singapore', 'Germany', 'India', 'Others'],
-    data: [8241, 1240, 987, 542, 487, 381, 298, 187, 142, 342],
-    label: 'Alumni Count',
-    color: '#C084FC',
-    type: 'bar',
-  }
-};
-
-function initDashboardChart() {
-  const ctx = document.getElementById('main-chart');
-  if (!ctx || typeof Chart === 'undefined') return;
-
-  if (state.charts.main) state.charts.main.destroy();
-
-  const d = CHART_DATA.engagement;
-  if (typeof Chart === 'undefined') return;   // CDN unavailable — skip charting
-  state.charts.main = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: d.labels,
-      datasets: [{
-        label: d.label,
-        data: d.data,
-        borderColor: d.color,
-        backgroundColor: d.color + '18',
-        borderWidth: 2.5,
-        fill: true,
-        tension: 0.4,
-        pointBackgroundColor: d.color,
-        pointRadius: 4,
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } }
-    }
-  });
-}
-
-function switchChart(type, btn) {
-  document.querySelectorAll('.chart-tabs .chart-tab').forEach(t => t.classList.remove('active'));
-  btn.classList.add('active');
-
-  const d = CHART_DATA[type];
-  if (!d || !state.charts.main) return;
-
-  const isBar = d.type === 'bar';
-  state.charts.main.data.labels = d.labels;
-  state.charts.main.data.datasets[0].data = d.data;
-  state.charts.main.data.datasets[0].label = d.label;
-  state.charts.main.data.datasets[0].borderColor = d.color;
-  state.charts.main.data.datasets[0].backgroundColor = d.color + (isBar ? '30' : '18');
-  state.charts.main.data.datasets[0].pointBackgroundColor = d.color;
-  state.charts.main.config.type = isBar ? 'bar' : 'line';
-  state.charts.main.update();
-}
+   It is gone rather than dormant because of what it held — a hardcoded
+   per-country alumni distribution (BD 8,241 · UK 1,240 · USA 987 · Canada
+   542 …) labelled "Alumni Count", plus a 12,847 alumni counter. Those are
+   the same invented figures Phase 5B removed from the map, waiting one
+   wire-up away from being believed again. The real per-country numbers come
+   from GET /api/stats/map, which counts rows. */
 
 function initAnalyticsChart() {
   const ctx = document.getElementById('analytics-chart');
@@ -481,6 +394,7 @@ let mapMode = 'cities';          // 'cities' | 'countries'
 let mapData = null;              // last payload from GET /api/stats/map
 let mapSelected = null;          // the marker whose detail panel is open
 let mapClusters = [];            // the merged badges currently drawn
+let mapQuery = '';               // §7 search, applied to what the server sent
 
 function mapZoom() { return MAP_ZOOM_STEPS[mapZoomIndex]; }
 
@@ -622,7 +536,11 @@ async function renderMapClusters() {
   if (!container) return;
 
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  const loading = document.getElementById('map-loading');
+  if (loading && !mapData) loading.classList.remove('hidden');
+
   const res = await API.getStatsMap();
+  if (loading) loading.classList.add('hidden');
 
   if (apiFailed(res)) {
     container.innerHTML = '';
@@ -650,20 +568,29 @@ async function renderMapClusters() {
 function paintMap() {
   const container = document.getElementById('map-clusters');
   if (!container || !mapData) return;
-  const res = mapData;
-  const cities = res.cities || [];
-  const countries = res.countries || [];
-  const rows = mapMode === 'countries' ? countries : cities;
+  const rows = mapRows();
 
   drawMapGraticule();
   renderMapLegend(rows.map(r => r.n));
   renderMapRanking();
 
+  /* Two different nothings. A map with no confirmed locations is a fact
+     about the data; a search that matches none of them is a fact about the
+     search, and telling the reader the first when the second is true would be
+     wrong. */
   const empty = document.getElementById('map-empty');
+  const emptyText = document.getElementById('map-empty-text');
+  const searching = mapQuery.trim() !== '';
   if (empty) empty.classList.toggle('hidden', rows.length > 0);
+  if (emptyText) {
+    emptyText.textContent = searching
+      ? `No ${mapMode === 'countries' ? 'country' : 'city'} matches "${mapQuery.trim()}".`
+      : 'No confirmed locations to display yet.';
+  }
   if (!rows.length) {
     container.innerHTML = '';
     renderMapNote();
+    renderMapLegend([]);
     return;
   }
 
@@ -722,6 +649,28 @@ function paintMap() {
    `unconfirmed` are the profiles whose location the pre-v13 hardcoded path
    wrote. Plotting them would republish a fabrication, so they are counted here
    and left off the map. */
+/* The rows currently displayed: the active mode, narrowed by the search.
+   Filtering happens here and nowhere else, so the discs, the ranking list and
+   the legend are always describing the same set. Counts are never recomputed —
+   they are the server's. */
+function mapRows() {
+  if (!mapData) return [];
+  const all = mapMode === 'countries' ? (mapData.countries || []) : (mapData.cities || []);
+  const q = mapQuery.trim().toLowerCase();
+  if (!q) return all;
+  return all.filter(r =>
+    String(r.city || '').toLowerCase().includes(q) ||
+    String(r.country || '').toLowerCase().includes(q));
+}
+
+function setMapQuery(value) {
+  mapQuery = String(value || '');
+  mapSelected = null;
+  const detail = document.getElementById('map-detail');
+  if (detail) detail.classList.add('hidden');
+  paintMap();
+}
+
 function renderMapNote() {
   const note = document.getElementById('map-note');
   if (!note || !mapData) return;
@@ -761,7 +710,7 @@ function renderMapLegend(counts) {
 function renderMapRanking() {
   const el = document.getElementById('map-ranking');
   if (!el || !mapData) return;
-  const rows = mapMode === 'countries' ? (mapData.countries || []) : (mapData.cities || []);
+  const rows = mapRows();
   if (!rows.length) { el.innerHTML = ''; return; }
   const max = Math.max(...rows.map(r => r.n));
 

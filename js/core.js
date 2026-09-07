@@ -40,7 +40,7 @@ let state = {
   selectedAmount: null,
   analyticsChart: null,
   // Server-side directory query state (search/filter/sort/paging).
-  directory: { search: '', batch: '', domain: '', mentor: false, sort: 'name', limit: 12, offset: 0 },
+  directory: { search: '', batch: '', domain: '', mentor: false, country: '', city: '', division: '', district: '', sort: 'name', limit: 12, offset: 0 },
 };
 
 

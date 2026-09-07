@@ -29,6 +29,7 @@ async function renderAlumniGrid({ append = false } = {}) {
     API.getAlumni({
       search: d.search, batch: d.batch, domain: d.domain,
       mentor: d.mentor, country: d.country, city: d.city,
+      division: d.division, district: d.district,
       sort: d.sort, limit: d.limit, offset: d.offset
     }),
     loadConnectionState()
@@ -89,6 +90,8 @@ function toggleChip(el, filter) {
   d.search = '';
   d.country = '';
   d.city = '';
+  d.division = '';
+  d.district = '';
 
   if (filter === 'mentor') d.mentor = true;
   else if (/^\d{4}$/.test(filter)) d.batch = filter;
@@ -116,6 +119,8 @@ async function renderLocationFilters() {
 
   const countries = res.countries || [];
   const cities = res.cities || [];
+  const divisions = res.divisions || [];
+  const districts = res.districts || [];
 
   if (!countries.length) {
     el.innerHTML = `<span class="dir-filter-empty" style="font-size:12px;color:var(--text-secondary)">
@@ -125,6 +130,14 @@ async function renderLocationFilters() {
 
   const country = (state.directory.country || '').toLowerCase();
   const city = (state.directory.city || '').toLowerCase();
+  const division = (state.directory.division || '').toLowerCase();
+  const district = (state.directory.district || '').toLowerCase();
+
+  /* One division is not a choice — it selects exactly what the country chip
+     beside it already selects — so the row appears once there are two to
+     pick between. The same for districts. */
+  const showDivisions = divisions.length > 1;
+  const showDistricts = districts.length > 1;
 
   el.innerHTML =
     countries.map(c => `
@@ -132,6 +145,16 @@ async function renderLocationFilters() {
               onclick="filterByCountry(${jsArg(c.code)})">
         <i data-lucide="flag" class="ui-icon"></i> ${escapeHtml(c.country)} (${c.n})
       </button>`).join('') +
+    (showDivisions ? divisions.slice(0, 6).map(d => `
+      <button class="chip ${division === String(d.division).toLowerCase() ? 'active' : ''}"
+              onclick="filterByDivision(${jsArg(d.division)})">
+        <i data-lucide="map" class="ui-icon"></i> ${escapeHtml(d.division)} (${d.n})
+      </button>`).join('') : '') +
+    (showDistricts ? districts.slice(0, 6).map(d => `
+      <button class="chip ${district === String(d.district).toLowerCase() ? 'active' : ''}"
+              onclick="filterByDistrict(${jsArg(d.district)})">
+        <i data-lucide="signpost" class="ui-icon"></i> ${escapeHtml(d.district)} (${d.n})
+      </button>`).join('') : '') +
     cities.slice(0, 8).map(c => `
       <button class="chip ${city === String(c.city).toLowerCase() ? 'active' : ''}"
               onclick="filterByCity(${jsArg(c.city)})">
@@ -141,10 +164,25 @@ async function renderLocationFilters() {
   if (window.lucide) lucide.createIcons();
 }
 
+/* Location filters are mutually exclusive. Clicking one clears the other
+   three, so the chip row always describes exactly one question. */
+function applyLocationFilter(field, value) {
+  const d = state.directory;
+  const same = String(d[field] || '').toLowerCase() === String(value).toLowerCase();
+  Object.assign(d, { offset: 0, country: '', city: '', division: '', district: '' });
+  if (!same) d[field] = value;
+  document.querySelectorAll('#filter-chips .chip').forEach(c => c.classList.remove('active'));
+  renderLocationFilters();
+  renderAlumniGrid();
+}
+
+function filterByDivision(v) { applyLocationFilter('division', v); }
+function filterByDistrict(v) { applyLocationFilter('district', v); }
+
 function filterByCountry(code) {
   const d = state.directory;
   const next = (d.country || '').toLowerCase() === String(code).toLowerCase() ? '' : code;
-  Object.assign(d, { offset: 0, country: next, city: '' });
+  Object.assign(d, { offset: 0, country: next, city: '', division: '', district: '' });
   document.querySelectorAll('#filter-chips .chip').forEach(c => c.classList.remove('active'));
   renderLocationFilters();
   renderAlumniGrid();
@@ -153,7 +191,7 @@ function filterByCountry(code) {
 function filterByCity(city) {
   const d = state.directory;
   const next = (d.city || '').toLowerCase() === String(city).toLowerCase() ? '' : city;
-  Object.assign(d, { offset: 0, city: next, country: '' });
+  Object.assign(d, { offset: 0, city: next, country: '', division: '', district: '' });
   document.querySelectorAll('#filter-chips .chip').forEach(c => c.classList.remove('active'));
   renderLocationFilters();
   renderAlumniGrid();

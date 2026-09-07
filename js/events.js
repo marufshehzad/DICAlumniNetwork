@@ -221,6 +221,24 @@ const EV = {
 /* "Super Admin · Super Admin" happened because the account name and its role
    label are often the same string on staff accounts. Show the name once, and
    append the role only when it genuinely adds something. */
+/* A directions link for a venue, derived rather than stored.
+
+   Coordinates win when the organiser supplied them, because they point at the
+   building; otherwise the address, and failing that the venue name, is handed
+   to OpenStreetMap as a search. Returns '' when there is nothing to search
+   for, so the caller renders no link rather than a dead one. */
+function evDirectionsUrl(e) {
+  if (!e) return '';
+  const lat = Number(e.latitude), lng = Number(e.longitude);
+  if (Number.isFinite(lat) && Number.isFinite(lng) && (e.latitude !== null && e.longitude !== null)) {
+    return 'https://www.openstreetmap.org/?mlat=' + encodeURIComponent(lat) +
+           '&mlon=' + encodeURIComponent(lng) + '#map=17/' + encodeURIComponent(lat) + '/' + encodeURIComponent(lng);
+  }
+  const q = String(e.address || '').trim() || String(e.venue || '').trim();
+  if (!q) return '';
+  return 'https://www.openstreetmap.org/search?query=' + encodeURIComponent(q);
+}
+
 function evCreditLine(name, roleLabel) {
   const n = String(name || '').trim();
   if (!n) return 'Not recorded';
@@ -553,7 +571,14 @@ function evManageCard(e) {
       '<div><dt>' + evIcon('calendar') + '<span class="sr-only">Date</span></dt><dd>' +
         escapeHtml(evDate(e.starts_on)) + (evTimeRange(e) ? ' · ' + escapeHtml(evTimeRange(e)) : '') + '</dd></div>' +
       '<div><dt>' + evIcon('map-pin') + '<span class="sr-only">Venue</span></dt><dd>' +
-        escapeHtml(e.venue) + '</dd></div>' +
+        escapeHtml(e.venue) +
+        (e.address ? '<span class="ev-venue-address">' + escapeHtml(e.address) + '</span>' : '') +
+        (evDirectionsUrl(e)
+          ? '<a class="ev-directions" href="' + escapeHtml(evDirectionsUrl(e)) + '" ' +
+            'target="_blank" rel="noopener noreferrer">' + evIcon('external-link') +
+            ' Directions</a>'
+          : '') +
+        '</dd></div>' +
       '<div><dt>' + evIcon('user-round-pen') + '<span class="sr-only">Created by</span></dt><dd>' +
         evCreditLine(e.created_by_name, e.created_by_role) + '</dd></div>' +
     '</dl>' +
@@ -2180,7 +2205,7 @@ function openEventWizard() {
     step: 1,
     basics: {
       title: '', description: '', eventType: 'Reunion', startsOn: '', startTime: '', endTime: '',
-      venue: '', organizerDepartment: (state.currentUser && state.currentUser.dept) || '',
+      venue: '', address: '', organizerDepartment: (state.currentUser && state.currentUser.dept) || '',
       visibility: 'alumni', capacity: 100
     },
     tickets: { isPaid: false, waitlistEnabled: true,
@@ -2262,6 +2287,11 @@ function evWizardStep1() {
     '<div class="ev-field"><label class="ev-label" for="ev-w-venue">Venue <span class="req">*</span></label>' +
       '<input type="text" id="ev-w-venue" class="form-input" required maxlength="200" ' +
       'value="' + escapeHtml(b.venue) + '" placeholder="DIC Main Campus Auditorium" /></div>' +
+
+    '<div class="ev-field"><label class="ev-label" for="ev-w-address">Address</label>' +
+      '<input type="text" id="ev-w-address" class="form-input" maxlength="300" ' +
+      'value="' + escapeHtml(b.address || '') + '" placeholder="Street, area, city — optional" />' +
+      '<span class="ev-hint">Shown to everyone invited, and used for the directions link.</span></div>' +
 
     '<div class="ev-grid2">' +
       '<div class="ev-field"><label class="ev-label" for="ev-w-org">Organiser / department</label>' +
@@ -2540,6 +2570,7 @@ function evWizardCapture() {
       b.startTime = val('ev-w-start');
       b.endTime = val('ev-w-end');
       b.venue = val('ev-w-venue').trim();
+      b.address = (val('ev-w-address') || '').trim();
       b.organizerDepartment = val('ev-w-org').trim();
       b.capacity = val('ev-w-cap');
       const vis = document.querySelector('input[name="visibility"]:checked');
@@ -2603,7 +2634,7 @@ async function evWizardSubmit() {
   const payload = {
     title: b.title, description: b.description || null, eventType: b.eventType,
     startsOn: b.startsOn, startTime: b.startTime || null, endTime: b.endTime || null,
-    venue: b.venue, capacity: parseInt(b.capacity, 10) || null,
+    venue: b.venue, address: b.address || null, capacity: parseInt(b.capacity, 10) || null,
     organizerDepartment: b.organizerDepartment || null, visibility: b.visibility,
     isPaid: t.isPaid, waitlistEnabled: t.waitlistEnabled,
     registrationOpensAt: evRegInstant(t.opensDate, t.opensTime, '00:00'),
@@ -2661,6 +2692,9 @@ function evEditEvent() {
       '</div>' +
       '<div class="ev-field"><label class="ev-label" for="ev-e-venue">Venue <span class="req">*</span></label>' +
         '<input type="text" id="ev-e-venue" class="form-input" required value="' + escapeHtml(e.venue) + '" /></div>' +
+      '<div class="ev-field"><label class="ev-label" for="ev-e-address">Address</label>' +
+        '<input type="text" id="ev-e-address" class="form-input" maxlength="300" ' +
+        'value="' + escapeHtml(e.address || '') + '" placeholder="Street, area, city — optional" /></div>' +
       '<div class="ev-grid2">' +
         '<div class="ev-field"><label class="ev-label" for="ev-e-cap">Capacity</label>' +
           '<input type="number" id="ev-e-cap" class="form-input" min="1" value="' + (e.capacity || 0) + '" /></div>' +
@@ -2690,6 +2724,7 @@ async function evSubmitEditEvent(e) {
     startTime: document.getElementById('ev-e-start').value || null,
     endTime: document.getElementById('ev-e-end').value || null,
     venue: document.getElementById('ev-e-venue').value.trim(),
+    address: document.getElementById('ev-e-address').value.trim(),
     capacity: parseInt(document.getElementById('ev-e-cap').value, 10) || null,
     organizerDepartment: document.getElementById('ev-e-org').value.trim(),
     visibility: document.getElementById('ev-e-vis').value

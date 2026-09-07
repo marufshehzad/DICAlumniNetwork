@@ -21,6 +21,69 @@ let USER_CHAPTER_MEMBERSHIPS = new Set();
    two invented jobs shown on every alumnus's profile. The verification queue is
    now GET /api/verification-queue, and the other two screens were removed. */
 
+/* Only an administrator may set a chapter's location: the server enforces
+   ADMIN_ROLES on PUT /api/chapters/:id/place, and this mirrors it so the
+   button is not offered to someone who would be refused. */
+function isChapterLocationEditor() {
+  const r = (state.currentUser || {}).role;
+  return r === 'super_admin' || r === 'univ_admin' || r === 'dept_admin';
+}
+
+/* Reference places, loaded once, for the chapter location picker. */
+let CHAPTER_PLACES = null;
+
+async function showChapterPlaceModal(chapterId) {
+  const c = chaptersCache.find(ch => ch.id === chapterId);
+  if (!c) return;
+
+  if (!CHAPTER_PLACES) {
+    const res = await API.getLocationPlaces();
+    if (apiFailed(res)) { showToast('⚠ Could not load the list of places.'); return; }
+    CHAPTER_PLACES = res;
+  }
+
+  const options = (CHAPTER_PLACES.countries || []).map(country =>
+    '<optgroup label="' + escapeHtml(country.country) + '">' +
+    (country.cities || []).map(p =>
+      `<option value="${p.id}" ${String(c.placeId) === String(p.id) ? 'selected' : ''}>${escapeHtml(p.city)}</option>`
+    ).join('') + '</optgroup>').join('');
+
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title"><i data-lucide="map-pin" class="ui-icon"></i> Location for ${escapeHtml(c.name)}</div>
+      <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
+    </div>
+    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">
+      Where the chapter itself is based. This is the organisation's city — it is
+      not taken from where members live, and members' own locations stay private
+      to their settings.
+    </p>
+    <div class="input-group">
+      <label class="input-label" for="chapter-place-select">City</label>
+      <select id="chapter-place-select" class="form-select">
+        <option value="">No single city — leave unset</option>
+        ${options}
+      </select>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button type="button" class="btn btn-primary" onclick="saveChapterPlace(${c.id})">Save location</button>
+      <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    </div>
+  `);
+}
+
+async function saveChapterPlace(chapterId) {
+  const sel = document.getElementById('chapter-place-select');
+  if (!sel) return;
+  const value = sel.value === '' ? null : Number(sel.value);
+  const res = await API.setChapterPlace(chapterId, value);
+  if (apiFailed(res)) { showToast(`⚠ ${res?.error || 'Could not save the location.'}`); return; }
+  closeModal();
+  showToast(value === null ? '✅ Chapter location cleared.' : `✅ Chapter located in ${res.place_city}.`);
+  await renderChapters();
+  selectChapter(chapterId);
+}
+
 function selectChapter(id) {
   document.querySelectorAll('.chapter-node').forEach(n => n.classList.remove('active'));
   const c = chaptersCache.find(ch => ch.id === id);
@@ -39,6 +102,17 @@ function selectChapter(id) {
           <!-- "Est. 2020 · PostgreSQL Synced" used to sit here. chapters has no
                founding-date column, and every chapter claimed the same year. -->
           <div class="chapter-detail-sub">${c.type.charAt(0).toUpperCase() + c.type.slice(1)} chapter</div>
+          <div class="chapter-detail-place">
+            ${c.placeCity
+              ? `<i data-lucide="map-pin" class="ui-icon" aria-hidden="true"></i> ${escapeHtml(c.placeCity)}${c.placeCountry ? ', ' + escapeHtml(c.placeCountry) : ''}`
+              : `<i data-lucide="map-pin-off" class="ui-icon" aria-hidden="true"></i> <span class="chapter-place-unset">No location set</span>`}
+            ${isChapterLocationEditor()
+              ? `<button type="button" class="btn btn-outline btn-sm chapter-place-edit"
+                         onclick="event.stopPropagation(); showChapterPlaceModal(${c.id})">
+                   <i data-lucide="pen-line" class="ui-icon"></i> ${c.placeCity ? 'Change' : 'Set location'}
+                 </button>`
+              : ''}
+          </div>
         </div>
       </div>
       ${c.description ? `<p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">${escapeHtml(c.description)}</p>` : ''}
@@ -217,6 +291,11 @@ async function renderChapters() {
        12,400 / 6,210 / 4,120 / 840 against zero actual memberships, so it is
        not read here at all. If the two ever disagree the row count wins. */
     members: Number(c.member_rows) || 0,
+    /* The chapter's own location, joined from location_places by the API.
+       Null for a chapter that is not a single city. */
+    placeId: c.place_id ?? null,
+    placeCity: c.place_city || '',
+    placeCountry: c.place_country || '',
     parent: c.parent_id ?? null
   }));
 

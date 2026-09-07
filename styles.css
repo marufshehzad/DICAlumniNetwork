@@ -1642,6 +1642,39 @@ body.password-change-required .topbar-actions {
 .map-mode-btn:hover:not(.active), .map-zoom-btn:hover { border-color: var(--primary); color: var(--primary); }
 .map-zoom-btn.wide { padding: 0 12px; }
 
+/* §7 map search. Sits between the mode switch and the zoom controls and wraps
+   below them on a narrow toolbar, which already sets flex-wrap. */
+.map-search { position: relative; flex: 1 1 190px; min-width: 150px; max-width: 320px; }
+.map-search-icon {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  display: flex; color: var(--text-muted); pointer-events: none;
+}
+.map-search-icon .ui-icon { width: 15px; height: 15px; }
+.map-search input {
+  width: 100%; min-height: 32px; padding: 0 10px 0 30px;
+  font-size: 12px; border-radius: 7px;
+}
+/* Chrome draws its own clear affordance; the field is already labelled. */
+.map-search input::-webkit-search-cancel-button { cursor: pointer; }
+
+/* Shown only while the first fetch is in flight, so an empty canvas is never
+   mistaken for "nobody has a location". */
+.map-loading {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; color: var(--text-secondary); font-size: 13px;
+}
+.map-loading p { margin: 0; }
+.map-loading-dot {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--primary);
+  animation: mapLoadingPulse 1.1s ease-in-out infinite;
+}
+@keyframes mapLoadingPulse {
+  0%, 100% { opacity: .25; transform: scale(.8); }
+  50%      { opacity: .9;  transform: scale(1.15); }
+}
+
 /* Ranked list — the exact figures, and the part that carries a narrow screen. */
 .map-ranking { padding: 10px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; max-height: 420px; }
 .map-rank-row {
@@ -5861,4 +5894,27 @@ textarea.form-input { resize: vertical; min-height: 100px; }
   }
   /* …but keep the two that report work in progress. */
   .sis-spinner, .skeleton-line, .ev-chrome-skeleton { animation-play-state: running; }
+  .map-loading-dot { animation: none; opacity: .9; }
 }
+/* Phase 7B — event venue address and its derived directions link. A venue is
+   public information, so this is plain content rather than anything gated. */
+.ev-venue-address {
+  display: block; font-size: 12px; color: var(--text-secondary); margin-top: 2px;
+}
+.ev-directions {
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 4px;
+  font-size: 12px; font-weight: 600; color: var(--ev-brand, #0B3897); text-decoration: none;
+}
+.ev-directions:hover { text-decoration: underline; }
+.ev-directions .ui-icon { width: 13px; height: 13px; }
+.ev-hint { display: block; font-size: 11px; color: var(--text-secondary); margin-top: 4px; }
+
+/* Phase 7B — a chapter is located as an institution, so this sits with the
+   chapter title rather than anywhere near member data. */
+.chapter-detail-place {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  margin-top: 4px; font-size: 12px; color: var(--text-secondary);
+}
+.chapter-detail-place .ui-icon { width: 14px; height: 14px; }
+.chapter-place-unset { color: var(--text-muted); font-style: italic; }
+.chapter-place-edit { min-height: 26px; padding: 0 8px; font-size: 11px; }
