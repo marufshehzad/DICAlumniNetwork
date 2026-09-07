@@ -31,7 +31,8 @@ const ADMIN_NAV = [
   { id: 'moderation',     icon: 'shield-check',  label: 'Moderation',       roles: ['moderator', 'dept_admin', 'univ_admin', 'super_admin'] },
   { id: 'broadcasts',     icon: 'megaphone',     label: 'Broadcasts',       roles: ['univ_admin', 'super_admin'] },
   { id: 'polls',          icon: 'vote',          label: 'Polls',            roles: ['moderator', 'dept_admin', 'univ_admin', 'super_admin'] },
-  { id: 'analytics',      icon: '▦',             label: 'Reports',          roles: ['dept_admin', 'univ_admin', 'super_admin'] },
+  { id: 'analytics',      icon: '▦',             label: 'Analytics',        roles: ['dept_admin', 'univ_admin', 'super_admin'] },
+  { id: 'reports',        icon: 'file-spreadsheet', label: 'Reports',       roles: ['moderator', 'dept_admin', 'univ_admin', 'super_admin'] },
   { id: 'segmentation',   icon: 'target',        label: 'Segmentation',     roles: ['moderator', 'dept_admin', 'univ_admin', 'super_admin'] },
   { id: 'compliance',     icon: 'shield',        label: 'Compliance',       roles: ['univ_admin', 'super_admin'] },
   { id: 'administration', icon: 'users',         label: 'Administration',   isDivider: true, roles: ['super_admin'] },
@@ -95,6 +96,7 @@ const PAGE_ROLES = {
   broadcasts:     ['univ_admin', 'super_admin'],
   segmentation:   ['moderator', 'dept_admin', 'univ_admin', 'super_admin'],
   polls:          ['moderator', 'dept_admin', 'univ_admin', 'super_admin'],
+  reports:        ['moderator', 'dept_admin', 'univ_admin', 'super_admin'],
   compliance:     ['univ_admin', 'super_admin'],
   audit:          ['univ_admin', 'super_admin'],
   operations:     ['univ_admin', 'super_admin'],
@@ -166,6 +168,7 @@ function showPage(page) {
     map:            () => render(window.renderMapClusters),
     jobs:           () => { render(window.renderJobReferrals); render(window.renderMyApplications); render(window.renderJobsEnhanced); },
     polls:          () => render(window.renderPollsAdmin),
+    reports:        () => render(window.renderReportsPage),
     news:           () => {
       render(window.renderNewsFeed);
       render(window.renderActivePoll);
@@ -198,7 +201,7 @@ function showPage(page) {
     moderation:     () => render(window.renderModerationPanel),
     broadcasts:     () => render(window.renderBroadcastHistory),
     segmentation:   () => render(window.renderSegmentationPanel),
-    audit:          () => render(window.renderAuditLog, 'audit-log-page'),
+    audit:          () => render(window.renderAuditPage),
     operations:     () => render(window.renderOperationsPanel),
     administration: () => render(window.renderAdministrationPage),
     compliance:     () => {

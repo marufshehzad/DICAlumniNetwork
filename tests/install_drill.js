@@ -86,7 +86,7 @@ const post = (p, body, token) => api(p, {
   ok('a fresh database has no users', scalar('SELECT count(*) FROM users', DB) === '0');
 
   let stoppedAt = null;
-  for (let v = 2; v <= 15; v++) {
+  for (let v = 2; v <= 16; v++) {
     const f = `migrate_v${v}.js`;
     if (!fs.existsSync(path.join(REPO, f))) continue;
     const r = inDb([f]);

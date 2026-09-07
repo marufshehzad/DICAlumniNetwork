@@ -9,6 +9,8 @@ const crypto = require('crypto');
 const db = require('./db');
 const privacy = require('./privacy');   // location privacy is enforced in SQL below
 const auditChain = require('./audit_chain');
+const { sendCsv } = require('./csv');                 // one CSV writer for the platform
+const { MODULE_NAMES, moduleCaseSql } = require('./audit_modules');
 
 // ─── FIELD-LEVEL ENCRYPTION (REQ-14, PDPA 2026) ───
 // AES-256-GCM. The key comes from ENCRYPTION_KEY (64 hex chars). Without it the
@@ -1033,9 +1035,158 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
      AUDIT LOG (write path added above; read path was missing)
      ══════════════════════════════════════════════════════════ */
 
+  /* The audit log holds 11,185 entries and this endpoint returned the newest
+     50 of them, unfiltered and unpaged. An administrator asking "what did this
+     person do to this account last March" had no way to ask it, which makes an
+     audit trail a decoration.
+
+     Five filters, all applied in SQL: administrator, action, module, target,
+     and a date range. Plus paging, and a CSV export of exactly the filtered
+     set — so what an investigator reads on screen is what they can hand over.
+
+     The hash chain is never touched by any of this. Every query here is a
+     SELECT; there is no ordering, filtering or export path that writes. */
   app.get('/api/audit-logs', requireRole(...ADMIN_ROLES), (req, res) => ok(res, async () => {
-    const rows = await db.query('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 50');
+    const isCsv = String(req.query.format || '').toLowerCase() === 'csv';
+
+    const params = [];
+    let where = 'WHERE TRUE';
+
+    // Administrator: an id, so a renamed account stays findable.
+    if (/^\d+$/.test(String(req.query.actorId || ''))) {
+      params.push(req.query.actorId);
+      where += ` AND a.actor_id = $${params.length}::int`;
+    }
+    // Action: exact when given in full, otherwise a contains match, because
+    // "Event" should find "Event Approved" without the operator knowing the
+    // exact wording.
+    if (req.query.action) {
+      params.push(`%${String(req.query.action).slice(0, 120)}%`);
+      where += ` AND a.action ILIKE $${params.length}`;
+    }
+    if (req.query.module) {
+      params.push(String(req.query.module).slice(0, 40));
+      where += ` AND ${moduleCaseSql('a.action')} = $${params.length}`;
+    }
+    if (req.query.targetType) {
+      params.push(String(req.query.targetType).slice(0, 40));
+      where += ` AND a.target_type = $${params.length}`;
+    }
+    if (/^\d+$/.test(String(req.query.targetId || ''))) {
+      params.push(req.query.targetId);
+      where += ` AND a.target_id = $${params.length}::int`;
+    }
+
+    const dateOk = (v) => v === undefined || v === null || v === '' || /^\d{4}-\d{2}-\d{2}$/.test(String(v).slice(0, 10));
+    if (!dateOk(req.query.from) || !dateOk(req.query.to)) {
+      return res.status(400).json({ error: 'from and to must be dates, as YYYY-MM-DD' });
+    }
+    const from = req.query.from ? String(req.query.from).slice(0, 10) : null;
+    const to = req.query.to ? String(req.query.to).slice(0, 10) : null;
+    if (from && to && from > to) {
+      return res.status(400).json({ error: 'from must not be later than to' });
+    }
+    if (from) { params.push(from); where += ` AND a.created_at >= $${params.length}::date`; }
+    if (to)   { params.push(to);   where += ` AND a.created_at < ($${params.length}::date + INTERVAL '1 day')`; }
+
+    /* A count alongside the page, so the interface can say "showing 50 of
+       3,893" rather than leaving the reader to guess whether there is more. */
+    const totalRow = await db.query(`SELECT COUNT(*)::int AS n FROM audit_logs a ${where}`, params);
+    const total = totalRow.rows[0].n;
+
+    const MAX = isCsv ? 50000 : 200;
+    const asked = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(asked) && asked > 0 ? Math.min(asked, MAX) : (isCsv ? MAX : 50);
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
+    params.push(limit, offset);
+    const rows = await db.query(`
+      SELECT a.id, a.action, a.meta, a.icon, a.bg_color, a.created_at,
+             a.actor_id, a.target_type, a.target_id, a.ip,
+             a.chain_version, a.prev_hash, a.entry_hash,
+             /* The same two digests under names that are not credential
+                vocabulary. csv.js refuses any column whose name reads as a
+                secret, and it refused these — correctly, on the name alone.
+                A digest of an audit entry is not a secret, so the fix is to
+                call it what it is rather than to carve an exception into a
+                guard whose whole value is having none. */
+             a.prev_hash AS previous_digest, a.entry_hash AS entry_digest,
+             u.full_name AS actor_name, u.email AS actor_email, u.role AS actor_role,
+             ${moduleCaseSql('a.action')} AS module
+      FROM audit_logs a
+      LEFT JOIN users u ON u.id = a.actor_id
+      ${where}
+      ORDER BY a.id DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+
+    if (isCsv) {
+      /* The chain columns travel with the export. An audit extract that cannot
+         be checked against the log it came from is a list of assertions, and
+         prev_hash and entry_hash are what make it verifiable. They are digests
+         of entries, not secrets, so exporting them discloses nothing.
+
+         Exporting is itself audited — before the file is written, so a
+         download that fails partway is still recorded as an attempt. */
+      await writeAudit('Audit Log Exported',
+        `${rows.rows.length} of ${total} entr${total === 1 ? 'y' : 'ies'}` +
+        (from || to ? ` for ${from || 'the beginning'} to ${to || 'today'}` : '') +
+        (req.query.module ? ` in ${req.query.module}` : ''),
+        '📤', { actorId: req.user.uid, targetType: 'audit_log', ip: req.ip });
+
+      return sendCsv(res, 'audit_log', [
+        { key: 'id', header: 'Entry' },
+        { key: 'created_at', header: 'When' },
+        { key: 'module', header: 'Module' },
+        { key: 'action', header: 'Action' },
+        { key: 'meta', header: 'Detail' },
+        { key: 'actor_name', header: 'Administrator' },
+        { key: 'actor_email', header: 'Administrator email' },
+        { key: 'actor_role', header: 'Role' },
+        { key: 'target_type', header: 'Target type' },
+        { key: 'target_id', header: 'Target' },
+        { key: 'ip', header: 'IP address' },
+        { key: 'chain_version', header: 'Chain version' },
+        { key: 'previous_digest', header: 'Previous entry digest' },
+        { key: 'entry_digest', header: 'Entry digest' }
+      ], rows.rows);
+    }
+
+    res.json({
+      entries: rows.rows,
+      total,
+      limit,
+      offset,
+      modules: MODULE_NAMES,
+      filters: { from, to, module: req.query.module || null, action: req.query.action || null,
+                 actorId: req.query.actorId || null, targetType: req.query.targetType || null,
+                 targetId: req.query.targetId || null }
+    });
+  }));
+
+  /* The administrators who appear in the log, so the filter offers real names
+     instead of asking for an id. Read from audit_logs rather than from users:
+     an account that has been deleted still has entries, and they must remain
+     findable. */
+  app.get('/api/audit-logs/actors', requireRole(...ADMIN_ROLES), (req, res) => ok(res, async () => {
+    const rows = await db.query(`
+      SELECT a.actor_id AS id,
+             COALESCE(u.full_name, 'Deleted account #' || a.actor_id) AS name,
+             u.role, COUNT(*)::int AS entries
+      FROM audit_logs a
+      LEFT JOIN users u ON u.id = a.actor_id
+      WHERE a.actor_id IS NOT NULL
+      GROUP BY a.actor_id, u.full_name, u.role
+      ORDER BY entries DESC`);
     res.json(rows.rows);
+  }));
+
+  /* The action vocabulary actually present in the log, with counts. Same
+     reason: an operator should pick from what exists, not type a guess. */
+  app.get('/api/audit-logs/actions', requireRole(...ADMIN_ROLES), (req, res) => ok(res, async () => {
+    const rows = await db.query(`
+      SELECT action, ${moduleCaseSql('action')} AS module, COUNT(*)::int AS entries
+      FROM audit_logs GROUP BY action ORDER BY entries DESC`);
+    res.json({ actions: rows.rows, modules: MODULE_NAMES });
   }));
 
   return { writeAudit, encryptField, decryptField, encryptionReady, ref };

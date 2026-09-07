@@ -371,9 +371,12 @@ async function login(key, email) {
   check('V6. task progress visible', vt.progress === 100);
   check('V7. verifier visible', !!vt.verified_by_name, String(vt.verified_by_name));
 
+  /* Phase 7C-3 gave this endpoint filters and paging, so it answers with
+     { entries, total, ... } rather than a bare array. The assertion below is
+     unchanged — only the way it reaches the same newest-fifty entries. */
   const audit = await api('GET', '/api/audit-logs', { as: 'super' });
   check('V8. audit trail records the event creation',
-    audit.body.some(a => a.action === 'Event Created' && a.meta.includes('acceptance')));
+    (audit.body.entries || []).some(a => a.action === 'Event Created' && a.meta.includes('acceptance')));
 
   // Approval flow on the pending event
   const approve = await api('PUT', `/api/events/${pendingId}/approve`, { as: 'super' });

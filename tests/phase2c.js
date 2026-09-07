@@ -184,8 +184,10 @@ const login = (e, p) => POST('/api/auth/login', null, { email: e, password: p })
     seed.status + ' ' + (seed.body?.error || ''));
 
   console.log('\n=== 12. AUDIT ===');
+  /* Phase 7C-3: the endpoint now answers with { entries, total, ... }. Only
+     the accessor changes; the set examined is the same newest-fifty page. */
   const audits = await j('/api/audit-logs', H(S.super));
-  const mine = (audits.body || []).filter(a => a.target_type === 'user' && a.target_id === id);
+  const mine = (audits.body.entries || []).filter(a => a.target_type === 'user' && a.target_id === id);
   for (const act of ['Administrator Created', 'Administrator Suspended', 'Administrator Activated',
                      'Password Changed', 'Password Reset Requested', 'Password Reset Completed', 'Signed Out']) {
     ok(`audited: ${act}`, mine.some(a => a.action === act), mine.map(a => a.action).join(' | '));

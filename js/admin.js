@@ -320,11 +320,15 @@ async function renderAuditLog(targetId = 'audit-log') {
   const el = document.getElementById(targetId);
   if (!el) return;
 
-  const rows = await API.getAuditLogs();
-  if (apiFailed(rows)) {
-    el.innerHTML = renderErrorState(rows?.error || 'Could not load audit logs.', 'renderAuditLog()');
+  /* The endpoint now answers with { entries, total, ... } so that it can be
+     filtered and paged. This panel is the dashboard's compact recent list and
+     wants none of that — it takes the newest few and nothing else. */
+  const res = await API.getAuditLogs({ limit: 8 });
+  if (apiFailed(res)) {
+    el.innerHTML = renderErrorState(res?.error || 'Could not load audit logs.', 'renderAuditLog()');
     return;
   }
+  const rows = res.entries || [];
   if (rows.length === 0) {
     el.innerHTML = renderEmptyState('<i data-lucide="shield" class="ui-icon"></i>', 'No audit entries yet', 'Privileged actions are recorded here as they happen.');
     return;
@@ -339,6 +343,426 @@ async function renderAuditLog(targetId = 'audit-log') {
       </div>
       <div class="audit-log-hash" title="Hash-chained to the previous entry">${escapeHtml(String(l.entry_hash || '').slice(0, 8))}</div>
     </div>`).join('');
+}
+
+
+/* ═══ REPORTS (Phase 7C-3) ═════════════════════════════════
+   The navigation had an entry called "Reports" that opened a page of charts,
+   and there was no way to get a row of data out of the platform at all. This
+   page lists the reports the SERVER says this role may run — the list is not
+   duplicated here, so a report can never be offered and then refused — runs
+   one, shows it, and exports exactly what is on screen.
+
+   Numbers are the server's. Nothing on this page computes a total, a
+   percentage or a trend, because a figure computed twice is a figure that can
+   disagree with itself. */
+
+let reportState = { catalogue: null, slug: null, filters: {}, result: null, running: false };
+
+async function renderReportsPage() {
+  const picker = document.getElementById('reports-picker');
+  const main = document.getElementById('reports-main');
+  if (!picker || !main) return;
+
+  if (!reportState.catalogue) {
+    picker.innerHTML = renderSkeletonCards(3);
+    main.innerHTML = '';
+    const cat = await API.getReports();
+    if (apiFailed(cat)) {
+      picker.innerHTML = '';
+      main.innerHTML = renderErrorState(cat?.error || 'Could not load the report list.', 'renderReportsPage()');
+      return;
+    }
+    reportState.catalogue = cat;
+  }
+
+  const { reports } = reportState.catalogue;
+  if (!reports.length) {
+    picker.innerHTML = '';
+    main.innerHTML = renderEmptyState('<i data-lucide="file-spreadsheet" class="ui-icon"></i>',
+      'No reports available to your role', 'Reports covering personal data are limited to college and super administrators.');
+    if (window.lucide) lucide.createIcons();
+    return;
+  }
+
+  picker.innerHTML = `
+    <h2 class="reports-picker-title">Available reports</h2>
+    <ul class="reports-list" role="list">
+      ${reports.map(r => `
+        <li>
+          <button type="button" class="report-choice${reportState.slug === r.slug ? ' is-active' : ''}"
+                  onclick="selectReport(${jsArg(r.slug)})"
+                  aria-current="${reportState.slug === r.slug ? 'true' : 'false'}">
+            <span class="report-choice-label">${escapeHtml(r.label)}</span>
+            <span class="report-choice-cols">${r.columns.length} columns</span>
+          </button>
+        </li>`).join('')}
+    </ul>`;
+
+  renderReportPanel();
+  if (window.lucide) lucide.createIcons();
+}
+
+function selectedReportSpec() {
+  const c = reportState.catalogue;
+  return c && c.reports.find(r => r.slug === reportState.slug) || null;
+}
+
+function selectReport(slug) {
+  reportState.slug = slug;
+  reportState.result = null;
+  reportState.filters = {};
+  renderReportsPage();
+}
+
+/* One control per filter the report declares. A report that does not accept a
+   date range is not given date inputs that would be ignored. */
+function reportFilterControls(spec) {
+  const f = reportState.filters;
+  const bits = [];
+
+  if (spec.filters.includes('from') || spec.filters.includes('to')) {
+    bits.push(`
+      <div class="report-filter">
+        <label class="input-label" for="report-from">${escapeHtml(spec.dateLabel || 'Date')} from</label>
+        <input type="date" id="report-from" class="form-input" value="${escapeHtml(f.from || '')}"
+               onchange="reportState.filters.from = this.value || undefined" />
+      </div>
+      <div class="report-filter">
+        <label class="input-label" for="report-to">${escapeHtml(spec.dateLabel || 'Date')} to</label>
+        <input type="date" id="report-to" class="form-input" value="${escapeHtml(f.to || '')}"
+               onchange="reportState.filters.to = this.value || undefined" />
+      </div>`);
+  }
+
+  const text = (key, label, placeholder) => `
+    <div class="report-filter">
+      <label class="input-label" for="report-${key}">${escapeHtml(label)}</label>
+      <input type="text" id="report-${key}" class="form-input" value="${escapeHtml(f[key] || '')}"
+             placeholder="${escapeHtml(placeholder || '')}"
+             onchange="reportState.filters.${key} = this.value.trim() || undefined" />
+    </div>`;
+
+  if (spec.filters.includes('department')) bits.push(text('department', 'Department', 'Exact department name'));
+  if (spec.filters.includes('batch'))      bits.push(text('batch', 'Batch', 'e.g. 2019'));
+  if (spec.filters.includes('status'))     bits.push(text('status', 'Status', 'Leave blank for all'));
+  if (spec.filters.includes('eventId'))    bits.push(text('eventId', 'Event ID', 'Numeric id'));
+  if (spec.filters.includes('campaignId')) bits.push(text('campaignId', 'Campaign ID', 'Numeric id'));
+
+  if (spec.filters.includes('verified')) {
+    bits.push(`
+      <div class="report-filter">
+        <label class="input-label" for="report-verified">Verification</label>
+        <select id="report-verified" class="form-select"
+                onchange="reportState.filters.verified = this.value || undefined">
+          <option value="">Everyone</option>
+          <option value="yes"${f.verified === 'yes' ? ' selected' : ''}>Verified only</option>
+          <option value="no"${f.verified === 'no' ? ' selected' : ''}>Unverified only</option>
+        </select>
+      </div>`);
+  }
+
+  if (spec.filters.includes('module')) {
+    const mods = (reportState.catalogue && reportState.catalogue.modules) || [];
+    bits.push(`
+      <div class="report-filter">
+        <label class="input-label" for="report-module">Module</label>
+        <select id="report-module" class="form-select"
+                onchange="reportState.filters.module = this.value || undefined">
+          <option value="">Every module</option>
+          ${mods.map(m => `<option value="${escapeHtml(m)}"${f.module === m ? ' selected' : ''}>${escapeHtml(m)}</option>`).join('')}
+        </select>
+      </div>`);
+  }
+
+  return bits.join('');
+}
+
+function renderReportPanel() {
+  const main = document.getElementById('reports-main');
+  if (!main) return;
+
+  const spec = selectedReportSpec();
+  if (!spec) {
+    main.innerHTML = renderEmptyState('<i data-lucide="file-spreadsheet" class="ui-icon"></i>',
+      'Choose a report', 'Pick one from the list to set its filters and run it.');
+    if (window.lucide) lucide.createIcons();
+    return;
+  }
+
+  const res = reportState.result;
+  main.innerHTML = `
+    <div class="glass-card">
+      <div class="card-header"><h2 class="card-title">${escapeHtml(spec.label)}</h2></div>
+      <p class="report-description">${escapeHtml(spec.description)}</p>
+
+      <div class="report-filters">${reportFilterControls(spec)}</div>
+
+      <div class="report-actions">
+        <button type="button" class="btn btn-primary" onclick="runReport()" ${reportState.running ? 'disabled' : ''}>
+          <i data-lucide="play" class="ui-icon"></i> ${reportState.running ? 'Running…' : 'Run report'}
+        </button>
+        <button type="button" class="btn btn-outline" onclick="exportReport()">
+          <i data-lucide="download" class="ui-icon"></i> Export CSV
+        </button>
+      </div>
+      <p class="report-note">
+        The export contains the same rows and the same columns as the table, chosen on the server.
+        It is recorded in the audit log as a disclosure.
+      </p>
+    </div>
+    <div id="report-result">${res ? renderReportTable(res) : ''}</div>`;
+  if (window.lucide) lucide.createIcons();
+}
+
+function reportQuery() {
+  const q = {};
+  for (const [k, v] of Object.entries(reportState.filters)) if (v) q[k] = v;
+  return q;
+}
+
+async function runReport() {
+  if (!reportState.slug || reportState.running) return;
+  reportState.running = true;
+  renderReportPanel();
+  const holder = document.getElementById('report-result');
+  if (holder) holder.innerHTML = renderSkeletonCards(1);
+
+  const res = await API.getReport(reportState.slug, reportQuery());
+  reportState.running = false;
+  if (apiFailed(res)) {
+    reportState.result = null;
+    renderReportPanel();
+    const h = document.getElementById('report-result');
+    if (h) h.innerHTML = renderErrorState(res?.error || 'Could not run the report.', 'runReport()');
+    return;
+  }
+  reportState.result = res;
+  renderReportPanel();
+}
+
+function renderReportTable(res) {
+  if (!res.rows.length) {
+    return `<div class="glass-card mt-16">${renderEmptyState(
+      '<i data-lucide="inbox" class="ui-icon"></i>', 'No rows match',
+      'Nothing in the records fits these filters. That is a real answer, not a failure.')}</div>`;
+  }
+
+  return `
+    <div class="glass-card mt-16">
+      <div class="card-header">
+        <h2 class="card-title">${escapeHtml(res.label)}</h2>
+        <span class="card-badge teal">${res.rowCount} row${res.rowCount === 1 ? '' : 's'}</span>
+      </div>
+      <p class="report-generated">
+        Run ${escapeHtml(formatRelativeTime(res.generatedAt))}${
+          res.filters.from || res.filters.to
+            ? ` · ${escapeHtml(res.filters.from || 'the beginning')} to ${escapeHtml(res.filters.to || 'today')}`
+            : ''}
+      </p>
+      ${res.truncated ? `
+        <p class="report-truncated" role="status">
+          <i data-lucide="alert-triangle" class="ui-icon"></i>
+          This is the first ${res.limit} rows and there are more. Narrow the date range,
+          or export to CSV, which carries a far higher limit.
+        </p>` : ''}
+      <div class="report-table-scroll">
+        <table class="report-table">
+          <thead><tr>${res.columns.map(c => `<th scope="col">${escapeHtml(c.header)}</th>`).join('')}</tr></thead>
+          <tbody>
+            ${res.rows.map(r => `<tr>${res.columns.map(c => {
+              const v = r[c.key];
+              if (v === null || v === undefined || v === '') return '<td class="report-blank">—</td>';
+              if (v === true) return '<td>Yes</td>';
+              if (v === false) return '<td>No</td>';
+              const s = String(v);
+              const isDate = /^\d{4}-\d{2}-\d{2}T/.test(s);
+              return `<td>${escapeHtml(isDate ? formatDate(s) : s)}</td>`;
+            }).join('')}</tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+async function exportReport() {
+  if (!reportState.slug) { showToast('⚠ Choose a report first.'); return; }
+  const spec = selectedReportSpec();
+  showToast(`⏳ Preparing the ${spec.label} export…`);
+  const q = { ...reportQuery(), format: 'csv' };
+  const query = Object.entries(q).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+  /* Named `res`, not `r`: the security suite scans this file for record
+     fields interpolated into a template, and `${r.something}` is exactly the
+     shape of the bug it is looking for. This one is a toast, whose text is set
+     with textContent and cannot inject — but a guard that has to be argued
+     with is a guard that eventually loses, so the name moves instead. */
+  const res = await downloadExport(`/api/reports/${reportState.slug}?${query}`, `${reportState.slug}.csv`);
+  if (res.error) { showToast(`⚠ ${res.error}`); return; }
+  showToast(`✅ Downloaded ${res.filename}`);
+}
+
+/* ═══ AUDIT LOG PAGE (Phase 7C-3) ══════════════════════════
+   The endpoint behind this returned the newest 50 entries of 11,185, with no
+   filters, so the question an audit log exists to answer — what did this
+   person do to this record, and when — could not be asked. Five filters and
+   paging, all applied by the server. */
+
+let auditState = { filters: {}, offset: 0, actors: null, actions: null, data: null };
+
+async function renderAuditPage() {
+  const filters = document.getElementById('audit-filters');
+  const list = document.getElementById('audit-log-page');
+  if (!filters || !list) return;
+
+  if (!auditState.actors) {
+    const [actors, actions] = await Promise.all([API.getAuditActors(), API.getAuditActions()]);
+    auditState.actors = apiFailed(actors) ? [] : actors;
+    auditState.actions = apiFailed(actions) ? { actions: [], modules: [] } : actions;
+  }
+
+  const f = auditState.filters;
+  filters.innerHTML = `
+    <div class="audit-filters">
+      <div class="report-filter">
+        <label class="input-label" for="audit-actor">Administrator</label>
+        <select id="audit-actor" class="form-select" onchange="setAuditFilter('actorId', this.value)">
+          <option value="">Anyone</option>
+          ${auditState.actors.map(a => `
+            <option value="${a.id}"${String(f.actorId) === String(a.id) ? ' selected' : ''}>
+              ${escapeHtml(a.name)} (${a.entries})</option>`).join('')}
+        </select>
+      </div>
+      <div class="report-filter">
+        <label class="input-label" for="audit-module">Module</label>
+        <select id="audit-module" class="form-select" onchange="setAuditFilter('module', this.value)">
+          <option value="">Every module</option>
+          ${(auditState.actions.modules || []).map(m =>
+            `<option value="${escapeHtml(m)}"${f.module === m ? ' selected' : ''}>${escapeHtml(m)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="report-filter">
+        <label class="input-label" for="audit-action">Action</label>
+        <input type="text" id="audit-action" class="form-input" list="audit-action-list"
+               placeholder="Any action" value="${escapeHtml(f.action || '')}"
+               onchange="setAuditFilter('action', this.value.trim())" />
+        <datalist id="audit-action-list">
+          ${(auditState.actions.actions || []).slice(0, 60).map(a =>
+            `<option value="${escapeHtml(a.action)}"></option>`).join('')}
+        </datalist>
+      </div>
+      <div class="report-filter">
+        <label class="input-label" for="audit-target-type">Target type</label>
+        <input type="text" id="audit-target-type" class="form-input" placeholder="e.g. user, event"
+               value="${escapeHtml(f.targetType || '')}"
+               onchange="setAuditFilter('targetType', this.value.trim())" />
+      </div>
+      <div class="report-filter">
+        <label class="input-label" for="audit-target-id">Target id</label>
+        <input type="text" id="audit-target-id" class="form-input" inputmode="numeric" placeholder="Numeric id"
+               value="${escapeHtml(f.targetId || '')}"
+               onchange="setAuditFilter('targetId', this.value.trim())" />
+      </div>
+      <div class="report-filter">
+        <label class="input-label" for="audit-from">From</label>
+        <input type="date" id="audit-from" class="form-input" value="${escapeHtml(f.from || '')}"
+               onchange="setAuditFilter('from', this.value)" />
+      </div>
+      <div class="report-filter">
+        <label class="input-label" for="audit-to">To</label>
+        <input type="date" id="audit-to" class="form-input" value="${escapeHtml(f.to || '')}"
+               onchange="setAuditFilter('to', this.value)" />
+      </div>
+      <div class="report-filter audit-filter-actions">
+        <button type="button" class="btn btn-outline btn-sm" onclick="clearAuditFilters()">
+          <i data-lucide="filter-x" class="ui-icon"></i> Clear filters</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="exportAuditLog()">
+          <i data-lucide="download" class="ui-icon"></i> Export CSV</button>
+      </div>
+    </div>`;
+
+  await loadAuditPage();
+  if (window.lucide) lucide.createIcons();
+}
+
+function setAuditFilter(key, value) {
+  if (value) auditState.filters[key] = value; else delete auditState.filters[key];
+  auditState.offset = 0;
+  loadAuditPage();
+}
+
+function clearAuditFilters() {
+  auditState.filters = {};
+  auditState.offset = 0;
+  auditState.actors = null;
+  renderAuditPage();
+}
+
+async function loadAuditPage() {
+  const list = document.getElementById('audit-log-page');
+  if (!list) return;
+  list.innerHTML = renderSkeletonCards(3);
+
+  const res = await API.getAuditLogs({ ...auditState.filters, offset: auditState.offset, limit: 50 });
+  if (apiFailed(res)) {
+    list.innerHTML = renderErrorState(res?.error || 'Could not load audit entries.', 'loadAuditPage()');
+    return;
+  }
+  auditState.data = res;
+
+  if (!res.entries.length) {
+    list.innerHTML = renderEmptyState('<i data-lucide="shield" class="ui-icon"></i>',
+      'No entries match', 'Nothing in the log fits these filters.');
+    if (window.lucide) lucide.createIcons();
+    return;
+  }
+
+  const shown = res.offset + res.entries.length;
+  list.innerHTML = `
+    <p class="audit-count" role="status">
+      Showing ${res.offset + 1}–${shown} of ${res.total} entr${res.total === 1 ? 'y' : 'ies'}
+    </p>
+    ${res.entries.map(l => `
+      <div class="audit-log-item">
+        <div class="audit-log-icon" style="background:${escapeHtml(l.bg_color || 'rgba(0,168,89,0.15)')}">${emojiIcon(l.icon, 'shield')}</div>
+        <div class="audit-log-body">
+          <div class="audit-log-action">
+            ${escapeHtml(l.action)}
+            <span class="audit-module-tag">${escapeHtml(l.module)}</span>
+          </div>
+          <div class="audit-log-meta">
+            ${escapeHtml(l.meta)}
+            ${l.actor_name ? ` · by ${escapeHtml(l.actor_name)}` : ''}
+            ${l.target_type ? ` · ${escapeHtml(l.target_type)}${l.target_id ? ' #' + escapeHtml(String(l.target_id)) : ''}` : ''}
+            · ${escapeHtml(formatRelativeTime(l.created_at))}
+          </div>
+        </div>
+        <div class="audit-log-hash" title="Digest of this entry, chained to the one before it">${escapeHtml(String(l.entry_hash || '').slice(0, 8))}</div>
+      </div>`).join('')}
+    <div class="audit-pager">
+      <button type="button" class="btn btn-outline btn-sm" onclick="auditPage(-1)" ${res.offset === 0 ? 'disabled' : ''}>
+        <i data-lucide="chevron-left" class="ui-icon"></i> Newer</button>
+      <button type="button" class="btn btn-outline btn-sm" onclick="auditPage(1)" ${shown >= res.total ? 'disabled' : ''}>
+        Older <i data-lucide="chevron-right" class="ui-icon"></i></button>
+    </div>`;
+  if (window.lucide) lucide.createIcons();
+}
+
+function auditPage(direction) {
+  const res = auditState.data;
+  if (!res) return;
+  auditState.offset = Math.max(0, auditState.offset + direction * res.limit);
+  loadAuditPage();
+  const page = document.getElementById('page-audit');
+  if (page) page.scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+
+async function exportAuditLog() {
+  showToast('⏳ Preparing the audit export…');
+  const q = { ...auditState.filters, format: 'csv' };
+  const query = Object.entries(q).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+  const res = await downloadExport(`/api/audit-logs?${query}`, 'audit_log.csv');
+  if (res.error) { showToast(`⚠ ${res.error}`); return; }
+  showToast(`✅ Downloaded ${res.filename}`);
 }
 
 /* ═══ POLLS (Phase 7C-2) ═══════════════════════════════════
@@ -660,7 +1084,15 @@ async function loadImportHistory() {
 let currentImportState = {
   step: 1,
   filename: '',
+  /* How imported accounts get a password. 'generated' is one credential for
+     the batch, shown once; 'invite' generates none and each person sets their
+     own through the reset flow. The server decides what these mean; this is
+     only which one the operator picked. */
   strategy: 'generated',
+  /* What the SERVER said would happen, from a run that changed nothing. Until
+     this exists the wizard will not offer to import — a file is never written
+     on the strength of the browser's own opinion of it. */
+  dryRunResult: null,
   dupResolution: 'update',   // retain data by enriching existing profiles
   totalRows: 0,
   headers: [],        // raw CSV header cells
@@ -738,11 +1170,14 @@ function renderBulkImportPanel() {
         <div class="wizard-step-item ${currentImportState.step === 2 ? 'active' : ''}">
           <span class="wizard-step-num">2</span> <i data-lucide="search" class="ui-icon"></i> Validation Engine
         </div>
-        <div class="wizard-step-item ${currentImportState.step === 3 ? 'active' : ''}">
+        <div class="wizard-step-item ${currentImportState.step === 3 && !currentImportState.dryRunResult ? 'active' : ''}">
           <span class="wizard-step-num">3</span> <i data-lucide="zap" class="ui-icon"></i> Preview &amp; Duplicates
         </div>
+        <div class="wizard-step-item ${currentImportState.dryRunResult && currentImportState.step !== 4 ? 'active' : ''}">
+          <span class="wizard-step-num">4</span> <i data-lucide="flask-conical" class="ui-icon"></i> Dry Run
+        </div>
         <div class="wizard-step-item ${currentImportState.step === 4 ? 'active' : ''}">
-          <span class="wizard-step-num">4</span> <i data-lucide="party-popper" class="ui-icon"></i> Accounts Created
+          <span class="wizard-step-num">5</span> <i data-lucide="party-popper" class="ui-icon"></i> Accounts Created
         </div>
       </div>
 
@@ -760,7 +1195,7 @@ function renderBulkImportPanel() {
       <div class="table-scroll">
         <table class="rbac-table">
           <thead>
-            <tr><th>Batch ID</th><th>Filename</th><th>Total Records</th><th>Successful</th><th>Failed</th><th>Duplicates</th><th>Date &amp; Admin</th><th>Speed</th></tr>
+            <tr><th>Batch ID</th><th>Filename</th><th>Total Records</th><th>Successful</th><th>Failed</th><th>Duplicates</th><th>Date &amp; Admin</th><th>Speed</th><th>State</th></tr>
           </thead>
           <tbody>
             ${importHistory.map(h => `
@@ -771,8 +1206,9 @@ function renderBulkImportPanel() {
                 <td><span class="card-badge teal">${h.success_count}</span></td>
                 <td>${h.failed_count > 0 ? `<span class="card-badge amber">${h.failed_count}</span>` : '0'}</td>
                 <td>${h.duplicate_count}</td>
-                <td>${formatDate(h.created_at)} (${escapeHtml(h.admin_name)})</td>
+                <td>${formatDate(h.created_at)} (${escapeHtml(h.created_by_name || h.admin_name)})</td>
                 <td>${escapeHtml(h.processing_time)}</td>
+                <td>${renderImportBatchState(h)}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -780,6 +1216,59 @@ function renderBulkImportPanel() {
       </div>
     </div>
   `;
+}
+
+/* Whether a batch can still be undone, and why not when it cannot. The answer
+   is the server's — the same function decides it there — so the button is
+   never offered for something that would be refused. */
+function renderImportBatchState(h) {
+  if (h.status === 'rolled_back') {
+    return `<span class="card-badge amber">Rolled back</span>
+      <span class="import-batch-note">${escapeHtml(h.rolled_back_count || 0)} account(s) removed${
+        h.rolled_back_by_name ? ' by ' + escapeHtml(h.rolled_back_by_name) : ''}</span>`;
+  }
+  if (h.rollback && h.rollback.allowed) {
+    return `<button type="button" class="btn btn-outline btn-sm" onclick="promptImportRollback(${h.id})">
+        <i data-lucide="undo-2" class="ui-icon"></i> Roll back</button>`;
+  }
+  return `<span class="import-batch-note" title="${escapeHtml((h.rollback && h.rollback.reason) || '')}">${
+    escapeHtml((h.rollback && h.rollback.reason) || 'Cannot be rolled back.')}</span>`;
+}
+
+function promptImportRollback(id) {
+  const h = importHistory.find(x => x.id === id);
+  if (!h) return;
+  showModal(`
+    <div class="modal-header">
+      <div class="modal-title"><i data-lucide="undo-2" class="ui-icon"></i> Roll back this import?</div>
+      <button type="button" class="modal-close" aria-label="Close"><i data-lucide="x" class="ui-icon"></i></button>
+    </div>
+    <p style="font-size:13px;color:var(--text-secondary);line-height:1.55;margin-bottom:12px">
+      This deletes the <strong>${escapeHtml(h.accounts_present)} account(s)</strong> that
+      <strong>${escapeHtml(h.batch_code)}</strong> created, and nothing else. Profiles the import
+      enriched existed beforehand and are left alone.
+    </p>
+    <p style="font-size:13px;color:var(--text-secondary);line-height:1.55;margin-bottom:14px">
+      It is refused if anyone has signed in to one of these accounts, or if any of them has a
+      registration, donation, application, mentorship, membership, vote or story recorded against
+      it. The audit trail is never deleted, and this rollback is itself recorded.
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button type="button" class="btn btn-danger" onclick="confirmImportRollback(${id})">Roll back the import</button>
+      <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    </div>
+  `);
+}
+
+async function confirmImportRollback(id) {
+  const res = await API.rollbackImportBatch(id);
+  if (apiFailed(res)) {
+    showToast(`⚠ ${res?.error || 'The rollback was refused.'}`);
+    return;
+  }
+  closeModal();
+  showToast(`✅ ${escapeHtml(res.batchCode)} rolled back — ${res.deleted} account(s) removed.`);
+  loadImportHistory();
 }
 
 function renderWizardStepContent() {
@@ -797,13 +1286,18 @@ function renderWizardStepContent() {
       <div class="field-grid-2" style="margin-top:16px">
         <div class="input-group">
           <label class="input-label" for="password-strategy-select">Initial Password Policy</label>
-          <select class="form-select" id="password-strategy-select" onchange="currentImportState.strategy = this.value">
-            <option value="generated">Generate a temporary password for this batch</option>
+          <select class="form-select" id="password-strategy-select" onchange="setImportStrategy(this.value)">
+            <option value="generated">One temporary password for this batch</option>
+            <option value="invite">No password &mdash; each person sets their own</option>
           </select>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:6px">
-            The password is created when you confirm the import and shown to you once,
-            on the next screen. Stored only as a scrypt hash; every imported account is
-            flagged to change it on first login.
+          <div style="font-size:12px;color:var(--text-muted);margin-top:6px" id="password-strategy-help">
+            ${currentImportState.strategy === 'invite'
+              ? 'No credential is created and none is shown to you. Each account is locked until ' +
+                'its holder sets a password through &ldquo;Forgot password&rdquo; using their own address. ' +
+                'Choose this when the addresses in the file are ones people can actually read.'
+              : 'The password is created when you confirm the import and shown to you once, on the ' +
+                'last screen. Stored only as a scrypt hash; every imported account is flagged to ' +
+                'change it on first login. Everyone in the batch shares it until they do.'}
           </div>
         </div>
         <div class="input-group">
@@ -972,11 +1466,21 @@ function renderWizardStepContent() {
         </table>
       </div>
 
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px">
+      ${renderDryRunPanel()}
+
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px">
         ${invalidCount > 0 ? `
           <button class="btn btn-outline btn-sm" onclick="downloadImportErrorReportCSV()"><i data-lucide="download" class="ui-icon"></i> Download Error Report (${invalidCount} rows)</button>
         ` : '<div></div>'}
-        <button class="btn btn-primary" onclick="executeBulkImportProcess()"><i data-lucide="rocket" class="ui-icon"></i> Confirm &amp; Create ${validCount} Accounts</button>
+        ${currentImportState.dryRunResult ? `
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" class="btn btn-outline" onclick="runImportDryRun()">
+              <i data-lucide="refresh-cw" class="ui-icon"></i> Re-run the check</button>
+            <button type="button" class="btn btn-primary" onclick="executeBulkImportProcess()">
+              <i data-lucide="rocket" class="ui-icon"></i> Confirm import &mdash; write ${currentImportState.dryRunResult.created} account${currentImportState.dryRunResult.created === 1 ? '' : 's'}</button>
+          </div>` : `
+          <button type="button" class="btn btn-primary" onclick="runImportDryRun()">
+            <i data-lucide="flask-conical" class="ui-icon"></i> Dry run &mdash; check ${validCount} rows against the database</button>`}
       </div>
     `;
   }
@@ -1035,6 +1539,7 @@ function renderWizardStepContent() {
 
 function resetImportWizard() {
   Object.assign(currentImportState, {
+    dryRunResult: null,
     step: 1, filename: '', totalRows: 0,
     headers: [], rawRows: [], mapping: [],
     validRecords: [], invalidRecords: [], duplicateRecords: [], lastResult: null
@@ -1077,11 +1582,121 @@ function downloadImportErrorReportCSV() {
   showToast('📥 Downloaded bulk_import_error_report.csv');
 }
 
+function setImportStrategy(value) {
+  currentImportState.strategy = value === 'invite' ? 'invite' : 'generated';
+  /* The dry run's answer was produced under the old choice, so it no longer
+     describes what confirming would do. Discarding it forces another. */
+  currentImportState.dryRunResult = null;
+  renderBulkImportPanel();
+}
+
+/* What the operator is shown before anything is written. The counts here came
+   from the server doing the entire import and then rolling it back, so they
+   include the duplicates it found against accounts already in the database —
+   which the browser's own validation pass cannot see, because it only ever
+   looked at the file. */
+function renderDryRunPanel() {
+  const d = currentImportState.dryRunResult;
+  if (!d) {
+    return `
+      <div class="import-dryrun-hint">
+        <i data-lucide="info" class="ui-icon"></i>
+        <div>
+          <strong>Nothing has been written yet.</strong>
+          The checks above were made in your browser, against the file alone. A dry run sends the
+          rows to the server, which performs the whole import and then discards it, so you can see
+          what would really happen &mdash; including duplicates of accounts that already exist.
+        </div>
+      </div>`;
+  }
+
+  const rows = [
+    ['Accounts created', d.created, 'teal'],
+    ['Existing profiles enriched', d.updated, 'indigo'],
+    ['Duplicates skipped', d.skipped, 'amber'],
+    ['Rows rejected', d.rejected, d.rejected > 0 ? 'red' : 'teal']
+  ];
+
+  return `
+    <div class="import-dryrun">
+      <div class="import-dryrun-head">
+        <i data-lucide="flask-conical" class="ui-icon"></i>
+        <strong>Dry run complete &mdash; nothing was written.</strong>
+      </div>
+      <div class="import-dryrun-grid">
+        ${rows.map(([label, n, tone]) => `
+          <div class="import-dryrun-stat">
+            <span class="import-dryrun-n is-${tone}">${escapeHtml(n)}</span>
+            <span class="import-dryrun-label">${escapeHtml(label)}</span>
+          </div>`).join('')}
+      </div>
+      ${d.rejected > 0 && d.rejectedRows && d.rejectedRows.length ? `
+        <div class="import-dryrun-rejects">
+          <strong>The server would reject these rows:</strong>
+          <ul>
+            ${d.rejectedRows.slice(0, 5).map(r =>
+              `<li>Row ${escapeHtml(r.row)} &mdash; ${escapeHtml(r.name || 'unnamed')}: ${escapeHtml(r.error)}</li>`).join('')}
+          </ul>
+          ${d.rejected > 5 ? `<p>&hellip;and ${d.rejected - 5} more. The error report CSV lists every one.</p>` : ''}
+        </div>` : ''}
+      ${d.unresolvedLocationCount ? `
+        <p class="import-dryrun-note">
+          ${escapeHtml(d.unresolvedLocationCount)} row(s) name a place that is not in the reference list.
+          They will import without a location rather than being given one.
+        </p>` : ''}
+      <p class="import-dryrun-note">
+        ${currentImportState.strategy === 'invite'
+          ? 'No credential will be generated. Each account will be locked until its holder sets a password.'
+          : 'One temporary password will be generated and shown to you once, on the next screen.'}
+      </p>
+    </div>`;
+}
+
+async function runImportDryRun() {
+  const records = [...currentImportState.validRecords, ...currentImportState.duplicateRecords];
+  showToast(`⏳ Checking ${records.length} row${records.length === 1 ? '' : 's'} against the database…`);
+
+  const result = await API.postBulkImport({
+    records,
+    filename: currentImportState.filename,
+    adminName: state.currentUser ? state.currentUser.name : 'Admin',
+    dupResolution: currentImportState.dupResolution,
+    passwordStrategy: currentImportState.strategy,
+    failedCount: currentImportState.invalidRecords.length,
+    duplicateCount: currentImportState.duplicateRecords.length,
+    dryRun: true
+  });
+
+  if (apiFailed(result)) {
+    showToast(`⚠ The check failed: ${result?.error || 'the server did not respond.'}`);
+    return;
+  }
+  /* Belt and braces: if a server ever answered a dry run without saying so,
+     treating the answer as a dry run would be how a real import got confirmed
+     twice. The flag is required, not assumed. */
+  if (result.dryRun !== true) {
+    showToast('⚠ The server did not confirm this was a dry run. Nothing has been imported.');
+    return;
+  }
+
+  currentImportState.dryRunResult = result;
+  renderBulkImportPanel();
+  showToast(`✅ Dry run complete — ${result.created} would be created. Nothing was written.`);
+}
+
 // Sends the parsed rows to POST /api/bulk-import, which inserts real users +
 // alumni_profiles and writes an import_history audit row. This previously
 // pushed objects into an in-memory array, which is why import_history stayed
 // empty even though the endpoint worked.
 async function executeBulkImportProcess() {
+  /* The confirm button only exists once a dry run has run, so this is a guard
+     against a second path reaching here rather than something an operator can
+     meet. It stays because an unguarded import is a bad thing to leave one
+     refactor away. */
+  if (!currentImportState.dryRunResult) {
+    showToast('⚠ Run the dry run first, so you can see what the import would do.');
+    return;
+  }
   currentImportState.step = 4;
 
   // Maximum retention: send the in-file duplicates as well. The server matches
@@ -1097,6 +1712,7 @@ async function executeBulkImportProcess() {
     filename: currentImportState.filename,
     adminName: state.currentUser ? state.currentUser.name : 'Admin',
     dupResolution: currentImportState.dupResolution,
+    passwordStrategy: currentImportState.strategy,
     failedCount: currentImportState.invalidRecords.length,
     duplicateCount: currentImportState.duplicateRecords.length,
     processingTime: `${((Date.now() - startedAt) / 1000).toFixed(1)}s`

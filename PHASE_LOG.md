@@ -3283,3 +3283,270 @@ rather than left as a capability with no interface.
 ### Next phase
 
 **Phase 7C-3.** Not started.
+
+---
+
+## PHASE 7C-3 — Reports, Exports, Import Operations & Admin Audit
+
+**Status:** **COMPLETE**
+**Date:** 2026-09-07
+**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+
+### Current state before implementation
+
+Re-audited against the running system rather than trusted from the Master Audit.
+
+| Item | State |
+|---|---|
+| A page called "Reports" | **DEAD** — the navigation label; the page is Executive Analytics, five charts |
+| Any report producing rows | **MISSING** — all ten |
+| CSV export | **MISSING** except `/api/events/:id/attendees.csv`, which had no interface |
+| `GET /api/audit-logs` | **BROKEN** — `SELECT * … ORDER BY id DESC LIMIT 50` over 11,185 rows, no filters, no paging, no export |
+| Import upload → map → validate → preview | **READY** |
+| Import dry run | **MISSING** — validation was entirely in the browser, against the file alone |
+| Import batch identity | **BROKEN** — `admin_name` was a string the client chose |
+| Batch rollback | **MISSING** — nothing linked a created account to the batch that made it |
+| `import_history` | **PARTIAL** — written, but with no actor, no status and no link to its accounts |
+| Import ignoring role/verified/status from the file | **READY** — already literals in the INSERT |
+| Notification when a bulk change lands | **MISSING** |
+
+### Three things worth naming
+
+**An audit log that could not be asked a question.** 11,185 entries behind
+`LIMIT 50` with no filters. An administrator asking "what did this person do to
+this account last March" had no way to ask it — which makes an audit trail a
+decoration. It now filters by administrator, action, module, target and date
+range, pages, and exports exactly the filtered set.
+
+**An import that could be seen and not undone.** `import_history` recorded who
+ran an import as free text the caller supplied, and nothing tied a created
+account back to its batch. A roster imported by mistake was permanent.
+
+**Validation that only ever looked at the file.** The wizard's "Confirm & Create
+N Accounts" button acted on the browser's own opinion of the rows. It could not
+see a duplicate of an account already in the database, so the number on the
+button was not the number you would get.
+
+### Database — `migrate_v16.js` / `schema_v16.sql`
+
+Dry-run first, applied in a transaction, 23 checks, with fingerprints proving
+user rows, import history and **the audit hash chain** were byte-identical
+afterwards.
+
+Added: `import_history.created_by`, `.status`, `.rolled_back_at`,
+`.rolled_back_by`, `.rolled_back_count`; `users.import_batch_id`. Constraint
+`import_history_status_valid`. Indexes on batch membership, import date, import
+actor, and — for the newly filterable audit read — `audit_logs(created_at DESC)`
+and `audit_logs(action)`.
+
+Nothing dropped, nothing back-filled. The 322 existing batches keep
+`created_by` NULL and have no linked accounts, which honestly says "we do not
+know which accounts this made" — and the rollback endpoint refuses such a batch
+rather than guessing which people to delete.
+
+### One export mechanism — `csv.js`
+
+Every export in the platform goes through it. RFC 4180 quoting, UTF-8 **with a
+BOM** so Bengali names survive a double-click in Excel, CRLF, a server-defined
+column order the client cannot widen, `no-store` and `nosniff`, and a
+formula-injection guard that prefixes any cell beginning `=` `+` `-` `@` or a
+control character.
+
+It also **refuses to run** on a column whose key or header reads as a
+credential. That guard caught one export during this phase — the audit log's own
+`prev_hash` and `entry_hash`. A digest of an audit entry is not a secret, so
+the columns were renamed *Previous entry digest* and *Entry digest* rather than
+an exception being carved into the guard. A guard with an escape hatch is a
+guard that will one day be escaped.
+
+### Reports
+
+Ten, as a registry rather than ten endpoints, so the permission check, the date
+range, the row cap and the CSV writer each exist once:
+
+Alumni Directory · Event Attendance · Ticket & Registration · Donation Ledger ·
+Campaign Summary · Job & Application · Mentorship · Chapter · Verification ·
+Administrator Activity.
+
+`GET /api/reports` returns only what the caller's role may run, so the
+interface builds itself from the server's answer and cannot offer a report that
+would then be refused. `GET /api/reports/:slug` serves JSON or, with
+`?format=csv`, the file — same query, same columns, one permission check.
+
+**Every figure is counted from rows.** `campaigns.raised_amount`,
+`campaigns.donors_count`, `chapters.members_count`, `chapters.events_count` and
+`events.registered_count` are all deliberately unread: each was seeded far above
+the rows behind it. The Campaign Summary reports **৳5,000 settled** where the
+stored counter claims ৳18.45L, and the suite asserts the report disagrees with
+the counter wherever the two differ.
+
+**Location privacy survives the export.** `privacy.js` gives location no staff
+bypass, so a member who set it to private exports with city, district, division
+and country blank — to a super administrator — plus a column saying the blank is
+a choice rather than a missing profile. Email and mobile do carry a staff
+bypass and are exported.
+
+**An anonymous gift stays anonymous** in the ledger, not merely in the public
+list. The receipt code, transaction reference and amount remain, so finance can
+still reconcile; only the identity is withheld, which is the thing the donor was
+promised.
+
+### Audit
+
+`GET /api/audit-logs` now takes `actorId`, `action`, `module`, `targetType`,
+`targetId`, `from`, `to`, `limit` and `offset`, and answers with
+`{ entries, total, … }` so the interface can say "showing 1–50 of 11,226"
+instead of leaving the reader to guess. `?format=csv` exports the filtered set.
+Two companions — `/actors` and `/actions` — let the filters offer what is
+actually in the log rather than asking an operator to type a guess.
+
+Module classification lives in `audit_modules.js` and is compiled into SQL from
+the same array the JavaScript uses, so the two cannot drift. An unrecognised
+action classifies as **Other**, never dropped: a filter that silently hides rows
+from an audit log is a defect with a security shape.
+
+**The chain is untouched.** Every path here is a SELECT. `verify_audit.js`
+passes through 12,157 entries after the phase.
+
+### Import
+
+The workflow is now Upload → Map → Validate → Preview → **Dry Run** → Confirm →
+Result, and there is **no Confirm button until a dry run has run**.
+
+The dry run is the same code as the import — every validation, every duplicate
+decision, every INSERT — with `ROLLBACK` instead of `COMMIT` as the only
+difference. A dry run written as a separate "validate" pass would be a second
+implementation, and the two would disagree the first time one was edited. This
+one cannot disagree with itself, and it sees duplicates against accounts already
+in the database, which the browser never could. The suite asserts the dry run's
+four counts equal the real import's four counts.
+
+`POST /api/import-batches/:id/rollback` deletes the accounts a batch created —
+only those, never one it merely enriched. It refuses if anyone has signed in to
+one, or if any has a registration, donation, application, mentorship,
+membership, vote or story against it. Rollback is for the case an operator
+actually has: the wrong file, noticed within minutes. Past that, the accounts
+have started accumulating a person's own activity, and deleting them destroys
+that person's data rather than the operator's mistake. Audit history is never
+deleted — `audit_logs.actor_id` is ON DELETE SET NULL — and the rollback is
+itself audited and announced.
+
+**Enrolment.** The wizard's "Initial Password Policy" was a `<select>` with one
+option — a control that did nothing. It now offers a real second choice.
+`generated` is the existing behaviour: one random credential per batch, hashed,
+shown once, every account flagged `must_change_password`. `invite` generates
+**no credential at all** — each account is created with the `LOCKED$` sentinel
+that `verifyPassword` can never match, and its holder sets their own password
+through the existing reset flow using their own address. That is a unique
+credential per account, chosen by the person it belongs to, which never exists
+anywhere an operator could see or forward.
+
+### Notifications
+
+A bulk import and a rollback now notify every administrator role. A bulk change
+to the alumni body is something the people who administer it should be told
+about, not something they should have to find in an audit log. The rollback
+notice gives the count and the administrator's name, never a list of who was
+deleted — that roster would outlive them.
+
+### Interface
+
+A **Reports** page: the report list, its filters, a table, and Export CSV. The
+navigation entry that read "Reports" and opened Executive Analytics now reads
+**Analytics**, and Reports is its own page.
+
+The **Audit Logs** page gained seven filters, paging and an export.
+
+The **import wizard** gained a fifth step, a dry-run panel showing the server's
+own counts before anything is written, the enrolment choice, and a Roll back
+control on each batch in the history — shown only when the server says that
+batch can be rolled back, with the reason spelled out when it cannot.
+
+**A layout defect fixed on the way:** a global `@media (max-width: 900px) { table
+{ display: block } }` — there so the RBAC matrix can stack into cards — flattened
+the report table, which then shrank to its container and clipped nineteen of its
+twenty-one columns instead of scrolling. Scoped so the report table stays a
+table; the stacking behaviour everywhere else is untouched. Pre-existing rule,
+new interaction, found by the mobile sweep.
+
+### Mobile and accessibility
+
+360 · 390 · 430 · 768 · 1024 · 1280 · 1440: **no page overflow anywhere**. A
+2,454px report table scrolls inside its own container at every width. No
+unlabelled control on either new page, headings present, every button typed, and
+the rollback confirmation was checked against the Phase 7A modal rule — a
+backdrop click leaves it open.
+
+### Tests
+
+```
+28 suites                    2,291 passed, 0 failed
+  of which phase7c3_reports_import   226   (new)
+  the 27 pre-existing suites       2,065   unchanged, still 0 failed
+```
+
+`tests/phase7c3_reports_import.js` covers A–T: all ten reports across five
+roles, the CSV bytes including the BOM and CRLF, the credential guard in four
+forms, formula neutralisation, date-range validation and inclusivity, location
+privacy withheld from a super administrator, donor anonymity, every figure
+checked against its own SQL, audit filtering on five dimensions plus paging,
+the export being audited while an on-screen read is not, the dry run writing
+nothing and predicting the import exactly, a hostile row that asks for
+`super_admin` and gets `alumni`, batch linkage, rollback and its two refusals,
+the notifications, and the credential appearing in no audit entry, no history
+row and no account.
+
+### Three suites adapted, no assertion weakened
+
+`acceptance`, `phase2b` and `phase2c` read `/api/audit-logs` as a bare array.
+The endpoint now answers with an envelope so it can carry a total and a page.
+Only the accessor changed in each; every assertion is identical. A first attempt
+also moved their filtering server-side, which looked like an improvement and was
+not: it widened the set to include each account's own sign-in and
+self-registration, which legitimately have no actor, and broke an assertion
+about the administrator actions taken *on* that account. Reverted to the
+original semantics.
+
+`security_smoke` flagged "the import preview escapes every field it renders".
+That heuristic looks for `${r.field}` interpolated into a template; my new
+download handlers used `r` for a result passed to `showToast`, whose text is set
+with `textContent` and cannot inject. The variable was renamed to `res` rather
+than the heuristic relaxed.
+
+### Regressions
+
+None. Nothing pre-existing was deleted, no assertion was weakened, and the
+database ends the phase at 18 users, 14 profiles, 21 events, 3 jobs, 1 poll and
+99 places — exactly as it began.
+
+### Limitations
+
+- **Department scoping does not exist anywhere in this platform**, and this
+  phase did not invent it. `ADMIN_ROLES` is super_admin and univ_admin only; a
+  `dept_admin` has no department-limited view of anything. Rather than widen
+  access to make a report available, reports carrying personal data are limited
+  to those two roles, and `dept_admin` and `moderator` get only the two event
+  reports they can already see the underlying data for. Genuine departmental
+  scoping is a platform-wide change and is not in this phase.
+- **The batch credential under `generated` is per batch, not per account.**
+  Everyone in one import shares an initial password until they change it. That
+  is the existing, deliberate design — it replaced a hardcoded `12345678` — and
+  it stays because a per-account credential needs a distribution channel that
+  does not exist and must not be a CSV. `invite` is the per-account answer where
+  the addresses are ones people can read; it is offered, not forced.
+- **Rollback cannot undo an enrichment.** A batch that updated an existing
+  profile changed columns in place, and the previous values were not kept. Only
+  account creation is undone.
+- **The 322 batches imported before this phase cannot be rolled back**, and say
+  so. Their accounts cannot be identified, and guessing means deleting somebody.
+- **Reports are read into memory** — 5,000 rows on screen, 50,000 in a file, and
+  a capped result says so rather than quietly ending early. Streaming would be
+  the answer above that; nothing in this data is near it.
+- **The mentorship report omits `health_score`.** The column exists and nothing
+  computes it, so it would be a number with no method behind it. Days-to-answer,
+  arithmetic on two real timestamps, is reported instead.
+- **No report is scheduled or emailed.** They are run and exported by hand.
+
+### Next phase
+
+**Phase 7D.** Not started.

@@ -148,8 +148,15 @@ const login = (e, p) => POST('/api/auth/login', null, { email: e, password: p })
     afterReset.status === 200 && afterReset.body.mustChangePassword === true);
 
   console.log('\n=== L. audit trail records actor and target ===');
+  /* Phase 7C-3: the endpoint now answers with { entries, total, ... } so that
+     it can be filtered and paged. Only the accessor changes here. Filtering
+     stays in JavaScript over the same newest-fifty page this always examined:
+     asking the server for every entry against this target instead widens the
+     set to include the account's own sign-in and self-registration, which
+     legitimately have no actor, and the assertion below is about the
+     administrator actions taken ON it. */
   const audits = await j('/api/audit-logs', H(S.super));
-  const mine = (audits.body || []).filter(a => a.target_type === 'user' && a.target_id === newId);
+  const mine = (audits.body.entries || []).filter(a => a.target_type === 'user' && a.target_id === newId);
   const actions = mine.map(a => a.action);
   for (const a of ['Administrator Created', 'Administrator Updated', 'Administrator Role Changed',
                    'Administrator Suspended', 'Administrator Activated', 'Administrator Password Reset']) {

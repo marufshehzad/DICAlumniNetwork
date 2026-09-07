@@ -6077,3 +6077,143 @@ textarea.form-input { resize: vertical; min-height: 100px; }
   .poll-opt-bar { grid-column: 1 / -1; }
   .poll-admin-actions .btn { flex: 1; }
 }
+
+/* ─── PHASE 7C-3: REPORTS, EXPORTS AND THE AUDIT FILTERS ────
+   Light, like everything else. The table scrolls inside its own container so
+   a nineteen-column report cannot make the page scroll sideways. */
+.reports-layout {
+  display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; align-items: start;
+}
+.reports-picker, .reports-main { min-width: 0; }
+.reports-picker {
+  background: var(--surface, #fff); border: 1px solid var(--border, #E4EAF2);
+  border-radius: 14px; padding: 14px;
+}
+.reports-picker-title {
+  font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 10px;
+}
+.reports-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.report-choice {
+  width: 100%; text-align: left; cursor: pointer;
+  background: transparent; border: 1px solid transparent; border-radius: 9px;
+  padding: 9px 10px; display: flex; flex-direction: column; gap: 2px;
+  font: inherit; color: var(--text-primary);
+}
+.report-choice:hover { background: rgba(139,156,196,0.10); }
+.report-choice:focus-visible { outline: 2px solid var(--teal-text); outline-offset: 2px; }
+.report-choice.is-active { background: var(--teal-glow); border-color: rgba(0,120,106,0.28); }
+.report-choice-label { font-size: 13px; font-weight: 650; }
+.report-choice-cols { font-size: 11px; color: var(--text-muted); }
+
+.report-description { font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; margin: 0 0 14px; }
+.report-filters {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;
+}
+.report-filter { min-width: 0; }
+.report-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.report-note, .report-generated {
+  font-size: 11.5px; color: var(--text-muted); margin: 10px 0 0; line-height: 1.5;
+}
+.report-truncated {
+  display: flex; align-items: flex-start; gap: 8px;
+  background: var(--amber-glow); color: var(--amber-text);
+  border-radius: 9px; padding: 9px 11px; font-size: 12px; font-weight: 600;
+  margin: 10px 0 0; line-height: 1.45;
+}
+.report-truncated .ui-icon { width: 15px; height: 15px; flex-shrink: 0; margin-top: 1px; }
+
+/* A wide report scrolls here, never in the body. */
+.report-table-scroll { overflow-x: auto; margin-top: 12px; -webkit-overflow-scrolling: touch; }
+.report-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.report-table th, .report-table td {
+  text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border, #E9EEF5);
+  white-space: nowrap;
+}
+.report-table th {
+  position: sticky; top: 0; z-index: 1;
+  background: #F4F7FB; color: var(--text-secondary);
+  font-weight: 700; font-size: 11px; letter-spacing: .02em;
+}
+.report-table tbody tr:hover { background: rgba(139,156,196,0.07); }
+.report-blank { color: var(--text-muted); }
+
+.audit-filters {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 12px;
+  padding: 4px 0 14px; border-bottom: 1px solid var(--border, #E9EEF5); margin-bottom: 12px;
+}
+.audit-filter-actions { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+.audit-count { font-size: 11.5px; color: var(--text-muted); margin: 0 0 10px; }
+.audit-module-tag {
+  display: inline-block; margin-left: 7px; padding: 1px 7px; border-radius: 99px;
+  background: rgba(139,156,196,0.16); color: var(--text-secondary);
+  font-size: 10px; font-weight: 700; letter-spacing: .02em; vertical-align: 1px;
+}
+.audit-pager { display: flex; gap: 8px; justify-content: center; margin-top: 14px; }
+
+@media (max-width: 900px) {
+  .reports-layout { grid-template-columns: minmax(0, 1fr); }
+  .reports-list { flex-direction: row; flex-wrap: wrap; }
+  .report-choice { width: auto; flex-direction: row; align-items: baseline; gap: 6px; }
+}
+@media (max-width: 900px) {
+  /* A global rule turns every table into display:block below 900px so the
+     RBAC matrix can stack into cards. The report table must not stack: it
+     already scrolls sideways inside its own container, and as a block it
+     collapsed to the container width and clipped nineteen of its columns
+     instead. Scoped to this table so the stacking behaviour elsewhere is
+     untouched. */
+  .report-table { display: table; }
+}
+@media (max-width: 480px) {
+  .report-actions .btn, .audit-filter-actions .btn { flex: 1; }
+  .report-table th, .report-table td { padding: 6px 8px; }
+}
+
+/* ─── PHASE 7C-3: THE IMPORT DRY RUN ────────────────────────
+   Shown before anything is written. Deliberately calm rather than alarming:
+   it is the normal path, not a warning. */
+.import-dryrun-hint {
+  display: flex; gap: 10px; align-items: flex-start; margin-top: 16px;
+  padding: 11px 13px; border-radius: 10px;
+  background: rgba(139,156,196,0.10); border: 1px solid var(--border, #E4EAF2);
+  font-size: 12.5px; color: var(--text-secondary); line-height: 1.55;
+}
+.import-dryrun-hint .ui-icon { width: 16px; height: 16px; flex-shrink: 0; margin-top: 2px; }
+.import-dryrun-hint strong { color: var(--text-primary); }
+
+.import-dryrun {
+  margin-top: 16px; padding: 14px; border-radius: 12px;
+  background: var(--teal-glow); border: 1px solid rgba(0,120,106,0.22);
+}
+.import-dryrun-head {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--teal-text); margin-bottom: 12px;
+}
+.import-dryrun-head .ui-icon { width: 16px; height: 16px; }
+.import-dryrun-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px;
+}
+.import-dryrun-stat {
+  background: #fff; border-radius: 9px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.import-dryrun-n { font-size: 21px; font-weight: 800; line-height: 1.1; }
+.import-dryrun-n.is-teal   { color: var(--teal-text); }
+.import-dryrun-n.is-amber  { color: var(--amber-text); }
+.import-dryrun-n.is-red    { color: var(--red-text); }
+.import-dryrun-n.is-indigo { color: var(--purple-text); }
+.import-dryrun-label { font-size: 11px; color: var(--text-secondary); font-weight: 600; }
+.import-dryrun-note {
+  font-size: 11.5px; color: var(--text-secondary); margin: 10px 0 0; line-height: 1.5;
+}
+.import-dryrun-rejects {
+  margin-top: 12px; font-size: 12px; color: var(--text-secondary); line-height: 1.5;
+}
+.import-dryrun-rejects ul { margin: 6px 0 0; padding-left: 18px; }
+.import-dryrun-rejects li { margin-bottom: 3px; }
+.import-dryrun-rejects p { margin: 6px 0 0; font-size: 11.5px; }
+
+.import-batch-note {
+  display: block; font-size: 11px; color: var(--text-muted); line-height: 1.4; max-width: 260px;
+}

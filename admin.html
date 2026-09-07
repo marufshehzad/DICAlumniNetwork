@@ -583,6 +583,20 @@
 
       <!-- ============ CHAPTERS PAGE ============ -->
 
+      <!-- ═══ REPORTS (Phase 7C-3) — real rows, exportable ═══ -->
+      <div class="page hidden" id="page-reports">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title"><i data-lucide="file-spreadsheet" class="ui-icon"></i> Reports</h1>
+            <p class="page-subtitle">Every figure is counted from the records that exist. Nothing here is an estimate.</p>
+          </div>
+        </div>
+        <div class="reports-layout">
+          <aside class="reports-picker" id="reports-picker" aria-label="Available reports"></aside>
+          <section class="reports-main" id="reports-main"></section>
+        </div>
+      </div>
+
       <!-- ============ MODERATION ============ -->
       <div class="page hidden" id="page-moderation">
         <div class="page-header">
@@ -678,9 +692,13 @@
           </div>
         </div>
         <div class="glass-card">
-          <div class="card-header"><h2 class="card-title">Hash-Chained Audit Trail</h2><span class="card-badge teal">Append-Only</span></div>
+          <div class="card-header">
+            <h2 class="card-title">Hash-Chained Audit Trail</h2>
+            <span class="card-badge teal">Append-Only</span>
+          </div>
           <!-- Distinct from the dashboard's own #audit-log panel: two elements
                sharing that id left this page permanently empty. -->
+          <div id="audit-filters"></div>
           <div id="audit-log-page"></div>
         </div>
       </div>

@@ -512,7 +512,9 @@ Object.assign(API, {
   // super-admin-only and the server enforces that, not this file.
   getOpsStatus:     ()              => apiRequest('GET',    '/api/ops/status'),
   runOpsJob:        (job)           => apiRequest('POST',   `/api/internal/jobs/run?job=${encodeURIComponent(job)}`),
-  getAuditLogs:     ()              => apiRequest('GET',    '/api/audit-logs'),
+  getAuditLogs:     (params)        => apiRequest('GET',    `/api/audit-logs${qs(params)}`),
+  getAuditActors:   ()              => apiRequest('GET',    '/api/audit-logs/actors'),
+  getAuditActions:  ()              => apiRequest('GET',    '/api/audit-logs/actions'),
 
   // ─── EVENT ADVANCED MODULES (staff only) ───
   getPlannerWorkspace: (eventId) => apiRequest('GET',   `/api/planner/workspace/${eventId}`),
@@ -537,8 +539,49 @@ Object.assign(API, {
   dsarExportUrl:    (format = 'json') => `${API_BASE_URL}/api/dsar/export?format=${format}`,
 
   // Import history (admin panel audit trail)
-  getImportHistoryV2: ()            => apiRequest('GET',    '/api/import-history')
+  getImportHistoryV2: ()            => apiRequest('GET',    '/api/import-history'),
+  rollbackImportBatch: (id)         => apiRequest('POST',   `/api/import-batches/${id}/rollback`),
+
+  // Reports. The list is the server's; the interface renders whatever it says
+  // this role may run rather than keeping a second copy of that decision.
+  getReports:       ()              => apiRequest('GET',    '/api/reports'),
+  getReport:        (slug, params)  => apiRequest('GET',    `/api/reports/${slug}${qs(params)}`)
 });
+
+/* ─── AUTHENTICATED FILE DOWNLOAD ───
+   An export is behind a bearer token in localStorage, so a plain <a href> is
+   signed out and gets a 401. The file is fetched with the token, turned into a
+   blob and handed to a click. The object URL is revoked afterwards: it is a
+   handle to personal data held in the tab, and leaving it live leaves the data
+   reachable by anything that can read the DOM. */
+async function downloadExport(path, fallbackName) {
+  try {
+    const res = await fetchWithTimeout(`${API_BASE_URL}${path}`, {}, 60000);
+    if (!res.ok) {
+      let msg = `Export failed (${res.status})`;
+      try { const j = JSON.parse(await res.text()); if (j && j.error) msg = j.error; } catch { /* not JSON */ }
+      return { error: msg, status: res.status };
+    }
+
+    // The server names the file; the fallback is only for a missing header.
+    const disp = res.headers.get('Content-Disposition') || '';
+    const match = disp.match(/filename="?([^";]+)"?/i);
+    const name = (match && match[1]) || fallbackName || 'export.csv';
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    return { success: true, filename: name, bytes: blob.size };
+  } catch (e) {
+    return { error: 'Cannot reach the server. Check your connection.', offline: true };
+  }
+}
 
 Object.assign(API, {
   changePassword: (currentPassword, newPassword) =>

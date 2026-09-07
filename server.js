@@ -2112,6 +2112,18 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
     return res.status(400).json({ error: 'records must be an array' });
   }
 
+  /* A dry run is the SAME code, committed or not. Everything below — every
+     validation, every duplicate decision, every location lookup, every INSERT
+     — runs exactly once either way; only the last statement differs, COMMIT or
+     ROLLBACK. A dry run written as a separate "validate" pass would be a second
+     implementation of the import, and the two would disagree the first time one
+     of them was edited. This one cannot disagree with itself.
+
+     What that buys the operator: the counts in the preview are the counts they
+     will get, including duplicates found against accounts already in the
+     database — which a client-side check cannot see at all. */
+  const dryRun = req.body.dryRun === true;
+
   const client = await db.pool.connect();
   try {
     await client.query("BEGIN");
@@ -2136,8 +2148,51 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
     const unresolvedLocations = [];
     const seenEmail = new Set(), seenMobile = new Set();
     const strategy = (req.body.dupResolution || "skip").toLowerCase();
-    const batchPassword = generateImportPassword();
-    const passwordHash = hashPassword(batchPassword);
+
+    /* How the imported accounts get a password.
+
+       'generated' is what the platform has always done: one random credential
+       for the whole batch, hashed, shown to the operator once, with every
+       account flagged must_change_password. It replaced the hardcoded
+       '12345678' that used to be readable in the page source, so it was a
+       large improvement — but the credential is still shared by everyone in
+       the batch, and it passes through a human on its way to them.
+
+       'invite' has no shared credential at all. Each account is created with
+       the LOCKED$ sentinel, which verifyPassword can never match, and its
+       holder sets their own password through the existing reset flow using
+       their own address. That is a unique credential per account, chosen by
+       the person it belongs to, which never exists anywhere an operator could
+       see, write down or forward.
+
+       The operator chooses. 'invite' needs every imported address to be one
+       the person can actually read; 'generated' does not, which is why it
+       still exists and is still the default rather than being replaced. */
+    const passwordStrategy = req.body.passwordStrategy === 'invite' ? 'invite' : 'generated';
+    const batchPassword = passwordStrategy === 'invite' ? null : generateImportPassword();
+    const passwordHash = passwordStrategy === 'invite'
+      ? 'LOCKED$bulk-import-no-password'
+      : hashPassword(batchPassword);
+
+    /* The batch row is written FIRST, with zero counts, and updated at the end.
+       It has to exist before the accounts do, because each created account
+       records which batch made it — and without that link a bad import could be
+       seen in the history and not undone. Both statements are inside this
+       transaction, so a failure anywhere leaves neither.
+
+       admin_name still carries whatever the client sent, because existing rows
+       have it and the column is NOT NULL. created_by is the authenticated user
+       id: a name a caller can choose is not an actor. */
+    const batchRow = await client.query(
+      `INSERT INTO import_history (batch_code, filename, total_records, success_count,
+                                   failed_count, duplicate_count, admin_name,
+                                   processing_time, created_by, status)
+       VALUES ($1,$2,$3,0,0,0,$4,$5,$6,'completed') RETURNING id`,
+      [`BATCH-${new Date().getFullYear()}-${Date.now().toString().slice(-5)}`,
+       filename || "import.csv", records.length,
+       adminName || "Admin", processingTime || "—", req.user.uid]
+    );
+    const batchId = batchRow.rows[0].id;
 
     for (const r of records) {
       const rowNo = r.row || 0;
@@ -2271,12 +2326,17 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
       const initials = name.split(/\s+/).filter(Boolean).slice(0, 2)
         .map(w => w[0]).join("").toUpperCase().slice(0, 2) || "AL";
 
+      /* role, is_verified, must_change_password, status and created_via are all
+         literals here, never read from the file. A roster that carries a Role
+         column saying super_admin imports an ordinary alumni member, because
+         nothing in this statement consults the row for any of them. */
       const userRes = await client.query(
         `INSERT INTO users (email, password_hash, full_name, initials, role, role_label,
-                            department, is_verified, must_change_password, created_via)
-         VALUES ($1,$2,$3,$4,'alumni','Alumni Member',$5,TRUE,TRUE,'bulk_import')
+                            department, is_verified, must_change_password, created_via,
+                            import_batch_id)
+         VALUES ($1,$2,$3,$4,'alumni','Alumni Member',$5,TRUE,TRUE,'bulk_import',$6)
          ON CONFLICT (email) DO NOTHING RETURNING id`,
-        [email, passwordHash, name, initials, normalizeHscGroup(r.hscGroup) || "General"]
+        [email, passwordHash, name, initials, normalizeHscGroup(r.hscGroup) || "General", batchId]
       );
       if (userRes.rows.length === 0) { skippedDuplicate++; continue; }
       const uid = userRes.rows[0].id;
@@ -2307,24 +2367,56 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
     }
 
     await client.query(
-      `INSERT INTO import_history (batch_code, filename, total_records, success_count,
-                                   failed_count, duplicate_count, admin_name, processing_time)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [`BATCH-${new Date().getFullYear()}-${Date.now().toString().slice(-5)}`,
-       filename || "import.csv", records.length, created,
-       rejected, skippedDuplicate, adminName || "Admin", processingTime || "—"]
+      `UPDATE import_history
+          SET success_count = $2, failed_count = $3, duplicate_count = $4
+        WHERE id = $1`,
+      [batchId, created, rejected, skippedDuplicate]
     );
 
-    await client.query("COMMIT");
+    if (dryRun) {
+      /* Nothing above reaches the database. The accounts, the profiles and the
+         batch row are all discarded, and the counts the caller is about to read
+         were produced by the real import doing the real work. */
+      await client.query("ROLLBACK");
+    } else {
+      await client.query("COMMIT");
+    }
 
     /* The filename comes from the client and is unvalidated, so it is bounded
        and stripped of anything that would let it impersonate the surrounding
        log structure. An exported roster's filename can also carry personal
        data, which is another reason not to take it whole. */
     const safeName = String(filename || 'import.csv').replace(/[^\w.\- ]+/g, '').slice(0, 60);
-    await writeAuditSafe("Bulk Import Completed",
-      `${safeName}: ${created} created, ${updated} updated, ${skippedDuplicate} duplicates, ${rejected} rejected`,
-      '📥', auditCtx(req, 'import', null));
+    /* A dry run is recorded too, as a dry run. It reads the whole roster and is
+       a disclosure of personal data even though it changes nothing, and an
+       administrator who runs twenty of them should leave twenty marks. */
+    /* An import can add hundreds of accounts, and until now the only trace
+       another administrator could find was an audit entry they would have to go
+       looking for. A bulk change to the alumni body is something the people who
+       administer it should be told about, not something they should have to
+       discover. A dry run changed nothing and is not announced. */
+    if (!dryRun && (created > 0 || updated > 0)) {
+      /* The name is read from the account, not from req.user (the token carries
+         only uid, role and expiry) and not from req.body.adminName, which the
+         caller chooses. */
+      const actor = (await db.query('SELECT full_name FROM users WHERE id = $1', [req.user.uid]))
+        .rows[0]?.full_name || 'an administrator';
+      for (const role of ADMIN_ROLES) {
+        await db.query(
+          `INSERT INTO notifications (target_role, icon, title, subtitle, link_entity, link_id)
+           VALUES ($1, '📥', 'Bulk Import Completed', $2, 'import', $3)`,
+          [role,
+           `${created} account(s) created and ${updated} profile(s) enriched from a roster, ` +
+           `by ${actor}.`,
+           batchId]);
+      }
+    }
+
+    await writeAuditSafe(dryRun ? "Bulk Import Dry Run" : "Bulk Import Completed",
+      `${safeName}: ${created} created, ${updated} updated, ${skippedDuplicate} duplicates, ${rejected} rejected` +
+      `; enrolment: ${passwordStrategy}` +
+      (dryRun ? ' (nothing written)' : ''),
+      '📥', auditCtx(req, 'import', dryRun ? null : batchId));
 
     res.json({
       success: true,
@@ -2339,9 +2431,17 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
          and "row 41: Chattogram Sadar" is. */
       unresolvedLocations: unresolvedLocations.slice(0, 100),
       unresolvedLocationCount: unresolvedLocations.length,
+      dryRun,
+      /* A dry run has no batch to report and no batch to roll back: the row it
+         wrote was rolled back with everything else. */
+      batchId: dryRun ? null : batchId,
+      passwordStrategy,
       // Shown once, to the administrator who ran this import, so they can pass
-      // it on. Omitted when the batch created nobody.
-      temporaryPassword: created > 0 ? batchPassword : null
+      // it on. Omitted when the batch created nobody, and withheld entirely on
+      // a dry run — no account exists to use it, and a credential shown for a
+      // thing that did not happen is a credential shown for no reason. Under
+      // 'invite' there is nothing to show, because nothing was generated.
+      temporaryPassword: !dryRun && created > 0 ? batchPassword : null
     });
   } catch (err) {
     await client.query("ROLLBACK");
@@ -2352,12 +2452,182 @@ app.post('/api/bulk-import', requireRole(...ADMIN_ROLES), async (req, res) => {
 });
 
 // Import audit trail — the wizard used to keep this in a local array only.
+/* Each batch now reports who ran it as an account rather than as a typed name,
+   how many of the accounts it created still exist, and whether it can still be
+   undone. The last of those is computed, not stored: a batch becomes
+   un-rollbackable the moment somebody signs in to one of its accounts, and
+   nothing fires an event when that happens. */
 app.get('/api/import-history', requireRole(...ADMIN_ROLES), async (req, res) => {
   try {
-    const result = await db.query('SELECT * FROM import_history ORDER BY created_at DESC, id DESC LIMIT 25');
-    res.json(result.rows);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 25, 1), 200);
+    const result = await db.query(`
+      SELECT h.*,
+             actor.full_name  AS created_by_name,
+             undoer.full_name AS rolled_back_by_name,
+             COALESCE(m.accounts, 0)::int  AS accounts_present,
+             COALESCE(m.signed_in, 0)::int AS accounts_signed_in
+      FROM import_history h
+      LEFT JOIN users actor  ON actor.id  = h.created_by
+      LEFT JOIN users undoer ON undoer.id = h.rolled_back_by
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS accounts,
+               COUNT(*) FILTER (WHERE u.last_login_at IS NOT NULL) AS signed_in
+        FROM users u WHERE u.import_batch_id = h.id
+      ) m ON TRUE
+      ORDER BY h.created_at DESC, h.id DESC
+      LIMIT $1`, [limit]);
+
+    res.json(result.rows.map(r => ({
+      ...r,
+      /* Spelled out rather than left as a boolean, because "you cannot undo
+         this" without a reason is the kind of message an operator argues with. */
+      rollback: rollbackEligibility(r)
+    })));
   } catch (err) {
     serverError(res, err, 'api');
+  }
+});
+
+/* Why a batch can or cannot be rolled back. Used by the history endpoint to
+   describe it and by the rollback endpoint to decide it, so the interface can
+   never offer an action the server will refuse. */
+function rollbackEligibility(row) {
+  if (row.status === 'rolled_back') {
+    return { allowed: false, reason: 'This batch has already been rolled back.' };
+  }
+  if (!row.accounts_present) {
+    /* Every batch imported before this was built is in this state. There is no
+       honest way to work out which accounts it created, and guessing would mean
+       deleting somebody. */
+    return { allowed: false, reason: row.success_count > 0
+      ? 'This batch predates rollback support, so the accounts it created cannot be identified.'
+      : 'This batch created no accounts, so there is nothing to undo.' };
+  }
+  if (row.accounts_signed_in > 0) {
+    return { allowed: false, reason:
+      `${row.accounts_signed_in} of these accounts has been signed in to. ` +
+      'An account somebody has used is theirs, not the import\u2019s.' };
+  }
+  return { allowed: true, reason: `${row.accounts_present} account(s) created by this batch and never used.` };
+}
+
+/* ─── BATCH ROLLBACK ───────────────────────────────────────
+   Undoes an import by deleting the accounts it created — and only those. An
+   account the batch merely enriched existed beforehand and is left alone; so
+   is every account somebody has since signed in to.
+
+   The bar is deliberately high. Rollback exists for the case an operator
+   actually has: the wrong file, noticed within minutes. It is not a general
+   undo, and it does not try to be one, because past that first few minutes the
+   accounts have started accumulating a person's own activity and deleting them
+   destroys that person's data rather than the operator's mistake.
+
+   Audit history is never deleted. audit_logs.actor_id is ON DELETE SET NULL, so
+   what these accounts did survives them, and the rollback itself is recorded. */
+app.post('/api/import-batches/:id/rollback', requireRole(...ADMIN_ROLES), async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id < 1) {
+    return res.status(400).json({ error: 'A batch id is required.' });
+  }
+
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    /* FOR UPDATE, so two administrators clicking at once cannot both pass the
+       eligibility check and both delete. */
+    const batch = await client.query(
+      `SELECT h.*,
+              COALESCE(m.accounts, 0)::int  AS accounts_present,
+              COALESCE(m.signed_in, 0)::int AS accounts_signed_in
+       FROM import_history h
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) AS accounts,
+                COUNT(*) FILTER (WHERE u.last_login_at IS NOT NULL) AS signed_in
+         FROM users u WHERE u.import_batch_id = h.id
+       ) m ON TRUE
+       WHERE h.id = $1
+       FOR UPDATE OF h`, [id]);
+
+    if (!batch.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'No such import batch.' });
+    }
+
+    const row = batch.rows[0];
+    const eligible = rollbackEligibility(row);
+    if (!eligible.allowed) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: eligible.reason, code: 'rollback_refused' });
+    }
+
+    /* An account with activity against it is not the import's to delete either,
+       even if nobody has signed in — staff can register somebody for an event,
+       or record a donation on their behalf. Checked explicitly rather than left
+       to the cascades, which would have removed the registration silently. */
+    const activity = await client.query(`
+      SELECT COUNT(*)::int AS n FROM users u
+      WHERE u.import_batch_id = $1 AND (
+        EXISTS (SELECT 1 FROM event_registrations r WHERE r.user_id = u.id) OR
+        EXISTS (SELECT 1 FROM donations d          WHERE d.donor_user_id = u.id) OR
+        EXISTS (SELECT 1 FROM job_applications a   WHERE a.applicant_id = u.id) OR
+        EXISTS (SELECT 1 FROM mentorships m        WHERE m.mentor_id = u.id OR m.mentee_id = u.id) OR
+        EXISTS (SELECT 1 FROM chapter_memberships c WHERE c.user_id = u.id) OR
+        EXISTS (SELECT 1 FROM poll_votes v         WHERE v.user_id = u.id) OR
+        EXISTS (SELECT 1 FROM stories st           WHERE st.author_id = u.id)
+      )`, [id]);
+
+    if (activity.rows[0].n > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        error: `${activity.rows[0].n} of these accounts has activity recorded against it ` +
+               '(a registration, donation, application, mentorship, membership, vote or story). ' +
+               'Rollback would destroy that as well, so it is refused.',
+        code: 'rollback_refused'
+      });
+    }
+
+    const deleted = await client.query(
+      'DELETE FROM users WHERE import_batch_id = $1 RETURNING id, email', [id]);
+
+    await client.query(
+      `UPDATE import_history
+          SET status = 'rolled_back', rolled_back_at = CURRENT_TIMESTAMP,
+              rolled_back_by = $2, rolled_back_count = $3
+        WHERE id = $1`,
+      [id, req.user.uid, deleted.rowCount]);
+
+    await client.query('COMMIT');
+
+    /* The batch code and the count, never the addresses. A roster of everyone
+       an import created is exactly the kind of thing an audit log should not
+       become, and the accounts are gone in any case. */
+    /* Deleting accounts is the most destructive thing this platform does on
+       purpose. Every administrator is told, by name and by count — never by
+       listing who was removed, which would put a roster of deleted people into
+       a notifications table that outlives them. */
+    const undoer = (await db.query('SELECT full_name FROM users WHERE id = $1', [req.user.uid]))
+      .rows[0]?.full_name || 'an administrator';
+    for (const role of ADMIN_ROLES) {
+      await db.query(
+        `INSERT INTO notifications (target_role, icon, title, subtitle, link_entity, link_id)
+         VALUES ($1, '↩', 'Import Rolled Back', $2, 'import', $3)`,
+        [role,
+         `${row.batch_code}: ${deleted.rowCount} imported account(s) were removed by ` +
+         `${undoer}.`,
+         id]);
+    }
+
+    await writeAuditSafe('Import Batch Rolled Back',
+      `${row.batch_code}: ${deleted.rowCount} account(s) deleted`,
+      '↩', auditCtx(req, 'import', id));
+
+    res.json({ success: true, batchId: id, batchCode: row.batch_code, deleted: deleted.rowCount });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    serverError(res, err, 'api');
+  } finally {
+    client.release();
   }
 });
 
@@ -2907,6 +3177,11 @@ require('./routes_compliance')(app, {
   encryptionReady: v2.encryptionReady,
   writeAudit: v2.writeAudit
 });
+
+/* Reports and CSV exports. Every report is a registry entry served by two
+   generic routes, so the permission check, the date range and the CSV writer
+   exist once rather than once per report. */
+require('./routes_reports')(app, { ...guards, writeAudit: v2.writeAudit });
 
 /* ══════════════════════════════════════════════════════════
    SCHEDULER
