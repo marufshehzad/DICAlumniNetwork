@@ -2843,7 +2843,7 @@ and loading states. `tests/install_drill.js` now applies migrations through v14.
 
 **Status:** **COMPLETE**
 **Date:** 2026-09-07
-**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Commit:** `2df25c1`
 **Parent:** `d06e09c`
 
 ### The audit, before anything was changed
