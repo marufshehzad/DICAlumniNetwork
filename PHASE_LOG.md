@@ -3901,7 +3901,8 @@ correctly reported. The suite's cleanup now removes them first.
 
 **Status:** **COMPLETE**
 **Date:** 2026-09-08
-**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Commit:** `0a4710a`
+**Parent:** `e9703e1`
 
 ### Baseline
 

@@ -14,7 +14,7 @@ does not do, and what DIC must supply before it can run in production. It does
 
 | | |
 |---|---|
-| Commit | `62d318a` → this phase's commit (recorded in PHASE_LOG.md) |
+| Commit | `0a4710a` (Phase 7E) · parent `e9703e1` |
 | Phases complete | 0 through 7E |
 | Database schema | v19 · **48 tables** |
 | Runtime | Node.js, Express 5, PostgreSQL 16.14 |
