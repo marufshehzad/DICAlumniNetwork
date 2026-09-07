@@ -234,6 +234,15 @@ const CRON = process.env.CRON_SECRET || '';
   ok('no real secret from .env appears in any provisioning document',
     realSecrets.every(s => !docs.includes(s)), `${realSecrets.length} checked`);
 
+  /* This suite loads db/ and jobs/ to read their real configuration, which opens
+     a pg pool. Calling process.exit() while that pool's libuv handle is still
+     closing aborts the process on Windows — "Assertion failed:
+     !(handle->flags & UV_HANDLE_CLOSING)" — AFTER every assertion has already
+     run and passed, so run-all recorded a failure for a suite that had none.
+     Closing the pool first is all it needs. */
+  try { await require(path.join(REPO, 'db')).pool.end(); } catch { /* never loaded */ }
+  await new Promise(r => setTimeout(r, 50));   // let those closes finish
+
   console.log('\n' + '='.repeat(60));
   console.log(`  ${pass} passed, ${fail} failed${skipped ? `, ${skipped} skipped` : ''}`);
   process.exit(fail ? 1 : 0);

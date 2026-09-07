@@ -402,18 +402,26 @@ let mapQuery = '';               // §7 search, applied to what the server sent
 
 function mapZoom() { return MAP_ZOOM_STEPS[mapZoomIndex]; }
 
-/* Bangladesh spans about 4.6° of longitude and 5.9° of latitude. At 16× the
-   whole country is wider than the canvas; 8× frames it with a margin, which is
-   what a reader wants when they press the button. The centre is the country's
-   real geographic middle, not the alumni mean — pressing "Bangladesh" should
-   show Bangladesh, not wherever three graduates happen to live. */
+/* Bangladesh spans about 4.6° of longitude and 5.9° of latitude.
+
+   Phase 7G framed this at 8x on the stated grounds that "at 16x the whole
+   country is wider than the canvas". Measured, that is not true: the 900x450
+   viewBox at 16x puts the country's projected bounding box fully inside the
+   canvas at 20% of its width and 52% of its height. At 8x it is 10% by 26% —
+   a country the size of a thumbnail, which was tolerable when the outline was
+   the only thing inside it and is wasteful now that it contains 64 real
+   district boundaries. 16x is what makes those legible.
+
+   The centre is the country's real geographic middle, not the alumni mean —
+   pressing "Bangladesh" should show Bangladesh, not wherever three graduates
+   happen to live. */
 const BD_CENTER = { lat: 23.7, lng: 90.35 };
 
 function mapShowBangladesh() {
   mapView = 'bangladesh';
   mapMode = 'divisions';
   mapCenter = { ...BD_CENTER };
-  mapZoomIndex = MAP_ZOOM_STEPS.indexOf(8) >= 0 ? MAP_ZOOM_STEPS.indexOf(8) : MAP_ZOOM_STEPS.length - 2;
+  mapZoomIndex = MAP_ZOOM_STEPS.indexOf(16) >= 0 ? MAP_ZOOM_STEPS.indexOf(16) : MAP_ZOOM_STEPS.length - 1;
   mapSelected = null;
   syncMapModeButtons();
   renderMapClusters();
@@ -488,8 +496,11 @@ function mapBandFor(n, bands) {
    which almost nobody can do. So the boundaries are real now.
 
    assets/geo/boundaries.json is Natural Earth's Admin 0 countries, PUBLIC
-   DOMAIN, converted once at build time by tools/build_geo.js and shipped as a
-   static file. No tile provider, no API key, no request to anyone's server, and
+   DOMAIN, plus — added in the 7G closure pass — Bangladesh's 8 divisions (CC0)
+   and 64 districts (CC BY 3.0 IGO) from geoBoundaries. Converted once at build
+   time by tools/build_geo.js and shipped as a static file. The geoBoundaries
+   layers require attribution, which is rendered under the map; see
+   MAP_TECHNOLOGY.md. No tile provider, no API key, no request to anyone's server, and
    no mapping library: the rings are plain longitude/latitude and are projected
    by the SAME projectLatLng() that positions the alumni markers. Boundaries and
    markers therefore cannot drift apart — they are one projection, not two that
@@ -617,6 +628,40 @@ function drawMapGraticule() {
     if (detailed) {
       const d = countryPath(geoData.bangladesh[0].rings, W, H);
       if (d) land.push(`<path d="${d}" fill="#DCEFE6" stroke="#4E9B7C" stroke-width="1.2" stroke-linejoin="round" />`);
+
+      /* Real internal boundaries (Phase 7G closure).
+
+         Phase 7G shipped divisions as labelled points and recorded that no
+         licensable geometry existed for them. That was wrong: geoBoundaries
+         gbOpen publishes Bangladesh ADM1 and ADM2 under CC0 and CC BY 3.0 IGO
+         respectively — attribution, but no share-alike, which is what ruled out
+         GADM and OSM. So the divisions and districts below are REAL surveyed
+         boundaries from the Bangladesh Bureau of Statistics, not drawn shapes.
+
+         A district is tinted only when alumni are actually recorded in it, and
+         the count comes from the same server-computed rows the badges use — so
+         the shading and the ranked list can never disagree. An untinted
+         district is a real district with nobody in it, which is a true and
+         useful thing for a reader to be able to see. */
+      const perDistrict = new Map();
+      for (const c of (mapData && mapData.cities) || []) {
+        if (c.country !== 'Bangladesh' || !c.district) continue;
+        perDistrict.set(c.district, (perDistrict.get(c.district) || 0) + c.n);
+      }
+      for (const f of geoData.bdDistricts || []) {
+        const dd = countryPath(f.rings, W, H);
+        if (!dd) continue;
+        const has = perDistrict.get(f.name) > 0;
+        land.push(`<path d="${dd}" fill="${has ? '#9ECCB4' : 'none'}" ` +
+          `stroke="#7FAE96" stroke-width="0.45" stroke-linejoin="round" />`);
+      }
+      /* Divisions last and heavier, so the eight big units read at a glance
+         over the sixty-four smaller ones rather than competing with them. */
+      for (const f of geoData.bdDivisions || []) {
+        const dd = countryPath(f.rings, W, H);
+        if (dd) land.push(`<path d="${dd}" fill="none" stroke="#3F8A69" ` +
+          `stroke-width="1.1" stroke-linejoin="round" />`);
+      }
     }
   }
 
@@ -737,6 +782,7 @@ async function renderMapClusters() {
      make the map appear in two visible steps for no reason. */
   const [res] = await Promise.all([API.getStatsMap(), loadMapGeometry()]);
   if (loading) loading.classList.add('hidden');
+  wireMapGestures();
 
   if (apiFailed(res)) {
     container.innerHTML = '';
@@ -971,8 +1017,10 @@ function selectMapMarker(key) {
 function closeMapDetail() { mapSelected = null; paintMap(); }
 
 /* The detail panel. For a country it reports the name, the total and how many
-   cities are represented — never a boundary or an area, because this map has
-   no boundary data and claims none. */
+   cities are represented — never an area or a border measurement. The map now
+   DOES carry real boundary geometry, but it carries it to be drawn, not to be
+   measured: a simplified 1:110m ring is the right shape at this scale and the
+   wrong number for any question about size. */
 function renderMapDetail() {
   const el = document.getElementById('map-detail');
   if (!el) return;
@@ -1096,6 +1144,122 @@ function mapResetView() {
   mapCenter = { lat: 0, lng: 0 };
   mapSelected = null;
   paintMap();
+}
+
+/* ─── pointer zoom: wheel and pinch (Phase 7G closure) ───────
+
+   Neither existed. The controls were the +/− buttons alone, which is fine on a
+   desktop and poor on a phone, where pinching is what everyone tries first.
+
+   ZOOM IS STEPPED. MAP_ZOOM_STEPS is 1/2/4/8/16 and badge sizes are constant
+   pixels at every level by design, so these gestures choose a STEP rather than
+   scaling continuously. A wheel notch or a pinch past a threshold is one step.
+
+   ZOOM IS ANCHORED. Zooming about the centre of the canvas moves whatever the
+   reader was pointing at away from the pointer, which feels wrong and loses the
+   thing they were looking at. Both gestures recentre on the point under the
+   pointer (or between the two fingers) before stepping, so that point stays
+   roughly still.
+
+   THE PAGE MUST NOT MOVE. preventDefault on a non-passive wheel listener stops
+   the page scrolling while the pointer is over the map, and `touch-action:
+   none` on the canvas stops the browser panning the page during a pinch.
+   Neither is attached to the document — outside the canvas, scrolling is
+   entirely normal. */
+
+/* Which latitude/longitude is under a client point, given the current view. */
+function mapLatLngAt(clientX, clientY) {
+  const canvas = document.getElementById('alumni-map');
+  if (!canvas) return null;
+  const r = canvas.getBoundingClientRect();
+  if (!r.width || !r.height) return null;
+  /* The SVG uses preserveAspectRatio="none", so the view maps linearly onto the
+     element box whatever its aspect ratio. */
+  const u = (clientX - r.left) / r.width;
+  const v = (clientY - r.top) / r.height;
+  const z = mapZoom();
+  const cx = (mapCenter.lng + 180) / 360;
+  const cy = (90 - mapCenter.lat) / 180;
+  const bx = (u - 0.5) / z + cx;
+  const by = (v - 0.5) / z + cy;
+  return { lng: bx * 360 - 180, lat: 90 - by * 180 };
+}
+
+/* Step the zoom, keeping the given point under the pointer where it was. */
+function mapZoomAt(direction, clientX, clientY) {
+  const next = mapZoomIndex + direction;
+  if (next < 0 || next > MAP_ZOOM_STEPS.length - 1) return false;
+  const anchor = (clientX === undefined) ? null : mapLatLngAt(clientX, clientY);
+  mapZoomIndex = next;
+  if (mapZoomIndex === 0) {
+    mapCenter = { lat: 0, lng: 0 };            // the whole world, always framed
+  } else if (anchor) {
+    /* Halfway between the old centre and the anchor: the point under the
+       pointer stays close to the pointer without the view lurching. */
+    mapCenter = {
+      lat: Math.max(-85, Math.min(85, (mapCenter.lat + anchor.lat) / 2)),
+      lng: Math.max(-180, Math.min(180, (mapCenter.lng + anchor.lng) / 2))
+    };
+  }
+  paintMap();
+  return true;
+}
+
+/* A trackpad emits dozens of small wheel events per gesture and a mouse emits
+   one large one. Accumulating and stepping at a threshold makes both feel the
+   same and stops a trackpad flying from world to 16x in one flick. */
+let _wheelAccum = 0;
+let _wheelResetTimer = null;
+const WHEEL_STEP = 120;          // one classic mouse notch
+
+function mapWheel(e) {
+  e.preventDefault();            // the page does not scroll while over the map
+  _wheelAccum += e.deltaY;
+  clearTimeout(_wheelResetTimer);
+  _wheelResetTimer = setTimeout(() => { _wheelAccum = 0; }, 220);
+  while (Math.abs(_wheelAccum) >= WHEEL_STEP) {
+    const dir = _wheelAccum > 0 ? -1 : 1;      // wheel down zooms out
+    _wheelAccum -= Math.sign(_wheelAccum) * WHEEL_STEP;
+    if (!mapZoomAt(dir, e.clientX, e.clientY)) { _wheelAccum = 0; break; }
+  }
+}
+
+/* Pinch. Two pointers, and the ratio of the current span to the span the
+   gesture started with. Crossing 1.35 zooms in a step, 0.74 out, and the
+   baseline resets after each step so a long pinch keeps stepping. */
+let _pinchStart = 0;
+const PINCH_IN = 1.35, PINCH_OUT = 0.74;
+const touchSpan = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+const touchMid = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
+
+function mapTouchStart(e) {
+  if (e.touches.length === 2) { _pinchStart = touchSpan(e.touches); e.preventDefault(); }
+}
+
+function mapTouchMove(e) {
+  if (e.touches.length !== 2 || !_pinchStart) return;
+  e.preventDefault();                          // the page does not pan mid-pinch
+  const span = touchSpan(e.touches);
+  const ratio = span / _pinchStart;
+  const mid = touchMid(e.touches);
+  if (ratio >= PINCH_IN) { mapZoomAt(1, mid.x, mid.y); _pinchStart = span; }
+  else if (ratio <= PINCH_OUT) { mapZoomAt(-1, mid.x, mid.y); _pinchStart = span; }
+}
+
+function mapTouchEnd(e) { if (e.touches.length < 2) _pinchStart = 0; }
+
+/* Attached to the canvas, once. The map page can be rendered more than once in
+   a session, so a guard stops a second set of listeners accumulating — two
+   wheel handlers would zoom two steps per notch. */
+function wireMapGestures() {
+  const canvas = document.getElementById('alumni-map');
+  if (!canvas || canvas.dataset.gesturesWired === '1') return;
+  canvas.dataset.gesturesWired = '1';
+  canvas.addEventListener('wheel', mapWheel, { passive: false });
+  canvas.addEventListener('touchstart', mapTouchStart, { passive: false });
+  canvas.addEventListener('touchmove', mapTouchMove, { passive: false });
+  canvas.addEventListener('touchend', mapTouchEnd);
+  canvas.addEventListener('touchcancel', mapTouchEnd);
 }
 
 function mapFocusBusiest() {

@@ -740,8 +740,13 @@
     <div class="notif-header">
       <h3>Notifications</h3>
       <div class="notif-header-actions">
-        <button class="notif-readall" onclick="markAllNotificationsRead()">Mark all read</button>
-        <button onclick="closeNotifications()"><i data-lucide="x" class="ui-icon"></i></button>
+        <button type="button" class="notif-readall" onclick="markAllNotificationsRead()">Mark all read</button>
+        <!-- This was an 18x21px unlabelled button in the corner of the screen.
+             It closed correctly when hit; the problem was hitting it. It now
+             carries the platform's 44x44 close target, a name a screen reader
+             can read, and an explicit type. -->
+        <button type="button" class="notif-close" aria-label="Close notifications"
+                onclick="closeNotifications()"><i data-lucide="x" class="ui-icon"></i></button>
       </div>
     </div>
     <div id="notif-list"></div>

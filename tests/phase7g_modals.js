@@ -308,6 +308,132 @@ const MARKUP = CLIENT.concat(['index.html', 'admin.html']);
   ok('the dialog announces itself as one',
     /setAttribute\('role', 'dialog'\)/.test(core) && /setAttribute\('aria-modal', 'true'\)/.test(core));
 
+
+  /* ══════════════════════════════════════════════════════════════════
+     PHASE 7G CLOSURE PASS
+     The notification drawer, the map's pointer gestures, and the real
+     Bangladesh internal boundaries that replaced the labelled points.
+     ══════════════════════════════════════════════════════════════════ */
+
+  head('C1. Notification drawer close control');
+  const notifJs = src('js/notifications.js');
+  for (const portal of ['index.html', 'admin.html']) {
+    const h = src(portal);
+    const btn = (h.match(/<button[^>]*class="notif-close"[\s\S]{0,200}?<\/button>/) || [''])[0];
+    ok(portal + ': the drawer has a dedicated close control', /class="notif-close"/.test(h));
+    ok(portal + ': it is type="button", so it can never submit a form', /type="button"/.test(btn));
+    ok(portal + ': it is named for a screen reader', /aria-label="Close notifications"/.test(btn));
+    ok(portal + ': it closes the drawer', /onclick="closeNotifications\(\)"/.test(btn));
+  }
+  /* The defect was an 18x21px target in the corner of the screen: it closed
+     correctly when hit, and was very hard to hit. The size IS the fix. */
+  const notifCss = (css.match(/\.notif-close \{[\s\S]*?\}/) || [''])[0];
+  ok('the close target is at least 44px wide', /min-width:\s*44px/.test(notifCss));
+  ok('the close target is at least 44px tall', /min-height:\s*44px/.test(notifCss));
+  ok('it has a visible keyboard focus ring', /\.notif-close:focus-visible\s*\{[^}]*outline:/.test(css));
+  ok('Escape closes the drawer', /e\.key !== 'Escape'/.test(notifJs) && /closeNotifications\(\)/.test(notifJs));
+  ok('the Escape listener is registered exactly once', /__notifEscapeWired/.test(notifJs));
+  ok('Escape defers to an open dialog rather than closing both',
+    /modal-overlay[\s\S]{0,160}?return;/.test(notifJs));
+
+  /* The drawer and the modal overlay both sit at z-index 2000 and the drawer
+     comes second in the document, so it wins the tie and paints over any dialog
+     opened while it is showing. Below 900px the drawer is full-screen, which
+     made such a dialog completely unreachable — hit-testing its close button at
+     390px returned a notification row, and so did the middle of its body.
+     A dialog is the topmost surface, so opening one closes the drawer. */
+  ok('opening a dialog closes the notification drawer',
+    /function showModal[\s\S]{0,1400}?typeof closeNotifications === 'function'[\s\S]{0,60}?closeNotifications\(\)/.test(core));
+  ok('the drawer and the overlay are still the same stacking layer, so the ' +
+     'close above is what keeps them apart',
+    /\.notif-panel\s*\{[^}]*z-index:\s*2000/.test(css) && /\.modal-overlay\s*\{[^}]*z-index:\s*2000/.test(css));
+
+  head('C2. Map pointer zoom — wheel and pinch');
+  ok('the map handles the mouse wheel', /addEventListener\('wheel', mapWheel/.test(dash));
+  ok('the wheel listener is non-passive, so it can stop the page scrolling',
+    /addEventListener\('wheel', mapWheel, \{ passive: false \}\)/.test(dash));
+  ok('the wheel handler prevents the default page scroll',
+    /function mapWheel[\s\S]{0,120}?e\.preventDefault\(\)/.test(dash));
+  ok('the map handles two-finger pinch',
+    /addEventListener\('touchstart', mapTouchStart/.test(dash) &&
+    /addEventListener\('touchmove', mapTouchMove/.test(dash));
+  ok('touchmove is non-passive, so a pinch cannot pan the page',
+    /addEventListener\('touchmove', mapTouchMove, \{ passive: false \}\)/.test(dash));
+  ok('a cancelled touch resets the gesture', /addEventListener\('touchcancel', mapTouchEnd\)/.test(dash));
+  /* Two wheel listeners would zoom two steps per notch. The map is re-rendered
+     on every visit to the page, so this guard is what keeps one notch to one step. */
+  ok('listeners are attached at most once per canvas',
+    /dataset\.gesturesWired === '1'/.test(dash) && /dataset\.gesturesWired = '1'/.test(dash));
+  ok('gestures are wired after the map renders', /wireMapGestures\(\);/.test(dash));
+  ok('the browser does not claim the canvas gestures for itself',
+    /\.map-canvas\s*\{[^}]*touch-action:\s*none/.test(css));
+  ok('zoom is stepped, and a gesture cannot leave the defined steps',
+    /const next = mapZoomIndex \+ direction;[\s\S]{0,140}?if \(next < 0 \|\| next > MAP_ZOOM_STEPS\.length - 1\) return false;/.test(dash));
+
+  head('C3. Bangladesh internal boundaries — real, licensed geometry');
+  ok('division polygons ship', Array.isArray(geo.bdDivisions) && geo.bdDivisions.length === 8,
+    'divisions: ' + (geo.bdDivisions || []).length);
+  ok('district polygons ship', Array.isArray(geo.bdDistricts) && geo.bdDistricts.length === 64,
+    'districts: ' + (geo.bdDistricts || []).length);
+  ok('the source is recorded in the data itself, pinned to a commit',
+    /geoBoundaries gbOpen BGD ADM1 and ADM2, commit [0-9a-f]{7}/.test(geo.bdSource || ''), geo.bdSource);
+  ok('the licence is recorded and is attribution-only, not share-alike',
+    /CC0 1\.0/.test(geo.bdLicence || '') && /CC BY 3\.0 IGO/.test(geo.bdLicence || '') &&
+    /no share-alike/.test(geo.bdLicence || ''));
+  ok('a visible attribution is rendered, as those licences require',
+    /class="map-attribution"/.test(src('index.html')) && /geoboundaries\.org/.test(src('index.html')));
+  /* The whole point of this layer is that it is NOT drawn from memory. Every
+     polygon must come from the build tool, and the build tool must fetch from
+     the pinned upstream rather than carry coordinates in its own source. */
+  const buildTool = src('tools/build_geo.js');
+  ok('the build fetches from the pinned upstream',
+    /releaseData\/gbOpen\/BGD/.test(buildTool) && /GB_COMMIT = '[0-9a-f]{7}'/.test(buildTool));
+  ok('no boundary coordinates are hardcoded in client code',
+    !/\[\s*8[89]\.\d{3,}\s*,\s*2[0-6]\.\d{3,}\s*\]/.test(dash));
+
+  /* The strongest check available: the geometry and the alumni data are
+     independent, so if every recorded city falls inside its own recorded
+     district then the polygons are real, correctly georeferenced, and the 2018
+     name changes were mapped correctly. A renamed district that silently never
+     matched would show up here as a miss rather than as a blank on the map. */
+  const places = (await db.query(
+    "SELECT city, division, district, latitude::float8 AS lat, longitude::float8 AS lng " +
+    "FROM location_places WHERE country = 'Bangladesh' AND district IS NOT NULL")).rows;
+  const divNames = new Set(geo.bdDivisions.map(f => f.name));
+  const distByName = new Map(geo.bdDistricts.map(f => [f.name, f]));
+  const unresolvedDiv = [...new Set(places.map(p => p.division))].filter(n => n && !divNames.has(n));
+  const unresolvedDist = [...new Set(places.map(p => p.district))].filter(n => !distByName.has(n));
+  ok('every division in location_places has a polygon',
+    unresolvedDiv.length === 0, 'unresolved: ' + JSON.stringify(unresolvedDiv));
+  ok('every district in location_places has a polygon',
+    unresolvedDist.length === 0, 'unresolved: ' + JSON.stringify(unresolvedDist));
+
+  const inRings = (rings, x, y) => {
+    let inside = false;
+    for (const r of rings) {
+      for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+        const xi = r[i][0], yi = r[i][1], xj = r[j][0], yj = r[j][1];
+        if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+      }
+    }
+    return inside;
+  };
+  const outside = places.filter(p => {
+    const f = distByName.get(p.district);
+    return !f || !inRings(f.rings, p.lng, p.lat);
+  }).map(p => p.city + '/' + p.district);
+  ok('every recorded city falls geographically inside its recorded district',
+    places.length > 0 && outside.length === 0,
+    (places.length - outside.length) + '/' + places.length +
+    (outside.length ? ' — outside: ' + outside.join(', ') : ''));
+
+  /* Shading must come from the counted rows, never from the geometry. */
+  ok('district shading is driven by the server-counted city rows',
+    /for \(const c of \(mapData && mapData\.cities\) \|\| \[\]\)/.test(dash) &&
+    /perDistrict\.set\(c\.district/.test(dash));
+  ok('the map endpoint returns the district each city belongs to',
+    /lp\.division, lp\.district/.test(src('server.js')));
+
   console.log(`\n${'='.repeat(64)}\n  ${pass} passed, ${fail} failed\n`);
  } catch (err) {
   console.error('\n  SUITE ERROR:', err.message, '\n', (err.stack || '').split('\n')[1]);

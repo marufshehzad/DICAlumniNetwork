@@ -353,6 +353,22 @@ function showModal(html, options) {
   const opts = options || {};
   /* A modal replacing another must run the outgoing one's teardown first. */
   if (_modalOnClose) { const f = _modalOnClose; _modalOnClose = null; try { f(); } catch {} }
+  /* A dialog is the topmost surface, so the notification drawer cannot stay
+     above it.
+
+     The drawer and the modal overlay both sit at z-index 2000, and the drawer
+     comes second in the document, so it wins the tie and paints over any dialog
+     opened while it is showing. Below 900px the drawer is full-screen, which
+     made the dialog completely unreachable: hit-testing the close button at
+     390px returned a notification row, and so did the middle of the dialog
+     body. A dialog nobody can see or dismiss, over a page nobody can get back
+     to.
+
+     Tapping a notification already closed the drawer on its way to a deep
+     link, so the common path was safe; anything else that opened a dialog
+     while the drawer was up was not. Closing it here fixes every path at once
+     and matches what a modal means. */
+  if (typeof closeNotifications === 'function') { try { closeNotifications(); } catch {} }
   _modalOnClose = typeof opts.onClose === 'function' ? opts.onClose : null;
   const body = document.getElementById('modal-body');
   const overlay = document.getElementById('modal-overlay');

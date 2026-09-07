@@ -4395,7 +4395,8 @@ names from 2× zoom and only where the label fits inside the country. Rings whos
 projected bounding box is entirely off-canvas are skipped, so a 16× pan builds
 45 paths rather than 166.
 
-**Bangladesh view** — a new control frames the country at 8× on its real
+**Bangladesh view** — a new control frames the country (at 8×; the closure
+pass below raised this to 16×) on its real
 geographic centre and swaps the coarse outline for the **1:10m** one: 737 points
 instead of 18, which is the difference between a recognisable country and a
 five-sided blob. Neighbours stay drawn and labelled, so the country sits in its
@@ -4405,6 +4406,14 @@ region.
 as the city and country layers.
 
 ### Division boundaries are not drawn, deliberately
+
+> **SUPERSEDED by the closure pass below.** The premise of this section — that
+> no licensable division or district geometry existed — was **wrong**. It was
+> reached after rejecting GADM and OSM/ODbL without examining geoBoundaries,
+> which publishes both layers under CC0 and CC BY 3.0 IGO. Real boundaries now
+> ship. The reasoning is left standing because the conclusion it reached was
+> acted on, and because "we looked and found nothing" and "we did not look
+> everywhere" are different statements and this was the second one.
 
 No division or district polygon dataset was available under a licence this
 project can carry. A division is therefore a **labelled badge at the
@@ -4536,8 +4545,9 @@ None. Nothing pre-existing was deleted and no assertion was weakened.
 
 ## Limitations
 
-- **No division or district boundaries** — no licensable geometry exists for
-  them here. Divisions are labelled points.
+- ~~**No division or district boundaries**~~ — **resolved in the closure
+  pass**: 8 divisions and 64 districts now ship as real geometry. What remains
+  absent is the level below them, upazilas.
 - **No satellite imagery, streets, routing or live GPS**, and none was asked
   for.
 - **Equirectangular distorts area** toward the poles.
@@ -4546,6 +4556,211 @@ None. Nothing pre-existing was deleted and no assertion was weakened.
   says how many and why.
 - **The world outline is 1:110m** — small islands are absent by design.
 - **Country labels appear from 2× zoom** and only where they fit.
+
+---
+
+# PHASE 7G CLOSURE PASS
+
+**Status:** **COMPLETE**
+**Date:** 2026-09-08
+**Scope:** verification of three surfaces the phase had claimed but not proven,
+plus one conclusion it had reached wrongly. Not a new phase; no redesign.
+
+Also recorded here: **`cf3aaad`**, a post-completion corrective commit that
+removed four chromatic glow shadows left over from the dark theme. No ignores
+were persisted; zero-blur focus rings and the crop-ring scrim were deliberately
+left alone.
+
+## 1. The notification drawer close button
+
+**The user's screenshot was right, and the button was not broken.** It closed
+correctly under a synthetic click at every width. It was **18×21px**, untyped
+and unlabelled, in the corner of the screen — while `.notif-readall` beside it
+already carried a 44px minimum on mobile. A target that small is one a finger
+misses more often than it hits, and a control you cannot reliably hit is
+indistinguishable from one that does not work.
+
+Now **44×44**, `type="button"`, `aria-label="Close notifications"`, a visible
+`:focus-visible` ring, `touch-action: manipulation`, in both portals. Escape
+closes the drawer too, registered once behind `__notifEscapeWired` and
+deferring to an open dialog so one key press never closes two things.
+
+Verified by **`elementFromPoint` hit-testing at the target's centre** — not
+`element.click()` — at **360 · 390 · 430 · 768 · 1024 · 1280 · 1440**, on first
+open, second open, after navigation, after mark-all-read, by Escape, and by
+keyboard focus and activation. One Escape produces exactly one close.
+
+One intermediate reading of `reachable: false` at 1024 was traced to **test
+residue** — a profile dialog left open by an earlier probe — not to a product
+defect. `.hidden` is `display: none !important`, so a closed overlay cannot
+intercept a click. The helper now closes any open dialog first.
+
+## 2. Mouse wheel zoom
+
+**The map had no wheel handler at all**, and no touch handler either. The
+controls were the +/− buttons alone. Both gestures were implemented.
+
+Wheel zoom is **stepped and anchored at the pointer**. Deltas accumulate to a
+120-unit threshold so a trackpad flick steps once instead of racing from world
+to 16×. The listener is non-passive and calls `preventDefault`, so the page
+does not scroll while the pointer is over the map.
+
+Verified: 1× → 2× → 4× → 2×; a trackpad flick steps exactly once;
+`wheelPrevented: true` over the canvas; wheeling **outside** the map leaves the
+zoom unchanged and prevents nothing; and after four page navigations one notch
+is still exactly one step, which is what the `gesturesWired` guard exists for.
+
+## 3. Touch / pinch zoom
+
+Two-finger pinch steps in at a span ratio of 1.35 and out at 0.74, anchored
+between the fingers, with the baseline reset after each step so a long pinch
+keeps stepping. `touch-action: none` on the canvas stops the browser panning
+the page mid-gesture.
+
+Verified at **390, 430 and 768**: an instrumented trace shows 1× → 2× at ratio
+2.33, → 4× at 1.43, and **no step** at 1.10 — one step per threshold crossing,
+never a run. An earlier anomalous reading of 4× → 16× was traced to two
+touchmoves on leftover state, not a defect.
+
+**Touch zoom implementation verified in browser emulation; physical device not
+yet verified.**
+
+## 4. Bangladesh detail — the phase's conclusion was wrong
+
+Phase 7G recorded that no licensable division or district geometry existed. It
+had rejected **GADM** (no commercial redistribution) and **OSM/ODbL**
+(attribution *and* share-alike) and stopped there.
+
+**geoBoundaries gbOpen** publishes both layers openly, and now ships:
+
+| Layer | Features | Licence | Authority | Year |
+|---|---|---|---|---|
+| ADM1 divisions | **8** | **CC0 1.0** | geoBoundaries / Wikimedia Commons | 2015 |
+| ADM2 districts | **64** | **CC BY 3.0 IGO** | Bangladesh Bureau of Statistics / OCHA ROAP | 2020 |
+
+Both allow commercial use and redistribution; **neither carries share-alike**,
+which is what ruled the others out. Attribution is required and is rendered
+under the map.
+
+The licence was read from the **geoBoundaries API**, not from a repackager —
+which mattered, because the npm package `bd-geojson` redistributes the same
+data and gives three inconsistent answers about its licence (a blanket ODbL
+file, metadata claiming CC BY 4.0, against the API's CC BY 3.0 IGO). It was not
+used; `tools/build_geo.js` fetches from the pinned upstream commit `9469f09`.
+
+**No district borders were faked, and none were drawn from memory.**
+
+The build kept 1,027 of 2,060 division points and 3,400 of 38,112 district
+points at a 0.015° tolerance — 0.6px at the deepest zoom step, so below a pixel.
+The asset grew 78 KB → **149 KB**, against a pre-existing 250 KB budget that was
+not relaxed.
+
+Names were reconciled toward the data, never the reverse: Chittagong →
+Chattogram, Barisal → Barishal, Comilla → Cumilla, Jessore → Jashore, Bogra →
+Bogura, Maulvibazar → Moulvibazar, plus two source misspellings (`Rajshani`,
+`Brahamanbaria`).
+
+**The proof that the geometry is real**: all **30** Bangladeshi cities in
+`location_places` fall geometrically **inside their own recorded district**.
+The polygons and the alumni data come from unrelated sources, so agreement
+between them is evidence rather than a restatement — and a rename that silently
+never matched would surface here as a miss instead of a blank on the map.
+
+A district is tinted only where alumni are actually recorded, from the same
+server-counted rows that position the badges. The real data is one alumnus in
+Chattogram; exactly one district is tinted.
+
+**The view also had the wrong zoom.** The phase framed Bangladesh at 8× on the
+stated grounds that at 16× the country is "wider than the canvas". Measured,
+it is not: at 16× the projected bounding box sits fully inside the 900×450
+viewBox at 20% width and 52% height, against 10% and 26% at 8×. Raised to 16×,
+which is what makes 64 district boundaries legible.
+
+## 5. The notification drawer sat on top of every dialog
+
+Found while re-running the modal regression across all dialog families, which
+is exactly what that sweep is for.
+
+The drawer and the modal overlay **both sit at `z-index: 2000`**, and the
+drawer comes second in the document — so it wins the tie and paints over any
+dialog opened while it is showing. Below 900px the drawer is full-screen, so
+the dialog underneath was not merely overlapped but **completely unreachable**:
+at 390px, hit-testing the dialog's close button returned `notif-item-title`,
+and the middle of the dialog body returned `notif-item-time`. A dialog nobody
+can see or dismiss, over a page nobody can get back to.
+
+At 1280px the drawer is a 360px right-hand panel and the dialog's close button
+falls clear of it, which is why desktop testing never showed this.
+
+Tapping a notification already called `closeNotifications()` on its way to a
+deep link, so the common path was safe. Any other route that opened a dialog
+while the drawer was up was not — a forced password change, or a session
+expiry, would have produced a dead screen.
+
+**Fix:** `showModal()` closes the drawer. A dialog is the topmost surface by
+definition, so nothing else should be above it. One call, every path fixed.
+Verified at 375px on both portals: the drawer closes, and the close button and
+the dialog body are both hit-testable again.
+
+## 6. Also fixed
+
+- **Map control labels broke mid-word** at 375px — "Focu s", "Banglades h",
+  "Worl d" — because the flex row had no `white-space` rule. Pre-existing, on
+  the controls §7 covers, and fixed with `flex-wrap` on the row and
+  `white-space: nowrap` on the buttons.
+- **`tests/phase65_provisioning.js` aborted the process on Windows** after all
+  57 of its assertions had passed — `process.exit()` ran while a pg socket was
+  mid-close, tripping a libuv assertion, so `run-all` recorded a failure for a
+  suite that had none. Confirmed pre-existing at `HEAD` before changing it.
+  Fixed by closing the pool and letting the close settle.
+- **Two comments in `/api/stats/map` asserted that the project holds no
+  boundary geometry.** True when written, false once it did; corrected rather
+  than left to drift.
+
+## Tests
+
+```
+32 suites                     2,726 passed, 0 failed
+  phase7g_modals                110   (was 72; +38 for the closure pass)
+  phase65_provisioning           57   now exits 0, having always passed
+```
+
+The 38 new assertions cover the drawer's 44×44 typed and labelled control and
+its guarded Escape; the wheel and pinch handlers, their non-passive
+registration and the duplicate-listener guard; and the geometry's feature
+counts, recorded licence, pinned upstream, rendered attribution, complete name
+resolution against `location_places`, and the point-in-district check — plus
+the drawer/dialog layering, asserted both ways: that `showModal` closes the
+drawer, and that the two really do share a stacking layer, so the assertion
+fails loudly if someone "fixes" the z-index instead and leaves the close in
+place unexplained.
+
+**Every dialog family in the closure brief was re-driven in a real browser** at
+375px across both portals — photo chooser and editor, change password, edit
+profile, delete account, donate, campaign, post job, referral, create chapter,
+create news, poll editor, administrator creation, event wizard, broadcast and
+the event planner forms. For each: the close control hit-tested at its centre,
+the dialog on screen, Escape, reopen, and — for data-entry forms — that a
+backdrop click does **not** dismiss them. Destructive openers
+(`confirmAccountDeletion`, `confirmImportRollback`,
+`confirmResetAdministratorPassword`, `showTemporaryPassword`) were
+deliberately excluded rather than called; the account and the audit trail were
+checked afterwards and nothing was modified.
+
+`phase65_provisioning` reports **3 skipped**, which are not counted as passed.
+
+**No assertion was weakened, and nothing pre-existing was deleted.**
+
+## Limitations
+
+- **Touch zoom is emulation-verified only**, as stated above.
+- **No upazila boundaries.** geoBoundaries publishes ADM3, so this is a size
+  and usefulness judgement, not a licensing one.
+- **District boundaries are 2020 vintage**, divisions 2015. Administrative
+  boundaries change; these are not live.
+- The map now carries an **attribution obligation** it did not have before.
+  It is rendered under the map and asserted by the suite, but it is a
+  standing obligation rather than a one-off task.
 
 ## Next phase
 

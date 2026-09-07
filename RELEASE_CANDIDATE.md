@@ -3,8 +3,9 @@
 **Status: RELEASE CANDIDATE — engineering complete, not deployed.**
 
 Recorded 2026-09-08 at the close of Phase 7E, the final engineering quality
-gate, and updated at the close of Phase 7F (profile photos) and Phase 7G
-(geographic map and modal reliability).
+gate, updated at the close of Phase 7F (profile photos) and Phase 7G
+(geographic map and modal reliability), and again after the Phase 7G closure
+pass (notification drawer, pointer zoom, real Bangladesh boundaries).
 
 This document states what the platform is, what it does, what it deliberately
 does not do, and what DIC must supply before it can run in production. It does
@@ -52,7 +53,7 @@ historical entry breaks verification.
 | Directory | Search, filters, privacy-filtered fields, division/district filters |
 | Privacy | Per-field levels (public / alumni / private); email and mobile carry a documented staff bypass, **location does not** |
 | Location | 99 reference places, alumni map aggregation, event venues, chapter locations, job work modes |
-| Alumni map | **Real country boundaries** (Natural Earth, public domain, bundled — no tiles, no API key, no mapping library). World view with country labels; a Bangladesh view with the detailed national outline and division-level counts. Ranked list beside it carries the same numbers |
+| Alumni map | **Real country boundaries** (Natural Earth, public domain) plus **real Bangladesh division and district boundaries** (geoBoundaries: 8 ADM1 under CC0, 64 ADM2 under CC BY 3.0 IGO). Bundled — no tiles, no API key, no mapping library. World view with country labels; a Bangladesh view at 16× with the detailed national outline, 64 districts and 8 divisions drawn, and districts tinted only where alumni are actually recorded. Mouse-wheel and pinch zoom. Ranked list beside it carries the same numbers |
 | Events (v5) | Create, edit, approve, reject, cancel, tasks, committees, people, external contacts, budget, sponsors, vendors, logistics, marketing, meetings, risks, timeline, volunteers, procurement |
 | Tickets | Multiple ticket types, quotas, capacity from live counts, waitlist, signed QR codes, check-in, attendee export |
 | Jobs | Post, edit, close, reopen, deadline, apply, applicant management, application status workflow, referrals with accept/decline |
@@ -79,13 +80,13 @@ These are **not** defects. Each is a deliberate decision recorded in PHASE_LOG.m
 | File uploads generally | Only profile photos are uploadable. There is no document, cover-image or attachment upload; event cover images and imported photo fields are still URLs. |
 | Camera capture on a device with no camera or with permission refused | The camera button is only offered where `mediaDevices.getUserMedia` exists, and a refusal falls back to the file picker with the message “Camera access was denied. You can choose a photo from your device instead.” |
 | Email delivery beyond password reset | SMTP is wired for reset links; broadcasts are in-app only. |
-| A map library or tile provider | The map is drawn from `location_places` coordinates. No API key, no tile provider, no attribution obligation — see MAP_TECHNOLOGY.md. |
+| A map library or tile provider | The map is drawn from `location_places` coordinates and bundled geometry. No API key, no tile provider, no runtime request to anybody's server. It **does** carry an attribution obligation (geoBoundaries / CC BY 3.0 IGO), rendered under the map — see MAP_TECHNOLOGY.md. |
 | Employment-outcome analytics | The schema stores no outcome data, so no chart claims to show it. |
 | Mentorship health scoring | Nothing computes it; the report shows days-to-answer, which is arithmetic on two real timestamps. |
 | Department scoping for jobs | A job is open to every graduate; `dept_admin` has no administrative authority over jobs at all. |
 | XLSX import | CSV only. |
 | Satellite imagery, streets, routing, live GPS | None. The map answers “which country, and roughly where”. `navigator.geolocation` appears nowhere in the codebase. |
-| Division or district **boundaries** | No polygon dataset was available under a licence this project can carry, and drawing administrative borders from memory would be inventing geography. Divisions are labelled points at the alumni-weighted mean of their real city coordinates. |
+| Upazila (sub-district) boundaries | Divisions and districts **are** drawn, from geoBoundaries. The level below them is not: geoBoundaries publishes ADM3, so this is a size and usefulness judgement rather than a licensing one. |
 
 ---
 
@@ -99,7 +100,7 @@ These are **not** defects. Each is a deliberate decision recorded in PHASE_LOG.m
 ```
 
 Phase 7F added `tests/phase7f_profile_photo.js` (108 assertions). Phase 7G added
-`tests/phase7g_modals.js` (72). Two assertions were re-expressed in Phase 7G to
+`tests/phase7g_modals.js`, which the closure pass took from 72 to **110**. Two assertions were re-expressed in Phase 7G to
 check a property rather than an exact expression a refactor had replaced;
 neither was weakened.
 
@@ -222,6 +223,10 @@ its typed value intact.
 | Reports are read into memory | 5,000 rows on screen, 50,000 in a file. A capped result says so. |
 | `test_e2e_crud.js` | A legacy development script the Master Audit says to keep as historical tooling. It references columns Phase 7D dropped and **would fail if run**. Excluded from any production image. Tracked as INFO-1. |
 | **Camera capture is not verified on real hardware** | `getUserMedia` needs a browser, a device and a person granting permission. The flow was exercised in a browser with a **stubbed** MediaStream: the permission-denied path, the file-input fallback, and every stream-teardown path (capture, cancel, save, close, Escape, modal replacement, tab hidden, page unload). Live capture from a real phone camera has **not** been tested and should be part of College UAT. |
+| **Notification drawer no longer covers dialogs — FIXED** | The drawer and the modal overlay share `z-index: 2000` and the drawer came second in the DOM, so below 900px an open drawer made any dialog opened beneath it completely unreachable. `showModal()` now closes the drawer. |
+| **Notification drawer close button — VERIFIED** | The reported control was **18×21px**, untyped and unlabelled. It is now **44×44** with `type="button"`, `aria-label="Close notifications"`, a visible focus ring, and Escape support. Verified by real `elementFromPoint` hit-testing (not `element.click()`) at 360 · 390 · 430 · 768 · 1024 · 1280 · 1440, across repeat opens, after navigation, after mark-all-read, by Escape and by keyboard. |
+| **Mouse-wheel zoom — VERIFIED** | Stepped and anchored at the pointer. 1× → 2× → 4× → 2× confirmed; a trackpad flick steps once; the page does not scroll over the map; wheeling outside the map does not zoom it; one notch is still one step after four page navigations. |
+| **Touch/pinch zoom — verified in browser emulation only** | **Touch zoom implementation verified in browser emulation; physical device not yet verified.** Traced at 390, 430 and 768: one step per threshold crossing (2.33 → step, 1.43 → step, 1.10 → no step). Real-device confirmation should be part of College UAT. |
 | The map shows only public locations | With the platform default of `alumni`, most members are absent from the map until they choose otherwise. The note under the map states how many are hidden and why. |
 | Photos are fetched with the session, not by `<img src>` | An `<img>` cannot send a bearer token, and this platform has no cookies. Avatars are fetched with the token and shown as object URLs, so a photo appears a moment after the initials. The alternative — a public directory or a session-free signed URL to somebody’s face — was rejected. |
 | Profile photo storage is local disk | `UPLOAD_DIR` points at `./uploads/profile-photos` by default and is configurable. There is no object-store integration, because no provider account exists and inventing one was out of scope. A VPS deployment must include this directory in its backup. |

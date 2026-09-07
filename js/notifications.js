@@ -233,3 +233,19 @@ function closeNotifications() {
   const panel = document.getElementById('notif-panel');
   if (panel) panel.classList.add('hidden');
 }
+
+/* Escape closes the drawer, the way it closes a dialog. Registered once, at the
+   document, so it survives every re-render of the list inside — and it does
+   nothing while a modal is open, because the modal's own Escape handler owns
+   that case and two handlers closing two things on one key press is worse than
+   either. */
+if (typeof window !== 'undefined' && !window.__notifEscapeWired) {
+  window.__notifEscapeWired = true;
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const overlay = document.getElementById('modal-overlay');
+    if (overlay && !overlay.classList.contains('hidden')) return;   // a dialog is on top
+    const panel = document.getElementById('notif-panel');
+    if (panel && !panel.classList.contains('hidden')) closeNotifications();
+  });
+}

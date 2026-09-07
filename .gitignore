@@ -26,3 +26,8 @@ backups/
 *.sql.gz
 
 uploads/
+
+# Build-time geometry downloads (geoBoundaries). Fetched by tools/build_geo.js
+# from a pinned upstream commit; only the simplified assets/geo/boundaries.json
+# is committed.
+tools/.geocache/

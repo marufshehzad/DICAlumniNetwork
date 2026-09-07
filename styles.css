@@ -1643,11 +1643,16 @@ body.password-change-required .topbar-actions {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 10px 14px; border-bottom: 1px solid var(--border-glass); flex-wrap: wrap;
 }
-.map-modes, .map-zoom { display: flex; gap: 6px; }
+/* The row wraps between buttons, and a button never wraps inside itself. At
+   375px the five controls did not fit on one line and the labels broke
+   mid-word — "Focu s", "Banglades h", "Worl d" — which reads as a rendering
+   fault rather than a narrow screen. */
+.map-modes, .map-zoom { display: flex; gap: 6px; flex-wrap: wrap; }
 .map-mode-btn, .map-zoom-btn {
   background: #fff; border: 1px solid var(--border-glass); color: var(--text-secondary);
   font-size: 12px; font-weight: 600; border-radius: 7px; cursor: pointer;
   min-height: 32px; min-width: 32px; padding: 0 10px;
+  white-space: nowrap;
 }
 .map-mode-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
 .map-mode-btn:hover:not(.active), .map-zoom-btn:hover { border-color: var(--primary); color: var(--primary); }
@@ -1700,6 +1705,17 @@ body.password-change-required .topbar-actions {
 .map-rank-bar { height: 5px; background: #e2e8f0; border-radius: 3px; overflow: hidden; }
 .map-rank-bar > span { display: block; height: 100%; background: #4a7fc1; border-radius: 3px; }
 .map-rank-n { font-size: 12px; font-weight: 700; color: var(--text-primary); text-align: right; font-variant-numeric: tabular-nums; }
+
+/* The boundary licences require a visible credit. Quiet, but present and
+   readable — an attribution that has to be hunted for is not an attribution. */
+.map-attribution {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.map-attribution a { color: inherit; text-decoration: underline; }
+.map-attribution a:hover { color: var(--daffodil-primary); }
 
 .map-legend {
   display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
@@ -3989,6 +4005,32 @@ textarea.form-input { resize: vertical; min-height: 100px; }
 }
 .notif-readall:hover { border-color: var(--primary); color: var(--primary-light); }
 @media (max-width: 900px) { .notif-readall { min-height: 44px; } }
+
+/* The drawer's close control. "Mark all read" beside it already had a 44px
+   minimum on mobile; the X did not, and sat at 18x21 in the corner of the
+   screen at every width — a target a finger misses more often than it hits,
+   which reads as a button that does not work. Same size and shape as
+   .modal-close so every close control on the platform behaves alike. */
+.notif-close {
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition);
+  touch-action: manipulation;
+}
+.notif-close:hover { background: rgba(11, 56, 151, 0.08); color: var(--daffodil-primary); }
+.notif-close:focus-visible { outline: 2px solid var(--teal-text); outline-offset: 2px; }
+
+/* The map canvas handles its own pinch, so the browser must not also pan the
+   page while two fingers are on it. Scrolling anywhere else is untouched. */
+.map-canvas { touch-action: none; }
 
 /* ─── LOGIN ERROR BANNER ─── */
 .login-error {

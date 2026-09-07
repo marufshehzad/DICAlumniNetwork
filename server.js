@@ -3131,21 +3131,24 @@ app.get('/api/stats/map', requireAuth, async (req, res) => {
     const [cities, countries, divisions, totals] = await Promise.all([
       db.query(`
         SELECT lp.id AS place_id, lp.city, lp.country, lp.country_code,
+               lp.division, lp.district,
                lp.latitude::float8 AS latitude, lp.longitude::float8 AS longitude,
                COUNT(*)::int AS n
           FROM alumni_profiles ap
           JOIN location_places lp ON lp.id = ap.place_id
          WHERE ${privacy.MAP_VISIBLE_SQL}
-         GROUP BY lp.id, lp.city, lp.country, lp.country_code, lp.latitude, lp.longitude
+         GROUP BY lp.id, lp.city, lp.country, lp.country_code, lp.division,
+                  lp.district, lp.latitude, lp.longitude
          ORDER BY n DESC, lp.city`),
       /* Country rollup. `cities` is the number of distinct places alumni are
          actually in, and latitude/longitude is the alumni-weighted mean of
          those city coordinates.
 
          That position is NOT a country centroid and carries no claim about
-         borders — there is no boundary dataset in this project, so none is
-         implied. It is "where this country's alumni are, on average", which is
+         borders. It is "where this country's alumni are, on average", which is
          a statement about the alumni and is exactly what the badge reports.
+         The map does draw real country boundaries (Natural Earth), but they
+         are drawn from that geometry — this position is never used as one.
          Computed here so the browser only ever draws what the server counted. */
       db.query(`
         SELECT lp.country, lp.country_code,
@@ -3163,8 +3166,10 @@ app.get('/api/stats/map', requireAuth, async (req, res) => {
          absent here exactly as they are absent from the city and country
          layers. The position is the alumni-weighted mean of the division's
          city coordinates: it is "where this division's alumni are", not a
-         division centroid, and it carries no claim about a boundary — this
-         project holds no division geometry and therefore implies none. */
+         division centroid. Real division and district polygons ARE drawn in
+         the Bangladesh view (geoBoundaries, see tools/build_geo.js), and they
+         come from that geometry — this weighted position is deliberately NOT
+         used as a boundary or a centroid, only as the badge's anchor. */
       db.query(`
         SELECT lp.division,
                COUNT(*)::int AS n,

@@ -738,6 +738,18 @@
                fixed 1000+/100–999/<100 scale put every real place in one
                bucket. -->
           <div class="map-legend" id="map-legend"></div>
+          <!-- Required by the boundary licences: geoBoundaries asks for a
+               visible credit with a link, and the district layer is CC BY 3.0
+               IGO, which is attribution-bearing. Natural Earth is public domain
+               and needs none, but is named for provenance. -->
+          <p class="map-attribution">
+            Boundaries:
+            <a href="https://www.naturalearthdata.com/" target="_blank" rel="noopener noreferrer">Natural Earth</a>
+            (public domain) and
+            <a href="https://www.geoboundaries.org/" target="_blank" rel="noopener noreferrer">geoBoundaries</a>;
+            Bangladesh districts from the Bangladesh Bureau of Statistics / OCHA ROAP,
+            <a href="https://creativecommons.org/licenses/by/3.0/igo/" target="_blank" rel="noopener noreferrer">CC BY 3.0 IGO</a>.
+          </p>
         </div>
         <!-- 47 countries, 12,847 mapped alumni, 8,241 in Bangladesh, 4,606
              international, 23 active chapters — all five were literals, and the
@@ -947,8 +959,13 @@
     <div class="notif-header">
       <h3>Notifications</h3>
       <div class="notif-header-actions">
-        <button class="notif-readall" onclick="markAllNotificationsRead()">Mark all read</button>
-        <button onclick="closeNotifications()"><i data-lucide="x" class="ui-icon"></i></button>
+        <button type="button" class="notif-readall" onclick="markAllNotificationsRead()">Mark all read</button>
+        <!-- This was an 18x21px unlabelled button in the corner of the screen.
+             It closed correctly when hit; the problem was hitting it. It now
+             carries the platform's 44x44 close target, a name a screen reader
+             can read, and an explicit type. -->
+        <button type="button" class="notif-close" aria-label="Close notifications"
+                onclick="closeNotifications()"><i data-lucide="x" class="ui-icon"></i></button>
       </div>
     </div>
     <div id="notif-list"></div>
