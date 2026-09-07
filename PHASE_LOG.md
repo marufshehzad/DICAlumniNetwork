@@ -4121,7 +4121,8 @@ further engineering phase is planned.
 
 **Status:** **COMPLETE**
 **Date:** 2026-09-08
-**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Commit:** `7d35a86`
+**Parent:** `0f10c0c`
 
 ### Current support before the phase
 
