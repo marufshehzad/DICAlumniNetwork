@@ -342,7 +342,23 @@ async function hydrateUserProfile() {
 
   // The digital ID card, from the same row.
   const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
-  set('id-card-avatar', p.initials || (p.full_name || '?').charAt(0));
+
+  /* Phase 7F. The ID card avatar and the profile photo slot both show the
+     photo over the initials. Written by hand rather than through avatarHtml()
+     because these are existing elements being filled, not markup being built. */
+  MY_PHOTO_URL = p.effective_photo_url || p.photo_url || null;
+  const initials = p.initials || (p.full_name || '?').charAt(0);
+  for (const id of ['id-card-avatar', 'profile-photo-slot']) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.innerHTML = `<span class="avatar-initials" aria-hidden="true">${escapeHtml(initials)}</span>` +
+      (MY_PHOTO_URL
+        ? `<img class="avatar-img" data-photo-src="${escapeHtml(MY_PHOTO_URL)}" alt="" onerror="this.remove()" />`
+        : '');
+    if (MY_PHOTO_URL && typeof hydrateAvatars === 'function') hydrateAvatars(el);
+  }
+  const cta = document.getElementById('profile-photo-cta');
+  if (cta) cta.textContent = MY_PHOTO_URL ? 'Change photo' : 'Add a photo';
   set('id-card-name', p.full_name || 'Unnamed account');
   set('id-card-degree', [p.degree, p.program].filter(Boolean).join(' · '));
   set('id-card-batch', p.batch ? `Batch of ${p.batch}` : '');
@@ -588,6 +604,19 @@ function switchProfileHubSection(sectionTag, btn) {
   document.querySelectorAll('.profile-hub-tab').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   render10SectionProfile(sectionTag);
+}
+
+/* Phase 7F — the profile photo editor. Opened from the profile page; the rest
+   lives in js/photo.js, which both portals load. */
+let MY_PHOTO_URL = null;
+
+function openProfilePhotoEditor() {
+  if (typeof showPhotoChooser !== 'function') {
+    showToast('\u26a0 The photo editor could not be loaded.');
+    return;
+  }
+  showPhotoChooser(!!MY_PHOTO_URL);
+  if (window.lucide) lucide.createIcons();
 }
 
 /* ─── 7. FULL PROFILE EDITOR MODAL ───

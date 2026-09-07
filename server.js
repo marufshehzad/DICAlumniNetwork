@@ -12,6 +12,7 @@ const mailer = require('./mailer');
 const jobs = require('./jobs');
 const privacy = require('./privacy');
 const scope = require('./scope');       // one definition of department scope
+const photos = require('./photos');     // profile photo storage and processing
 const location = require('./location');
 const path = require('path');
 const fs = require('fs');
@@ -72,7 +73,21 @@ app.use(cors(ALLOWED_ORIGINS.length ? {
   },
   credentials: false
 } : undefined));
-app.use(bodyParser.json());
+/* Phase 7F. The default 100kb body limit is right for every route on this
+   platform except one: a profile photo arrives as a base64 data URL, and 10 MB
+   of image is about 13.4 MB of base64. Raising the limit globally would let any
+   endpoint accept a 14 MB body, so the larger parser is mounted on the photo
+   route ALONE and everything else keeps the small one.
+
+   The size is still enforced twice more after this — once on the decoded byte
+   length in photos.js, and once on the decoded image's dimensions — because a
+   body limit only says how much arrived, not what it was. */
+const jsonSmall = bodyParser.json();
+const jsonPhoto = bodyParser.json({ limit: '14mb' });
+app.use((req, res, next) =>
+  (req.method === 'POST' && req.path === '/api/profile/photo')
+    ? jsonPhoto(req, res, next)
+    : jsonSmall(req, res, next));
 /* Security headers, set here rather than only in vercel.json. Those are edge
    headers: they exist on Vercel and nowhere else, so running this behind nginx,
    a VPS or `node server.js` left the staff portal indexable and framable. Both
@@ -174,7 +189,7 @@ app.use((req, res, next) => {
      and answers 200 with the application shell — harmless in itself, but a
      path under the backup directory should say "no such thing", not hand back
      a page that implies something is there. */
-  if (/^\/(backups|node_modules|ops|api\/index)\b/i.test(p)) {
+  if (/^\/(backups|node_modules|ops|uploads|api\/index)\b/i.test(p)) {
     return res.status(404).type('text/plain').send('Not found');
   }
   if (!path.extname(p)) return next();          // SPA route, not a file request
@@ -1344,7 +1359,12 @@ app.get('/api/alumni', requireAuth, async (req, res) => {
              ap.city AS legacy_city, ap.country AS legacy_country,
              ${privacy.DIRECTORY_VISIBLE_SQL} AS location_visible,
              ap.skills, ap.can_mentor AS mentor, ap.color, ap.student_id,
-             ap.degree, ap.bio
+             ap.degree, ap.bio,
+             /* Phase 7F. A photo is exactly as visible as the profile it
+                belongs to, which the directory already gates by requiring a
+                session — so it rides along with the rest of the card. The
+                bytes are still served by an authenticated route. */
+             ap.photo_url
       FROM users u JOIN alumni_profiles ap ON u.id = ap.user_id
       LEFT JOIN location_places lp ON lp.id = ap.place_id
       ${whereSql}
@@ -1485,6 +1505,11 @@ app.get('/api/profile/me', requireAuth, async (req, res) => {
       SELECT u.id, u.email, u.full_name, u.initials, u.role, u.role_label,
              u.department AS user_department, u.is_verified, u.must_change_password, u.created_via,
              ap.*,
+             /* Phase 7F: whichever photo column belongs to this account. An
+                alumnus's photo lives on the profile, a staff account's on the
+                user row, and a staff account has no profile row at all — so
+                ap.* alone would lose it. */
+             COALESCE(ap.photo_url, u.photo_url) AS effective_photo_url,
              lp.id AS place_id_resolved, lp.city AS place_city, lp.country AS place_country,
              lp.country_code AS place_country_code, lp.division AS place_division,
              lp.district AS place_district
@@ -1652,6 +1677,122 @@ app.get('/api/locations/places', requireAuth, async (req, res) => {
 
 /* The privacy contract, so the browser renders exactly the fields and levels
    the server enforces instead of a hand-maintained copy that drifts. */
+/* ═══ PROFILE PHOTO (Phase 7F) ══════════════════════════════
+
+   Three routes: set one, remove one, serve one.
+
+   WHERE THE PHOTO LIVES. Both photo columns already existed and both were
+   empty. They are kept apart rather than merged, because they belong to
+   different things: an alumnus's photo is part of their alumni profile
+   (`alumni_profiles.photo_url`, already the field the profile editor writes and
+   already what event people render from), and a staff account's photo is part
+   of the account (`users.photo_url`, written by administrator provisioning).
+   A staff account has no alumni_profiles row at all. No column was added.
+
+   WHO MAY DO WHAT. A member sets and removes their OWN photo and nobody
+   else's; the subject is always req.user.uid and is never read from the
+   request. An administrator gains no photo-editing right here — the existing
+   administrator form still sets an external photo URL on staff accounts, which
+   is the policy that already existed, and nothing in this phase widens it.
+
+   VISIBILITY. A photo is exactly as visible as the profile it belongs to:
+   readable by any signed-in member, and by nobody who is not signed in. That is
+   what the directory already does, and it is why photos are served by this
+   route rather than from a public directory — the static allow-list in this
+   file would 404 an uploads folder, which is the behaviour we want. No new
+   privacy level was invented for photos. */
+
+/* Which table carries this account's photo, and what it currently holds. */
+async function photoRowFor(uid) {
+  const prof = await db.query('SELECT photo_url FROM alumni_profiles WHERE user_id = $1', [uid]);
+  if (prof.rows.length) return { table: 'alumni_profiles', key: 'user_id', url: prof.rows[0].photo_url };
+  const usr = await db.query('SELECT photo_url FROM users WHERE id = $1', [uid]);
+  if (usr.rows.length) return { table: 'users', key: 'id', url: usr.rows[0].photo_url };
+  return null;
+}
+
+app.post('/api/profile/photo', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const current = await photoRowFor(uid);
+    if (!current) return res.status(404).json({ error: 'No profile to attach a photo to.' });
+
+    const stored = await photos.storePhoto(uid, req.body && req.body.image);
+    if (stored.error) return res.status(400).json({ error: stored.error });
+
+    /* The new photo is recorded FIRST and the old file is deleted only once the
+       record points at the new one. The other order leaves a member with a
+       profile pointing at a file that is gone if anything fails in between. */
+    const url = photos.photoUrl(uid, stored.name);
+    await db.query(
+      `UPDATE ${current.table} SET photo_url = $1 WHERE ${current.key} = $2`, [url, uid]);
+
+    const previous = photos.nameFromUrl(current.url);
+    if (previous && previous !== stored.name) await photos.removePhoto(previous);
+
+    await writeAuditSafe('Profile Photo Updated', `user ${uid}`, '📷', auditCtx(req, 'user', uid));
+    res.json({ success: true, photoUrl: url, width: stored.width, height: stored.height, bytes: stored.bytes });
+  } catch (err) {
+    serverError(res, err, 'api');
+  }
+});
+
+app.delete('/api/profile/photo', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const current = await photoRowFor(uid);
+    if (!current) return res.status(404).json({ error: 'No profile to remove a photo from.' });
+
+    await db.query(
+      `UPDATE ${current.table} SET photo_url = NULL WHERE ${current.key} = $1`, [uid]);
+
+    /* Only a file this platform stored is deleted. An external URL — the ones
+       the bulk import and the administrator form still accept — is cleared from
+       the profile but is not ours to delete from wherever it lives. */
+    const name = photos.nameFromUrl(current.url);
+    if (name) await photos.removePhoto(name);
+
+    await writeAuditSafe('Profile Photo Removed', `user ${uid}`, '📷', auditCtx(req, 'user', uid));
+    res.json({ success: true, photoUrl: null });
+  } catch (err) {
+    serverError(res, err, 'api');
+  }
+});
+
+app.get('/api/profile/photo/:id', requireAuth, async (req, res) => {
+  try {
+    const uid = parseInt(req.params.id, 10);
+    if (!Number.isInteger(uid)) return res.status(400).json({ error: 'Invalid id' });
+
+    const row = await photoRowFor(uid);
+    /* One answer for "no such account", "no photo" and "the file is gone", so
+       this route cannot be used to find out which accounts exist. */
+    if (!row || !row.url) return res.status(404).json({ error: 'No photo' });
+
+    const name = photos.nameFromUrl(row.url);
+    if (!name) return res.status(404).json({ error: 'No photo' });
+
+    /* The requested version must be the CURRENT one. An old ?v= is a photo the
+       member has since replaced or removed, and serving it would mean a
+       replaced face stayed reachable to anyone who had the URL. */
+    if (req.query.v && req.query.v !== name) return res.status(404).json({ error: 'No photo' });
+
+    const bytes = await photos.readPhoto(name);
+    if (!bytes) return res.status(404).json({ error: 'No photo' });
+
+    res.set('Content-Type', 'image/jpeg');
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Content-Disposition', 'inline');
+    /* Private, because this is personal data behind a session — a shared cache
+       must not hold it. Immutable, because the name changes whenever the photo
+       does, so a browser may keep this exact URL as long as it likes. */
+    res.set('Cache-Control', 'private, max-age=86400, immutable');
+    res.send(bytes);
+  } catch (err) {
+    serverError(res, err, 'api');
+  }
+});
+
 app.get('/api/profile/privacy-schema', requireAuth, (req, res) => {
   res.json(privacy.schemaForClient());
 });

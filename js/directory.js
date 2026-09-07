@@ -54,6 +54,10 @@ async function renderAlumniGrid({ append = false } = {}) {
 
   const cards = alumni.map(renderAlumniCard).join('');
   containers.forEach(c => append ? c.insertAdjacentHTML('beforeend', cards) : (c.innerHTML = cards));
+  /* Photos are behind an authenticated route, so the <img> elements are
+     rendered with data-photo-src and filled in once the bytes arrive. Until
+     then — and permanently, if a fetch fails — the initials show through. */
+  if (typeof hydrateAvatars === 'function') containers.forEach(c => hydrateAvatars(c));
 
   const shownCount = container.querySelectorAll('.alumni-card').length;
   if (countEl) countEl.textContent = `Showing ${shownCount} of ${total} profile${total === 1 ? '' : 's'}`;
@@ -286,8 +290,9 @@ function renderAlumniCard(a) {
   return `
     <div class="alumni-card" onclick="viewAlumniProfile(${a.id})">
       <div class="alumni-card-top">
-        <div class="alumni-avatar ${a.verified ? 'verified-ring' : ''}" style="background: linear-gradient(135deg, ${color}40, ${color}20);">
-          <span style="color:${readableInk(color)}">${escapeHtml(a.initials)}</span>
+        <div class="alumni-avatar avatar-wrap ${a.verified ? 'verified-ring' : ''}" style="background: linear-gradient(135deg, ${color}40, ${color}20);">
+          <span class="avatar-initials" style="color:${readableInk(color)}">${escapeHtml(a.initials)}</span>
+          ${a.photo_url ? `<img class="avatar-img" data-photo-src="${escapeHtml(a.photo_url)}" alt="" onerror="this.remove()" />` : ''}
           ${a.verified ? '<div class="verified-badge-icon"><i data-lucide="check" class="ui-icon"></i></div>' : ''}
         </div>
         <div class="alumni-card-info">

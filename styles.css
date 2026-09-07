@@ -6234,3 +6234,73 @@ textarea.form-input { resize: vertical; min-height: 100px; }
 .scope-banner .ui-icon { width: 16px; height: 16px; flex-shrink: 0; margin-top: 2px; }
 .scope-banner strong { display: block; font-weight: 700; }
 .scope-banner span { color: var(--text-secondary); }
+
+/* ─── PHASE 7F: PROFILE PHOTO, CAMERA AND CROP ──────────────
+   Light, like the rest of the platform. The crop stage is square at every
+   width so the circle a member frames is the circle they get. */
+
+/* One avatar shape everywhere: initials underneath, photo on top. If the
+   image fails to load it removes itself and the initials show through, so a
+   deleted file never leaves a broken-image icon. */
+/* Deliberately NOT overflow:hidden. The verified badge sits at bottom:-2px;
+   right:-2px, outside the avatar's own box, so clipping the wrapper would clip
+   the badge off every verified member in the directory. The IMAGE is rounded
+   instead, which is what needed clipping in the first place. */
+.avatar-wrap {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; flex-shrink: 0;
+  background: linear-gradient(135deg, var(--teal, #00A859), var(--primary, #0B3897));
+  color: #fff; font-weight: 700; line-height: 1; user-select: none;
+}
+.avatar-initials { position: relative; z-index: 0; letter-spacing: .02em; }
+.avatar-img {
+  position: absolute; inset: 0; z-index: 1;
+  width: 100%; height: 100%; object-fit: cover; display: block;
+  border-radius: 50%;
+}
+
+.photo-hint { font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; margin: 0 0 14px; }
+.photo-note { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; margin: 12px 0 0; }
+.photo-choices { display: flex; flex-direction: column; gap: 9px; }
+.photo-choices .photo-remove { color: var(--red-text); }
+.photo-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+.photo-tools { display: flex; gap: 8px; justify-content: center; margin-top: 10px; flex-wrap: wrap; }
+.photo-error {
+  background: var(--amber-glow); color: var(--amber-text);
+  border-radius: 9px; padding: 10px 12px; font-size: 12.5px; line-height: 1.5; margin-top: 12px;
+}
+
+/* The camera preview and the crop stage share a square, centred box that
+   never exceeds the viewport on a phone in portrait. */
+.photo-camera-frame, .photo-crop-stage {
+  position: relative; width: 100%; max-width: 320px; margin: 0 auto;
+  aspect-ratio: 1 / 1; border-radius: 14px; overflow: hidden;
+  background: #10151f;
+}
+#photo-camera-video { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.photo-crop-stage { background: #EEF2F7; touch-action: none; cursor: grab; }
+.photo-crop-stage:active { cursor: grabbing; }
+#photo-crop-canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+#photo-crop-canvas:focus-visible { outline: 3px solid var(--teal-text); outline-offset: -3px; }
+/* The circle is a guide drawn over the canvas; it never affects the pixels. */
+.photo-crop-ring {
+  position: absolute; inset: 0; pointer-events: none; border-radius: 14px;
+  box-shadow: 0 0 0 9999px rgba(255,255,255,0.55) inset;
+  -webkit-mask: radial-gradient(circle at 50% 50%, transparent 49.5%, #000 50%);
+          mask: radial-gradient(circle at 50% 50%, transparent 49.5%, #000 50%);
+}
+
+.photo-zoom { margin-top: 14px; }
+.photo-zoom input[type="range"] { width: 100%; accent-color: var(--teal-text, #00786A); }
+
+/* The profile page control. */
+.photo-slot-wrap { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.photo-slot-actions { display: flex; flex-direction: column; gap: 4px; }
+.photo-slot-actions .btn { align-self: flex-start; }
+.photo-slot-caption { font-size: 11.5px; color: var(--text-muted); line-height: 1.45; }
+
+@media (max-width: 480px) {
+  .photo-camera-frame, .photo-crop-stage { max-width: 100%; }
+  .photo-actions .btn, .photo-choices .btn { flex: 1; }
+}

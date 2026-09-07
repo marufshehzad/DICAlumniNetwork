@@ -2,7 +2,8 @@
 
 **Status: RELEASE CANDIDATE — engineering complete, not deployed.**
 
-Recorded 2026-09-08 at the close of Phase 7E, the final engineering quality gate.
+Recorded 2026-09-08 at the close of Phase 7E, the final engineering quality
+gate, and updated at the close of Phase 7F (profile photos).
 
 This document states what the platform is, what it does, what it deliberately
 does not do, and what DIC must supply before it can run in production. It does
@@ -15,10 +16,10 @@ does not do, and what DIC must supply before it can run in production. It does
 | | |
 |---|---|
 | Commit | `0a4710a` (Phase 7E) · parent `e9703e1` |
-| Phases complete | 0 through 7E |
+| Phases complete | 0 through 7F |
 | Database schema | v19 · **48 tables** |
 | Runtime | Node.js, Express 5, PostgreSQL 16.14 |
-| Dependencies | `express`, `pg`, `cors`, `body-parser`, `nodemailer` — five, all first-order |
+| Dependencies | `express`, `pg`, `cors`, `body-parser`, `nodemailer`, `jimp` — six, all first-order. `jimp` is pure JavaScript, so there is no native build step on the eventual VPS |
 | Front end | Vanilla JavaScript, no framework, no bundler, no build step |
 | Portals | `index.html` (alumni) · `admin.html` (staff) |
 
@@ -59,6 +60,7 @@ historical entry breaks verification.
 | Chapters | Create, moderate, join, locations |
 | Reports | Ten reports, department-scoped, CSV export |
 | Imports | Upload → map → validate → preview → **dry run** → confirm → result → history → rollback |
+| Profile photos | Upload from device, camera capture where the browser and device allow it, interactive crop with zoom and rotate, replace, remove. Stored 512×512, re-encoded server-side, EXIF stripped |
 | Compliance | Privacy centre, consent history, DSAR export, deletion request and cancellation, scheduled purge |
 | Audit | Hash-chained, filterable by administrator/action/module/target/date, exportable |
 | Operations | Scheduler, backup, restore, off-site copy, monitoring endpoints |
@@ -72,7 +74,8 @@ These are **not** defects. Each is a deliberate decision recorded in PHASE_LOG.m
 | Not available | Why |
 |---|---|
 | **Online payment** | No gateway is integrated. Donations are pledged and settled **manually** by the alumni office. The interface says so. There is no simulated gateway, no fake PIN entry and no client-declared settlement. |
-| File uploads | No storage backend is provisioned. Photos are URLs. |
+| File uploads generally | Only profile photos are uploadable. There is no document, cover-image or attachment upload; event cover images and imported photo fields are still URLs. |
+| Camera capture on a device with no camera or with permission refused | The camera button is only offered where `mediaDevices.getUserMedia` exists, and a refusal falls back to the file picker with the message “Camera access was denied. You can choose a photo from your device instead.” |
 | Email delivery beyond password reset | SMTP is wired for reset links; broadcasts are in-app only. |
 | A map library or tile provider | The map is drawn from `location_places` coordinates. No API key, no tile provider, no attribution obligation — see MAP_TECHNOLOGY.md. |
 | Employment-outcome analytics | The schema stores no outcome data, so no chart claims to show it. |
@@ -85,11 +88,14 @@ These are **not** defects. Each is a deliberate decision recorded in PHASE_LOG.m
 ## 5. Test results
 
 ```
-30 suites                        2,515 passed   0 failed   0 skipped
+31 suites                        2,623 passed   0 failed   0 skipped
   fresh install drill               32 passed   0 failed
   full release drill               107 passed   0 failed
   audit chain verification            PASS through 18,191 entries
 ```
+
+Phase 7F added `tests/phase7f_profile_photo.js` (108 assertions) and changed no
+existing assertion.
 
 The **release drill** is the strongest single result: an empty PostgreSQL
 database is created, migrated through v19, bootstrapped with a first
@@ -119,6 +125,9 @@ Skipped is counted as skipped. There are none.
 | Credential export | `csv.js` refuses any column whose name reads as a credential; no DSAR field is a credential |
 | Error disclosure | Six forced failure modes disclose no PostgreSQL internals, no stack traces, no paths, no secrets |
 | Audit chain | Verifies through 18,191 entries after the full QA run |
+| Profile photo upload | Every uploaded image is **decoded and re-encoded** server-side, so the stored bytes are bytes the server produced from pixels rather than attacker bytes that passed a check. EXIF, colour profiles, comments and trailing data do not survive. Refused: a script, an SVG, HTML or an executable renamed as an image; a truncated or malformed image; a GIF; anything over 10 MB or 8000 px on a side |
+| Profile photo storage | Filenames are generated with 96 bits of randomness and never taken from the client. Stored files are **not** statically served — `/uploads/…` is a 404 — and are readable only through an authenticated route that serves the current version only |
+| Profile photo authorization | The subject is always the session. There is no route that accepts a subject id for writing, and a body naming another account is ignored. An administrator gains no right to edit a member’s photo |
 
 ### What the Content-Security-Policy actually protects
 
@@ -205,6 +214,9 @@ its typed value intact.
 | Rollback cannot undo an enrichment | A batch that updated an existing profile changed columns in place; previous values were not kept. Only account creation is undone. |
 | Reports are read into memory | 5,000 rows on screen, 50,000 in a file. A capped result says so. |
 | `test_e2e_crud.js` | A legacy development script the Master Audit says to keep as historical tooling. It references columns Phase 7D dropped and **would fail if run**. Excluded from any production image. Tracked as INFO-1. |
+| **Camera capture is not verified on real hardware** | `getUserMedia` needs a browser, a device and a person granting permission. The flow was exercised in a browser with a **stubbed** MediaStream: the permission-denied path, the file-input fallback, and every stream-teardown path (capture, cancel, save, close, Escape, modal replacement, tab hidden, page unload). Live capture from a real phone camera has **not** been tested and should be part of College UAT. |
+| Photos are fetched with the session, not by `<img src>` | An `<img>` cannot send a bearer token, and this platform has no cookies. Avatars are fetched with the token and shown as object URLs, so a photo appears a moment after the initials. The alternative — a public directory or a session-free signed URL to somebody’s face — was rejected. |
+| Profile photo storage is local disk | `UPLOAD_DIR` points at `./uploads/profile-photos` by default and is configurable. There is no object-store integration, because no provider account exists and inventing one was out of scope. A VPS deployment must include this directory in its backup. |
 | `install_drill.js` and `phase7e_release_drill.js` need `DOCKER_PG_CONTAINER` | They create and drop their own databases and are not part of `npm test`. |
 | Backend without UI | `alumni_profiles.collaboration`, `looking_for_job`, `looking_for_mentor`; `broadcasts.read_count`; `event_sponsors.logo_url`; `event_task_assignees.assigned_at`. Coherent fields with no screen yet. Deferred, not removed — Phase 7E forbids both adding features and changing schema for tidiness. |
 
@@ -231,7 +243,7 @@ its typed value intact.
 | TLS certificates | HTTPS |
 | A PostgreSQL instance (managed or self-hosted) with credentials | Everything |
 | SMTP credentials | Password reset delivery |
-| A backup destination and retention decision | Backup and restore |
+| A backup destination and retention decision | Backup and restore — **including the profile photo directory**, which is on disk and not in the database |
 | Monitoring destination | Alerting |
 | Production secrets: `SESSION_SECRET`, `ENCRYPTION_KEY`, `TICKET_SIGNING_KEY`, `CRON_SECRET` | The server refuses to start without them |
 | Encryption-key escrow procedure and owner | Identity vault recovery |

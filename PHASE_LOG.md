@@ -4114,3 +4114,225 @@ accessibility failure, and no test failure.
 
 **Production provisioning and UAT**, once DIC supplies the external inputs. No
 further engineering phase is planned.
+
+---
+
+## PHASE 7F — Profile Photo, Camera Capture & Cropping
+
+**Status:** **COMPLETE**
+**Date:** 2026-09-08
+**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+
+### Current support before the phase
+
+Audited before writing anything.
+
+| Item | State |
+|---|---|
+| `users.photo_url` (text) | existed, written by administrator provisioning, **0 of 18 set** |
+| `alumni_profiles.photo_url` (varchar 500) | existed, an editable profile field, rendered by event people, **0 of 14 set** |
+| Any upload endpoint | **none** — no multer, no busboy, no multipart handling anywhere |
+| Body limit | `bodyParser.json()` at the default 100 kb |
+| Static serving | an **allow-list**: only a fixed set of files and `/js/`, `/assets/`. An uploads directory would 404 by default |
+| Image library | none installed |
+| A `photo` privacy field | **none.** Privacy covers `email`, `mobile` and `location` only |
+| Avatar rendering | initials everywhere; only `js/events.js` rendered a `photo_url` as an `<img>` |
+
+### Data model — no column was added
+
+Both photo columns already existed and both were empty. They are kept apart
+rather than merged because they belong to different things: an alumnus's photo
+is part of their alumni profile, a staff account's is part of the account, and a
+staff account has no `alumni_profiles` row at all. `/api/profile/me` gained
+`COALESCE(ap.photo_url, u.photo_url) AS effective_photo_url` so the client does
+not have to know which. **No migration was needed and none was written.**
+
+### API
+
+| Route | Guard | What it does |
+|---|---|---|
+| `POST /api/profile/photo` | `requireAuth` | decode, re-encode, store, record, delete the previous file |
+| `DELETE /api/profile/photo` | `requireAuth` | clear the record, delete the file |
+| `GET /api/profile/photo/:id` | `requireAuth` | serve the current version only |
+
+The subject is **always** `req.user.uid`. There is no route that accepts a
+subject id for writing, so there is no id to tamper with.
+
+### Storage
+
+Local disk under `UPLOAD_DIR`, defaulting to `./uploads/profile-photos`,
+gitignored, and added to the never-resolve list beside `backups` and
+`node_modules` so every `/uploads/…` path is a 404 whatever its extension.
+No object store and no provider-specific code — none exists to point at, and
+inventing one was out of scope. The directory is now named in
+RELEASE_CANDIDATE.md as something a VPS backup must include, because it is on
+disk and not in the database.
+
+### Image processing — why the server re-encodes
+
+Checking magic numbers would tell us a file *looks* like a JPEG. It would not
+stop a JPEG carrying a payload after its end marker, or a polyglot that is a
+valid image and a valid something-else. So every upload is decoded to a pixel
+buffer with **jimp** and a new file is written from those pixels: the stored
+bytes are bytes this process produced, not attacker bytes that passed a test.
+EXIF, colour profiles, comment segments and trailing data are gone because they
+were never carried across, and orientation is normalised because it is applied
+during decode and then simply not written out.
+
+`jimp` was chosen over `sharp` deliberately: it is pure JavaScript, so there is
+no native build to fail on the eventual VPS.
+
+**Limits, all enforced server-side:** 10 MB source, 8000 px maximum edge,
+512×512 stored, JPEG quality 82. A transparent PNG is composited onto white
+first — un-composited transparency becomes a black square in JPEG.
+
+### Camera
+
+`getUserMedia` with `facingMode: { ideal: 'user' }` — *ideal*, not *exact*, so
+a laptop with one camera does not throw `OverconstrainedError`. Take Photo is
+only offered where `mediaDevices.getUserMedia` exists. Permission refusal shows
+exactly the wording §16 asks for and falls back to the file picker.
+
+**The stream is stopped on every exit**, each one verified: capture, cancel,
+save, the close button, Escape, one modal replacing another, the tab being
+hidden, and the page going away. `showModal` gained an `onClose` hook to make
+that possible — a small general addition, and the reason it was needed is that a
+camera light left on after a modal closes is the kind of thing people notice.
+
+### Crop
+
+A square frame with drag (mouse and touch), a zoom slider, rotate left and
+right, and reset. Keyboard reachable: the canvas is focusable, arrows nudge,
+`+`/`-` zoom, `r` rotates. **No face detection and no automatic framing** —
+where the crop sits is the member's decision. Nothing uploads until Save Photo
+is pressed, and what is sent is exactly the canvas the member is looking at, so
+the preview and the stored photo are the same image.
+
+The client downscales anything over 1600 px before cropping: a 4000-pixel phone
+photo redrawn on every drag event is what makes a crop UI feel broken on a
+mid-range Android.
+
+### Privacy
+
+A photo is **exactly as visible as the profile it belongs to**: readable by any
+signed-in member, and by nobody who is not signed in. That is what the directory
+already does. **No new privacy level was invented for photos**, and no existing
+one was changed.
+
+### The design problem this phase had to solve
+
+Photos are served by a route that requires a session — and **an `<img>` tag
+cannot send a bearer token.** It sends cookies, and this platform has none. The
+first working version had every avatar 401 and vanish through its own
+`onerror` fallback.
+
+Three options, and why the third won:
+
+- **A public directory.** Exactly what §10 warns against.
+- **A session-free signed URL.** A forwardable capability link to somebody's
+  face.
+- **Fetch with the token, display as an object URL.** No authentication change,
+  no public directory, no capability link.
+
+So avatars render with `data-photo-src`, and `hydrateAvatars()` fetches the
+bytes with the session and swaps in an object URL. Each URL is fetched once per
+page and released on unload. The visible cost is that a photo appears a moment
+after the initials; the initials are what shows until then, and permanently if
+the fetch fails.
+
+### Two defects found and fixed during the phase
+
+**Reset did not reset rotation.** It restored zoom and position and left the
+photo sideways, which is not what anyone pressing "Reset" is asking for.
+
+**The avatar wrapper would have clipped the verified badge.** `.verified-badge-icon`
+sits at `bottom:-2px; right:-2px` — outside the avatar's own box — so
+`overflow:hidden` on the wrapper would have cut the badge off every verified
+member in the directory. The **image** is rounded instead, which is what needed
+clipping in the first place.
+
+### Also fixed, on the way
+
+`npm audit` reported a moderate `qs` advisory. It came from `express` and
+`body-parser`, **not** from the new dependency — it predated this phase.
+`npm audit fix` cleared it: **0 vulnerabilities**.
+
+### Avatar fallback
+
+One helper, `avatarHtml()`, so the photo and the initials cannot disagree
+between screens. The initials sit underneath and the photo on top; an image that
+fails to load removes itself and reveals them. The profile page, the digital ID
+card and the alumni directory render photos; every other surface keeps the
+initials it already had. **No broken-image icon appears anywhere** — verified in
+the browser.
+
+### Security
+
+Refused, each verified: a script, an SVG, HTML and an executable renamed as an
+image; an SVG declared as PNG; a GIF; a truncated JPEG; an empty payload; a
+path instead of a data URL; a number; nothing at all; and an 11 MB upload. Path
+traversal is refused by a name guard that accepts only the exact generated
+shape, and filenames are generated with 96 bits of randomness rather than taken
+from the client. No refusal leaks a stack trace, a path, a PostgreSQL message or
+a secret.
+
+The larger body limit is mounted on the photo route **alone**; every other
+endpoint keeps the 100 kb default.
+
+### Tests
+
+```
+31 suites                     2,623 passed, 0 failed, 0 skipped
+  of which phase7f_profile_photo   108   (new)
+  the 30 pre-existing suites     2,515   unchanged, still 0 failed
+```
+
+`tests/phase7f_profile_photo.js` covers A–O: upload, canonical dimensions,
+replacement leaving exactly one file, removal deleting it, unauthenticated
+refusal on all three routes, IDOR through four different id fields in the body,
+twelve hostile payloads, oversize, EXIF stripping proven on a JPEG that really
+carries an EXIF marker, transparency compositing, static unreachability,
+visibility, the camera fallbacks and every teardown path, the crop controls, and
+the avatar fallback.
+
+### Browser verification
+
+Both portals. Chooser, crop, zoom, rotate, reset, save, replace, remove, and the
+no-photo fallback at **360 · 390 · 430 · 768 · 1024 · 1280 · 1440**: no
+overflow, the crop stage square at every width, the modal fitting the viewport,
+and zero JavaScript errors. The permission-denied path was verified by stubbing
+`getUserMedia` to reject with `NotAllowedError`: the specified message appears
+and the capture button is disabled.
+
+### Real-device verification status
+
+**Camera capture has NOT been tested against real camera hardware.**
+`getUserMedia` needs a browser, a device and a person granting permission, and
+none of those exist here. What was verified is everything around it — the
+fallbacks, the permission-denied path, and every stream-teardown path, the last
+using a **stubbed** MediaStream that records `stop()` on each track. Live
+capture from a phone camera should be part of College UAT and is recorded as
+such in RELEASE_CANDIDATE.md.
+
+### Limitations
+
+- **Camera capture unverified on real hardware** (above).
+- **A photo appears a moment after the initials**, because it is fetched with
+  the session rather than by `<img src>`.
+- **Storage is local disk.** `UPLOAD_DIR` is configurable; there is no object
+  store, and the directory must be included in a VPS backup.
+- **Only profile photos are uploadable.** Event cover images and the imported
+  photo field remain URLs; this phase added no general file upload.
+- **The administrator form still sets an external photo URL** on staff
+  accounts. That is the policy that already existed and nothing here widened it;
+  such a URL is cleared from a profile on removal but never deleted from
+  wherever it lives.
+- **A pre-existing quirk, noticed but not changed:** `/api/profile/me` selects
+  `u.id` and then `ap.*`, so `id` in that payload is the profile row id, not
+  the user id. Nothing in this phase depends on it, and changing a response
+  shape was out of scope.
+
+### Next phase
+
+**Production provisioning and UAT**, once DIC supplies the external inputs in
+RELEASE_CANDIDATE.md §10. No further engineering phase is planned.

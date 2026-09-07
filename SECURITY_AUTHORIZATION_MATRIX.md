@@ -7,7 +7,7 @@ guard admits. The guards are read from the source; the verdicts below were
 observed by calling every GET route as all five roles and as an anonymous
 caller against a running server.
 
-Generated 2026-09-07 · 152 routes · 70 probed empirically.
+Generated 2026-09-07 · 155 routes · 71 probed empirically.
 
 **Method.** "allow" means the guard let the request reach the handler — not
 that the handler succeeded. A permitted call against a nonexistent id returns
@@ -30,7 +30,7 @@ the `users` row — not from the token, and not from which HTML shell was served
 
 | Guard | Routes | anonymous | alumni | moderator | dept_admin | univ_admin | super_admin |
 |---|---|---|---|---|---|---|---|
-| `auth` | 55 | deny | allow | allow | allow | allow | allow |
+| `auth` | 58 | deny | allow | allow | allow | allow | allow |
 | `MODERATOR_ROLES` | 45 | deny | deny | allow | allow | allow | allow |
 | `ADMIN_ROLES` | 22 | deny | deny | deny | deny | allow | allow |
 | `verified` | 11 | deny | allow | allow | allow | allow | allow |
@@ -49,6 +49,7 @@ the `users` row — not from the token, and not from which HTML shell was served
 | GET | `/api/alumni/:id` | `auth` | 401 | 404 | 404 | 404 | 404 | 404 |
 | GET | `/api/profile/me` | `auth` | 401 | 200 | 200 | 200 | 200 | 200 |
 | GET | `/api/locations/places` | `auth` | 401 | 200 | 200 | 200 | 200 | 200 |
+| GET | `/api/profile/photo/:id` | `auth` | 401 | 404 | 404 | 404 | 404 | 404 |
 | GET | `/api/profile/privacy-schema` | `auth` | 401 | 200 | 200 | 200 | 200 | 200 |
 | GET | `/api/locations/filters` | `auth` | 401 | 200 | 200 | 200 | 200 | 200 |
 | GET | `/api/chapters` | `auth` | 401 | 200 | 200 | 200 | 200 | 200 |
@@ -127,30 +128,30 @@ means the guard admitted the caller.
 | PUT | `/api/admin/administrators/:id` | `SUPER_ONLY` | routes_admin_users.js:152 |
 | POST | `/api/admin/administrators/:id/reset-password` | `SUPER_ONLY` | routes_admin_users.js:289 |
 | PUT | `/api/admin/administrators/:id/status` | `SUPER_ONLY` | routes_admin_users.js:249 |
-| GET | `/api/alumni` | `auth` | server.js:1258 |
-| GET | `/api/alumni/:id` | `auth` | server.js:1388 |
+| GET | `/api/alumni` | `auth` | server.js:1273 |
+| GET | `/api/alumni/:id` | `auth` | server.js:1408 |
 | GET | `/api/audit-logs` | `ADMIN_ROLES, 'dept_admin'` | routes_v2.js:1109 |
 | GET | `/api/audit-logs/actions` | `ADMIN_ROLES, 'dept_admin'` | routes_v2.js:1252 |
 | GET | `/api/audit-logs/actors` | `ADMIN_ROLES, 'dept_admin'` | routes_v2.js:1232 |
-| POST | `/api/auth/change-password` | `auth` | server.js:1037 |
-| POST | `/api/auth/forgot-password` | `public` | server.js:1115 |
-| POST | `/api/auth/login` | `public` | server.js:782 |
-| POST | `/api/auth/logout` | `auth` | server.js:1223 |
-| GET | `/api/auth/me` | `auth` | server.js:1237 |
-| POST | `/api/auth/register` | `public` | server.js:919 |
-| POST | `/api/auth/reset-password` | `public` | server.js:1170 |
+| POST | `/api/auth/change-password` | `auth` | server.js:1052 |
+| POST | `/api/auth/forgot-password` | `public` | server.js:1130 |
+| POST | `/api/auth/login` | `public` | server.js:797 |
+| POST | `/api/auth/logout` | `auth` | server.js:1238 |
+| GET | `/api/auth/me` | `auth` | server.js:1252 |
+| POST | `/api/auth/register` | `public` | server.js:934 |
+| POST | `/api/auth/reset-password` | `public` | server.js:1185 |
 | GET | `/api/broadcasts` | `MODERATOR_ROLES` | routes_v2.js:985 |
 | POST | `/api/broadcasts` | `ADMIN_ROLES` | routes_v2.js:993 |
-| POST | `/api/bulk-import` | `ADMIN_ROLES` | server.js:2198 |
+| POST | `/api/bulk-import` | `ADMIN_ROLES` | server.js:2339 |
 | GET | `/api/campaigns` | `auth` | routes_v2.js:363 |
 | POST | `/api/campaigns` | `ADMIN_ROLES` | routes_v2.js:387 |
 | DELETE | `/api/campaigns/:id` | `ADMIN_ROLES` | routes_v2.js:423 |
 | PUT | `/api/campaigns/:id` | `ADMIN_ROLES` | routes_v2.js:411 |
-| GET | `/api/chapters` | `auth` | server.js:1716 |
-| POST | `/api/chapters` | `verified` | server.js:1749 |
-| POST | `/api/chapters/:id/join` | `verified` | server.js:1848 |
-| GET | `/api/chapters/:id/members` | `auth` | server.js:1879 |
-| PUT | `/api/chapters/:id/place` | `ADMIN_ROLES` | server.js:1808 |
+| GET | `/api/chapters` | `auth` | server.js:1857 |
+| POST | `/api/chapters` | `verified` | server.js:1890 |
+| POST | `/api/chapters/:id/join` | `verified` | server.js:1989 |
+| GET | `/api/chapters/:id/members` | `auth` | server.js:2020 |
+| PUT | `/api/chapters/:id/place` | `ADMIN_ROLES` | server.js:1949 |
 | GET | `/api/compliance/status` | `ADMIN_ROLES` | routes_compliance.js:372 |
 | GET | `/api/connections` | `auth` | routes_v2.js:786 |
 | POST | `/api/connections/:userId` | `verified` | routes_v2.js:796 |
@@ -159,8 +160,8 @@ means the guard admitted the caller.
 | GET | `/api/custom-fields` | `auth` | routes_v2.js:583 |
 | POST | `/api/custom-fields` | `ADMIN_ROLES` | routes_v2.js:588 |
 | DELETE | `/api/custom-fields/:id` | `ADMIN_ROLES` | routes_v2.js:603 |
-| GET | `/api/departments` | `MODERATOR_ROLES` | server.js:3343 |
-| GET | `/api/departments/public` | `public` | server.js:3330 |
+| GET | `/api/departments` | `MODERATOR_ROLES` | server.js:3484 |
+| GET | `/api/departments/public` | `public` | server.js:3471 |
 | GET | `/api/directory/search` | `MODERATOR_ROLES` | routes_events.js:1447 |
 | POST | `/api/donations` | `verified` | routes_v2.js:443 |
 | POST | `/api/donations/:id/cancel` | `auth` | routes_v2.js:535 |
@@ -211,15 +212,15 @@ means the guard admitted the caller.
 | POST | `/api/events/tasks/reminder-sweep` | `MODERATOR_ROLES` | routes_events.js:1554 |
 | DELETE | `/api/events/ticket-types/:ttId` | `MODERATOR_ROLES` | routes_events.js:578 |
 | PUT | `/api/events/ticket-types/:ttId` | `MODERATOR_ROLES` | routes_events.js:564 |
-| GET | `/api/health` | `public` | server.js:660 |
-| POST | `/api/import-batches/:id/rollback` | `ADMIN_ROLES` | server.js:2685 |
-| GET | `/api/import-history` | `ADMIN_ROLES` | server.js:2618 |
-| GET | `/api/internal/jobs/run` | `scheduler` | server.js:3485 |
-| POST | `/api/internal/jobs/run` | `scheduler` | server.js:3484 |
-| GET | `/api/internal/monitor` | `scheduler` | server.js:3554 |
+| GET | `/api/health` | `public` | server.js:675 |
+| POST | `/api/import-batches/:id/rollback` | `ADMIN_ROLES` | server.js:2826 |
+| GET | `/api/import-history` | `ADMIN_ROLES` | server.js:2759 |
+| GET | `/api/internal/jobs/run` | `scheduler` | server.js:3626 |
+| POST | `/api/internal/jobs/run` | `scheduler` | server.js:3625 |
+| GET | `/api/internal/monitor` | `scheduler` | server.js:3695 |
 | PUT | `/api/job-applications/:id/status` | `auth` | routes_v2.js:281 |
-| GET | `/api/job-referrals` | `auth` | server.js:3106 |
-| PUT | `/api/job-referrals/:id` | `verified` | server.js:3147 |
+| GET | `/api/job-referrals` | `auth` | server.js:3247 |
+| PUT | `/api/job-referrals/:id` | `verified` | server.js:3288 |
 | GET | `/api/jobs` | `auth` | routes_v2.js:99 |
 | POST | `/api/jobs` | `verified` | routes_v2.js:131 |
 | DELETE | `/api/jobs/:id` | `auth` | routes_v2.js:215 |
@@ -227,20 +228,20 @@ means the guard admitted the caller.
 | GET | `/api/jobs/:id/applicants` | `auth` | routes_v2.js:321 |
 | POST | `/api/jobs/:id/apply` | `verified` | routes_v2.js:227 |
 | POST | `/api/jobs/:id/refer` | `verified` | routes_v2.js:340 |
-| GET | `/api/locations/filters` | `auth` | server.js:1668 |
-| GET | `/api/locations/places` | `auth` | server.js:1626 |
+| GET | `/api/locations/filters` | `auth` | server.js:1809 |
+| GET | `/api/locations/places` | `auth` | server.js:1651 |
 | GET | `/api/mentorships` | `auth` | routes_v2.js:627 |
 | POST | `/api/mentorships` | `verified` | routes_v2.js:707 |
 | PUT | `/api/mentorships/:id/:action` | `auth` | routes_v2.js:748 |
 | GET | `/api/mentorships/suggestions` | `auth` | routes_v2.js:652 |
-| GET | `/api/moderation` | `MODERATOR_ROLES` | server.js:1971 |
-| POST | `/api/moderation/chapter/:id/:action` | `MODERATOR_ROLES` | server.js:1990 |
-| POST | `/api/moderation/story/:id/:action` | `MODERATOR_ROLES` | server.js:2024 |
+| GET | `/api/moderation` | `MODERATOR_ROLES` | server.js:2112 |
+| POST | `/api/moderation/chapter/:id/:action` | `MODERATOR_ROLES` | server.js:2131 |
+| POST | `/api/moderation/story/:id/:action` | `MODERATOR_ROLES` | server.js:2165 |
 | GET | `/api/my-applications` | `auth` | routes_v2.js:263 |
-| GET | `/api/notifications` | `auth` | server.js:2061 |
-| PUT | `/api/notifications/:id/read` | `auth` | server.js:2082 |
-| PUT | `/api/notifications/read-all` | `auth` | server.js:2099 |
-| GET | `/api/ops/status` | `ADMIN_ROLES` | server.js:3491 |
+| GET | `/api/notifications` | `auth` | server.js:2202 |
+| PUT | `/api/notifications/:id/read` | `auth` | server.js:2223 |
+| PUT | `/api/notifications/read-all` | `auth` | server.js:2240 |
+| GET | `/api/ops/status` | `ADMIN_ROLES` | server.js:3632 |
 | GET | `/api/planner/analytics/:eventId` | `MODERATOR_ROLES` | routes_planner.js:146 |
 | GET | `/api/planner/report/:eventId` | `MODERATOR_ROLES` | routes_planner.js:211 |
 | GET | `/api/planner/workspace/:eventId` | `MODERATOR_ROLES` | routes_planner.js:254 |
@@ -252,25 +253,28 @@ means the guard admitted the caller.
 | PUT | `/api/polls/:id/status` | `MODERATOR_ROLES` | routes_v2.js:942 |
 | POST | `/api/polls/:id/vote` | `auth` | routes_v2.js:833 |
 | GET | `/api/polls/active` | `auth` | routes_v2.js:822 |
-| GET | `/api/profile/me` | `auth` | server.js:1482 |
-| PUT | `/api/profile/me` | `auth` | server.js:1534 |
-| GET | `/api/profile/privacy-schema` | `auth` | server.js:1655 |
+| GET | `/api/profile/me` | `auth` | server.js:1502 |
+| PUT | `/api/profile/me` | `auth` | server.js:1559 |
+| DELETE | `/api/profile/photo` | `auth` | server.js:1740 |
+| POST | `/api/profile/photo` | `auth` | server.js:1714 |
+| GET | `/api/profile/photo/:id` | `auth` | server.js:1762 |
+| GET | `/api/profile/privacy-schema` | `auth` | server.js:1796 |
 | GET | `/api/reports` | `MODERATOR_ROLES` | routes_reports.js:689 |
 | GET | `/api/reports/:slug` | `MODERATOR_ROLES` | routes_reports.js:698 |
-| POST | `/api/seed-db` | `SUPER_ONLY` | server.js:679 |
-| GET | `/api/segment/count` | `MODERATOR_ROLES` | server.js:3234 |
-| GET | `/api/segment/options` | `MODERATOR_ROLES` | server.js:3204 |
-| GET | `/api/stats/analytics` | `MODERATOR_ROLES` | server.js:2904 |
-| GET | `/api/stats/map` | `auth` | server.js:2984 |
-| GET | `/api/stats/overview` | `auth` | server.js:2821 |
-| GET | `/api/stats/rbac` | `auth` | server.js:3050 |
-| GET | `/api/stories` | `auth` | server.js:1920 |
-| POST | `/api/stories` | `verified` | server.js:1932 |
-| GET | `/api/sync-mutations` | `ADMIN_ROLES` | server.js:3082 |
-| PUT | `/api/users/:id/verify` | `MODERATOR_ROLES` | server.js:3271 |
+| POST | `/api/seed-db` | `SUPER_ONLY` | server.js:694 |
+| GET | `/api/segment/count` | `MODERATOR_ROLES` | server.js:3375 |
+| GET | `/api/segment/options` | `MODERATOR_ROLES` | server.js:3345 |
+| GET | `/api/stats/analytics` | `MODERATOR_ROLES` | server.js:3045 |
+| GET | `/api/stats/map` | `auth` | server.js:3125 |
+| GET | `/api/stats/overview` | `auth` | server.js:2962 |
+| GET | `/api/stats/rbac` | `auth` | server.js:3191 |
+| GET | `/api/stories` | `auth` | server.js:2061 |
+| POST | `/api/stories` | `verified` | server.js:2073 |
+| GET | `/api/sync-mutations` | `ADMIN_ROLES` | server.js:3223 |
+| PUT | `/api/users/:id/verify` | `MODERATOR_ROLES` | server.js:3412 |
 | GET | `/api/vault` | `ADMIN_ROLES` | routes_compliance.js:79 |
 | POST | `/api/vault` | `auth` | routes_compliance.js:91 |
 | POST | `/api/vault/:id/reveal` | `ADMIN_ROLES` | routes_compliance.js:122 |
 | GET | `/api/vault/access-logs` | `ADMIN_ROLES` | routes_compliance.js:158 |
-| GET | `/api/verification-queue` | `MODERATOR_ROLES` | server.js:3300 |
+| GET | `/api/verification-queue` | `MODERATOR_ROLES` | server.js:3441 |
 

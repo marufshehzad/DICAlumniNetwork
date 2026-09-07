@@ -24,3 +24,5 @@ reset-link.local.txt
 # the web root allow-list in server.js does not include this directory.
 backups/
 *.sql.gz
+
+uploads/

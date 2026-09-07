@@ -584,6 +584,12 @@ Object.assign(API, {
   forgotPassword:   (email)         => apiRequest('POST',   '/api/auth/forgot-password', { email }),
   resetPassword:    (token, newPassword) =>
     apiRequest('POST', '/api/auth/reset-password', { token, newPassword }),
+  /* Phase 7F. The image is a base64 data URL the browser produced from a
+     canvas, so it carries no EXIF and no filename — and the server re-decodes
+     and re-encodes it regardless, because nothing a client sends about an
+     image is evidence of what it is. */
+  uploadProfilePhoto: (image) => apiRequest('POST', '/api/profile/photo', { image }),
+  removeProfilePhoto: ()      => apiRequest('DELETE', '/api/profile/photo'),
   getMyProfile: () => apiRequest('GET', '/api/profile/me'),
   updateMyProfile: (data) => apiRequest('PUT', '/api/profile/me', data)
 });

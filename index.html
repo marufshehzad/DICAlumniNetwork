@@ -769,6 +769,25 @@
           </div>
           <button class="btn btn-primary" onclick="showEditProfileV2()"><i data-lucide="pen-line" class="ui-icon"></i> Edit Profile</button>
         </div>
+
+        <!-- Profile photo (Phase 7F). The slot renders the photo over the
+             initials, so an image that fails to load reveals the fallback
+             rather than a broken-image icon. -->
+        <div class="glass-card" style="margin-bottom:16px">
+          <div class="photo-slot-wrap">
+            <span class="avatar-wrap" id="profile-photo-slot" style="width:76px;height:76px;font-size:27px">
+              <span class="avatar-initials" id="profile-photo-initials" aria-hidden="true">&mdash;</span>
+            </span>
+            <div class="photo-slot-actions">
+              <h2 class="card-title" style="margin:0 0 2px">Profile photo</h2>
+              <button type="button" class="btn btn-outline btn-sm" onclick="openProfilePhotoEditor()">
+                <i data-lucide="camera" class="ui-icon"></i> <span id="profile-photo-cta">Add a photo</span>
+              </button>
+              <span class="photo-slot-caption">Shown to other DIC alumni in the directory
+                and wherever your name appears.</span>
+            </div>
+          </div>
+        </div>
         <!-- Profile Completeness Score Banner -->
           <!-- Every value in this banner was fixed markup: an 85% bar, "85%
                complete - Gold Tier Alumni Identity", and a six-item checklist
@@ -824,7 +843,7 @@
                      would scan to nothing. Event tickets are unaffected - those
                      carry a real HMAC-signed payload. -->
                 <div class="id-card-body">
-                  <div class="id-avatar" id="id-card-avatar">&mdash;</div>
+                  <div class="id-avatar avatar-wrap" id="id-card-avatar"><span class="avatar-initials" aria-hidden="true">&mdash;</span></div>
                   <div class="id-info">
                     <div class="id-name" id="id-card-name">&mdash;</div>
                     <div class="id-degree" id="id-card-degree"></div>
@@ -943,6 +962,7 @@
        infrastructure, then sign-in and navigation, then one file per screen,
        with the largest module last. -->
   <script src="js/core.js"></script>
+  <script src="js/photo.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/navigation.js"></script>
   <script src="js/notifications.js"></script>

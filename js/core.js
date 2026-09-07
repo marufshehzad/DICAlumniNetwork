@@ -343,8 +343,17 @@ let _modalReturnFocus = null;
 // dialogs (a ticket, a public preview) opt back in via { dismissable: true }.
 let _modalDismissable = false;
 
+/* Phase 7F: a dialog may need to release something when it closes, however it
+   closes — the close button, Escape, or another modal replacing it. The camera
+   is the case that made this necessary: a stream left running after a modal
+   closes leaves the device light on. */
+let _modalOnClose = null;
+
 function showModal(html, options) {
   const opts = options || {};
+  /* A modal replacing another must run the outgoing one's teardown first. */
+  if (_modalOnClose) { const f = _modalOnClose; _modalOnClose = null; try { f(); } catch {} }
+  _modalOnClose = typeof opts.onClose === 'function' ? opts.onClose : null;
   const body = document.getElementById('modal-body');
   const overlay = document.getElementById('modal-overlay');
   const content = document.getElementById('modal-content');
@@ -428,6 +437,7 @@ window.openModal = showModal;
 
 function closeModal(e) {
   if (e && typeof e.preventDefault === 'function') e.preventDefault();
+  if (_modalOnClose) { const f = _modalOnClose; _modalOnClose = null; try { f(); } catch {} }
   const overlay = document.getElementById('modal-overlay');
   if (overlay) overlay.classList.add('hidden');
   document.body.style.overflow = '';
