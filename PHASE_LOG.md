@@ -4563,6 +4563,7 @@ None. Nothing pre-existing was deleted and no assertion was weakened.
 
 **Status:** **COMPLETE**
 **Date:** 2026-09-08
+**Commit:** `8d6c461`
 **Scope:** verification of three surfaces the phase had claimed but not proven,
 plus one conclusion it had reached wrongly. Not a new phase; no redesign.
 
