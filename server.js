@@ -80,6 +80,36 @@ app.use(bodyParser.json());
 
    wantsAdminPortal() is declared further down; it is only called at request
    time, by which point the module has finished evaluating. */
+/* Phase 7E §26 — what the Content-Security-Policy actually protects.
+
+   It is worth stating plainly, because frame-ancestors and script-src are
+   different protections and a policy carrying only the first is easy to read as
+   a policy that stops script injection. It does not.
+
+     frame-ancestors   clickjacking. The staff portal refuses to be framed at
+                       all; the alumni site may frame itself.
+     object-src        plugin-based injection. <object> and <embed> are used
+                       nowhere in either portal, so forbidding them outright
+                       costs nothing and closes a vector that survives most
+                       output escaping.
+     base-uri          <base> tag injection, which silently re-points every
+                       relative URL on the page — including the API calls. No
+                       <base> tag exists in either portal.
+     form-action       a form hijacked to post somewhere else. Every form in
+                       this application submits through JavaScript to its own
+                       origin and none declares an action attribute.
+
+   script-src is deliberately ABSENT and is the known gap. The application uses
+   inline event-handler attributes throughout, so any workable script-src would
+   have to include 'unsafe-inline', which would leave the directive looking like
+   a defence while providing almost none. Moving to delegated listeners is the
+   prerequisite and it is an architecture change, not a header change. Recorded
+   in FINAL_SECURITY_REVIEW_FOLLOWUPS.md and in RELEASE_CANDIDATE.md rather than
+   half-done here. */
+const CSP_COMMON = "object-src 'none'; base-uri 'self'; form-action 'self'";
+const ADMIN_CSP  = `frame-ancestors 'none'; ${CSP_COMMON}`;
+const PUBLIC_CSP = `frame-ancestors 'self'; ${CSP_COMMON}`;
+
 app.use((req, res, next) => {
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -88,7 +118,7 @@ app.use((req, res, next) => {
     // one place on the platform where a clickjacked click provisions accounts.
     res.set('X-Robots-Tag', 'noindex, nofollow');
     res.set('X-Frame-Options', 'DENY');
-    res.set('Content-Security-Policy', "frame-ancestors 'none'");
+    res.set('Content-Security-Policy', ADMIN_CSP);
   } else {
     /* The alumni site is framed by nothing today but is allowed to frame itself.
        The CSP equivalent is set alongside the legacy header so this portal is
@@ -99,7 +129,7 @@ app.use((req, res, next) => {
        to delegated listeners is the prerequisite. Recorded in
        FINAL_SECURITY_REVIEW_FOLLOWUPS.md rather than half-done here. */
     res.set('X-Frame-Options', 'SAMEORIGIN');
-    res.set('Content-Security-Policy', "frame-ancestors 'self'");
+    res.set('Content-Security-Policy', PUBLIC_CSP);
   }
   next();
 });

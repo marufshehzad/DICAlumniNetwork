@@ -162,7 +162,7 @@ psql "$DATABASE_URL" -c "SELECT count(*) AS tables FROM information_schema.table
 psql "$DATABASE_URL" -c "SELECT count(*) AS places FROM location_places"
 ```
 
-A complete v13 database has 47 tables and 99 rows in `location_places`.
+A complete v19 database has 48 tables and 99 rows in `location_places`.
 
 **Do not run `seed.sql` on a production database.** It creates demo alumni and
 demo administrators. Step 7 creates the real first account.

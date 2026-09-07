@@ -1060,7 +1060,9 @@ async function handleSaveProfileV2(e) {
   renderAlumniGrid();
 }
 
-function showEditProfile() { return showEditProfileV2(); }
+/* showEditProfile was a delegating alias for showEditProfileV2 and nothing
+   called it — every caller uses showEditProfileV2 directly. Phase 7D removed
+   its shadowed stub twin; Phase 7E removes the alias, completing that. */
 
 /* ============================================================
    EVENTS & TICKETS — v5

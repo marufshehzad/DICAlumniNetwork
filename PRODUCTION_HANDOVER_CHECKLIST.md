@@ -56,7 +56,7 @@ whoever announces this platform should not describe it as accepting payments.
 | 2.1 | Node.js 20 LTS or newer on the server (developed on v24.15.0) | REQUIRES HOSTING PROVIDER | ☐ open |
 | 2.2 | PostgreSQL 16 or newer (tested against 16.14) | REQUIRES HOSTING PROVIDER | ☐ open |
 | 2.3 | Application database and its own role created | REQUIRES HOSTING PROVIDER | ☐ open |
-| 2.4 | Base schema plus migrations v2–v13 applied in order | READY IN CODE | ☑ each migration is additive, idempotent, transactional, and has `--dry-run` |
+| 2.4 | Base schema plus migrations v2–v19 applied in order | READY IN CODE | ☑ each migration is additive, idempotent, transactional, and has `--dry-run` |
 | 2.5 | Process manager (systemd or equivalent) so it restarts after a crash or reboot | REQUIRES HOSTING PROVIDER | ☐ open |
 | 2.6 | Reverse proxy passing `Host`, with exactly one proxy hop | REQUIRES HOSTING PROVIDER | ☐ open |
 | 2.7 | TLS certificate covering both hostnames | REQUIRES HOSTING PROVIDER | ☐ open |
@@ -153,7 +153,7 @@ it is not. **RED** — blocks go-live and nothing has been done about it.
 | Area | Status | Evidence | Owner | Blocking? |
 |---|---|---|---|---|
 | Application code | GREEN | 1,395 checks, 20 suites, 0 failed | — | no |
-| Database schema & migrations | GREEN | v2–v13 additive, idempotent, `--dry-run`; 47 tables verified on a restored copy | — | no |
+| Database schema & migrations | GREEN | v2–v19; additive except the Phase 7D legacy drops, idempotent, `--dry-run`; 48 tables verified on a fresh install | — | no |
 | RBAC & authorisation | GREEN | Phase 0/2B/2C suites | — | no |
 | Privacy model | GREEN | `privacy.js` single source of truth; 70 checks | — | no |
 | Location system | GREEN | 142 checks; no fabricated values, no personal coordinates | — | no |

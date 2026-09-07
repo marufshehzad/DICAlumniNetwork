@@ -1014,11 +1014,20 @@ module.exports = function mountV2(app, { requireAuth, requireVerified, requireRo
     `, [req.user.uid, title.trim(), body.trim(), chans, targetRole || null,
         targetBatch ? parseInt(targetBatch) : null, recipientIds.length]);
 
-    // Fan out as real in-app notifications so the broadcast is actually delivered.
-    for (const uid of recipientIds) {
-      await db.query(`INSERT INTO notifications (user_id, icon, title, subtitle) VALUES ($1,'📢',$2,$3)`,
-        [uid, title.trim(), body.trim()]);
-    }
+    /* Fan out as real in-app notifications so the broadcast is actually
+       delivered — in ONE statement, not one per recipient.
+
+       This was a loop issuing a sequential INSERT for every member of the
+       audience. With the fourteen accounts on a development database that is
+       invisible; with the alumni body DIC actually has it is thousands of
+       round-trips inside a single request, which is slow enough to time out and
+       leaves a broadcast half-delivered when it does. A set-based insert is
+       also atomic: every recipient gets it, or the statement fails and none
+       does and the broadcast row rolls back with it. */
+    await db.query(
+      `INSERT INTO notifications (user_id, icon, title, subtitle)
+       SELECT uid, '📢', $2, $3 FROM unnest($1::int[]) AS uid`,
+      [recipientIds, title.trim(), body.trim()]);
 
     await writeAudit('Broadcast Sent', `"${title.trim()}" to ${recipientIds.length} recipients via ${chans.join('/')}`, '📢');
     res.json({ success: true, broadcast: bc.rows[0], recipients: recipientIds.length });

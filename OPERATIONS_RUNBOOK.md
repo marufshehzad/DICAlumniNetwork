@@ -128,7 +128,7 @@ Expect `{"status":"ok","database":"ok","latencyMs":n}` with HTTP 200.
 ## C. Database migration
 
 The schema is a base file plus numbered migrations. A new deployment applies
-`schema.sql` **first**, then `migrate_v2.js` through `migrate_v13.js` in order.
+`schema.sql` **first**, then `migrate_v2.js` through `migrate_v19.js` in order.
 
 ```bash
 cd /srv/dic-alumni
@@ -161,7 +161,7 @@ Verify afterwards:
 psql "$DATABASE_URL" -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'"
 ```
 
-A complete v13 database has **47 tables**. Anything less means a migration
+A complete v19 database has **48 tables**. Anything less means a migration
 stopped; read its output.
 
 **Demonstration data is off by default.** `migrate_v2.js` can seed a poll,

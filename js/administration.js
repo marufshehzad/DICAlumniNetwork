@@ -98,13 +98,27 @@ function adminRow(a) {
       <td style="font-size:11px">${a.lastLoginAt ? escapeHtml(formatRelativeTime(a.lastLoginAt)) : '<span style="color:var(--text-muted)">never</span>'}</td>
       <td style="font-size:11px">${escapeHtml(a.createdByName || '—')}</td>
       <td style="white-space:nowrap">
-        <button class="btn btn-ghost btn-sm" onclick="showAdministrator(${a.id})" title="View"><i data-lucide="eye" class="ui-icon"></i></button>
+        ${/* Phase 7E: every one of these is an icon with no text. They carried a
+              title attribute and nothing else, which is a last-resort accessible
+              name: unreliable across screen readers and absent entirely on
+              touch. Worse, the name was the same on every row — a reader heard
+              "View, View, View" with no way to tell which administrator.
+
+              aria-label now carries the action AND the person, and type="button"
+              is explicit so a future <form> wrapper cannot turn a suspend
+              control into a submit. */''}
+        <button type="button" class="btn btn-ghost btn-sm" onclick="showAdministrator(${a.id})"
+                title="View" aria-label="View ${escapeHtml(a.name)}"><i data-lucide="eye" class="ui-icon"></i></button>
         ${isSuper ? '' : `
-          <button class="btn btn-ghost btn-sm" onclick="showEditAdministrator(${a.id})" title="Edit"><i data-lucide="pen-line" class="ui-icon"></i></button>
-          <button class="btn btn-ghost btn-sm" onclick="resetAdministratorPassword(${a.id})" title="Reset password"><i data-lucide="key-round" class="ui-icon"></i></button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="showEditAdministrator(${a.id})"
+                  title="Edit" aria-label="Edit ${escapeHtml(a.name)}"><i data-lucide="pen-line" class="ui-icon"></i></button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="resetAdministratorPassword(${a.id})"
+                  title="Reset password" aria-label="Reset the password for ${escapeHtml(a.name)}"><i data-lucide="key-round" class="ui-icon"></i></button>
           ${me ? '' : a.status === 'active'
-            ? `<button class="btn btn-ghost btn-sm" onclick="setAdministratorStatus(${a.id}, 'suspended')" title="Suspend"><i data-lucide="ban" class="ui-icon"></i></button>`
-            : `<button class="btn btn-ghost btn-sm" onclick="setAdministratorStatus(${a.id}, 'active')" title="Activate"><i data-lucide="circle-check" class="ui-icon"></i></button>`}`}
+            ? `<button type="button" class="btn btn-ghost btn-sm" onclick="setAdministratorStatus(${a.id}, 'suspended')"
+                       title="Suspend" aria-label="Suspend ${escapeHtml(a.name)}"><i data-lucide="ban" class="ui-icon"></i></button>`
+            : `<button type="button" class="btn btn-ghost btn-sm" onclick="setAdministratorStatus(${a.id}, 'active')"
+                       title="Activate" aria-label="Activate ${escapeHtml(a.name)}"><i data-lucide="circle-check" class="ui-icon"></i></button>`}`}
       </td>
     </tr>`;
 }

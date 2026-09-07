@@ -440,8 +440,13 @@ async function cleanup() {
     (prof.match(/^(?:async )?function showEditProfileV2\(/gm) || []).length === 1);
   ok('handleSaveProfileV2 is defined exactly once',
     (prof.match(/^(?:async )?function handleSaveProfileV2\(/gm) || []).length === 1);
-  ok('showEditProfile is defined exactly once',
-    (prof.match(/^(?:async )?function showEditProfile\(/gm) || []).length === 1);
+  /* Phase 7E removed the delegating alias entirely — nothing called it. The
+     property this guards is "not defined twice", which zero satisfies as well
+     as one; the original wording would have failed on a correct cleanup. */
+  ok('showEditProfile is never defined more than once',
+    (prof.match(/^(?:async )?function showEditProfile\(/gm) || []).length <= 1);
+  ok('every caller uses showEditProfileV2 directly',
+    /showEditProfileV2\(\)/.test(prof));
 
   head('P. Routes and guards');
   ok('the route that never existed still does not',

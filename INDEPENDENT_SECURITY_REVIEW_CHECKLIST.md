@@ -146,6 +146,12 @@ node migrate_v10.js
 node migrate_v11.js
 node migrate_v12.js
 node migrate_v13.js
+node migrate_v14.js
+node migrate_v15.js
+node migrate_v16.js
+node migrate_v17.js
+node migrate_v18.js
+node migrate_v19.js
 ```
 
 Each migration reads its DDL from the matching `schema_vN.sql`. **Migrations v5 through v13 support

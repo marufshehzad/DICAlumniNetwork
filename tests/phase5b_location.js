@@ -623,9 +623,22 @@ async function makeMember(label) {
   console.log('\n=== cleanup ===');
   const emails = `${TAG}-%@dic.test`;
   await db.query('DELETE FROM users WHERE email LIKE $1', [emails]);
+
+  /* Phase 7E §31: what the tests PRODUCED, not only what they created.
+     Importing writes an import_history row, and registering an account fires a
+     role-targeted notification that no user_id cascade can reach — this suite
+     had left 324 batches and its share of 5,345 orphaned notices behind. */
+  await db.query(`DELETE FROM import_history WHERE filename LIKE 'p5b-%'`);
+  await db.query(
+    `DELETE FROM notifications
+      WHERE target_role IS NOT NULL AND user_id IS NULL
+        AND (subtitle LIKE $1 OR title LIKE $1)`, [`%${TAG}%`]);
+
   const left = (await db.query(
     'SELECT COUNT(*)::int n FROM users WHERE email LIKE $1', [emails])).rows[0].n;
   ok('test accounts removed', left === 0, String(left));
+  ok('the import batches this suite created were removed',
+    (await db.query(`SELECT COUNT(*)::int n FROM import_history WHERE filename LIKE 'p5b-%'`)).rows[0].n === 0);
   ok('reference places were not touched by the tests',
     (await db.query('SELECT COUNT(*)::int n FROM location_places')).rows[0].n === places);
 

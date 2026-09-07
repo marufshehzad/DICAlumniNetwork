@@ -79,6 +79,15 @@ const login = async (email, password) =>
 const TAG = 'p7c3-' + Date.now();
 
 async function cleanup() {
+  /* Phase 7E §31: a role-targeted notification has no user_id, so deleting the
+     account that triggered it leaves it behind. These are removed by the text
+     this run put in them. */
+  try {
+    await db.query(
+      `DELETE FROM notifications
+        WHERE target_role IS NOT NULL AND user_id IS NULL
+          AND (title LIKE $1 OR subtitle LIKE $1)`, [`%${TAG}%`]);
+  } catch {}
   try {
     await db.query(
       `DELETE FROM notifications WHERE link_entity = 'import' AND link_id IN

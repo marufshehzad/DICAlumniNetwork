@@ -149,7 +149,7 @@ the application to `127.0.0.1`, or firewall the port.
 | Connections | The application uses one pool of 10 |
 
 **Installation sequence.** `schema.sql` first, then `migrate_v2.js` through
-`migrate_v13.js` **in numeric order**. A complete database has **47 tables**.
+`migrate_v19.js` **in numeric order**. A complete database has **48 tables**.
 
 Two things to know before running it:
 

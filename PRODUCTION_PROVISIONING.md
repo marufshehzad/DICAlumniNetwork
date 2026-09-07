@@ -269,7 +269,7 @@ Tick each against the real deployment. Nothing here is ticked yet.
 ### PostgreSQL
 - [ ] 16.x running
 - [ ] Application database and its own non-superuser role
-- [ ] `schema.sql` then `migrate_v2.js` … `migrate_v13.js` applied in order
+- [ ] `schema.sql` then `migrate_v2.js` … `migrate_v19.js` applied in order
 - [ ] `SELECT count(*) FROM information_schema.tables WHERE table_schema='public'` returns **47**
 - [ ] `seed.sql` **not** run; `DIC_SEED_DEMO` **not** set
 - [ ] Connections restricted to the application host
@@ -333,7 +333,8 @@ nothing was assumed.
 
 | | Evidence |
 |---|---|
-| A fresh install works | `tests/install_drill.js` — 47 tables from nothing, first administrator created, signed in |
+| A fresh install works | `tests/install_drill.js` — 48 tables from nothing, first administrator created, signed in |
+| The whole product works on a fresh install | `tests/phase7e_release_drill.js` — registration, verification, event, ticket, check-in, job, poll, donation, reports, import, rollback and audit, all on a database that started empty |
 | Deletion purge is correct | `tests/ops_drill.js` — expired purges, unexpired does not, cancelled does not |
 | Backup and restore work | `tests/ops_drill.js` — counts, vault bytes, audit chain on the restored copy |
 | **Encrypted off-site round trip** | `tests/offsite_drill.js` — compress, encrypt, ship, **download back**, decrypt, restore, verify. 79% smaller; unreadable without the passphrase; byte-identical with it |
@@ -366,10 +367,10 @@ nothing was assumed.
 | Credentials | `.env` only, mode `0600`. Rotatable safely — `KEY_MANAGEMENT.md` section 5 |
 | Timezone | The application pins `Asia/Dhaka` per connection (`DB_TIMEZONE`). The server's own clock should be UTC or local; either works |
 
-**Migration.** `schema.sql` first, then `migrate_v2.js` … `migrate_v13.js` in
+**Migration.** `schema.sql` first, then `migrate_v2.js` … `migrate_v19.js` in
 order. Stop the application and take a backup first. `v5` onward are
 transactional and support `--dry-run`; **`v2`, `v3` and `v4` are not and silently
-ignore the flag.** Expect 47 tables.
+ignore the flag.** Expect 48 tables.
 
 **Backup policy.**
 
