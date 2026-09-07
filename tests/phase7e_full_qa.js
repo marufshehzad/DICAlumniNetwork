@@ -400,8 +400,6 @@ const concrete = r => r.route.replace(/:[A-Za-z_]+/g, '999999');
                 'organization|designation|skills|reason|message|comment|note|error|filename';
 
   const REVIEWED_SAFE = {
-    'dashboard.js: ${first.city}':
-      'builds a plain string that is inserted as title="${escapeHtml(sub)}" — escaped at the insertion point',
     'profile.js: ${b.title}':
       'b comes from a hardcoded local badge array (Mentor, Donor, …), not from any record'
   };

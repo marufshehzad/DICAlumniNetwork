@@ -4337,3 +4337,216 @@ such in RELEASE_CANDIDATE.md.
 
 **Production provisioning and UAT**, once DIC supplies the external inputs in
 RELEASE_CANDIDATE.md §10. No further engineering phase is planned.
+
+---
+
+## PHASE 7G — Real Visible Map & Global Modal Reliability
+
+**Status:** **COMPLETE**
+**Date:** 2026-09-08
+**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+
+Two user-facing complaints, both fixed. The second turned out to be a single
+CSS bug that broke every dialog in the application on a phone.
+
+---
+
+## PART A — THE MAP
+
+### The original limitation
+
+The map drew an equirectangular **graticule** — meridians and parallels — and
+alumni badges on top. Every position was correct, and Phase 7B had recorded
+honestly why there were no outlines: the project held no boundary dataset, and
+*"a coastline drawn from memory would be inventing geography"*.
+
+That was the right call at the time. It also left a reader looking at numbered
+grid lines and asking which country a badge was in — a question almost nobody
+can answer from meridians.
+
+### Geometry: source and licence
+
+**Natural Earth**, 1:110m and 1:10m Admin 0 – Countries. **Public domain** —
+no attribution requirement, no share-alike, no redistribution restriction.
+Obtained through `world-atlas@2.0.2` (ISC), which is a redistribution of
+Natural Earth.
+
+Rejected: **GADM** (forbids commercial redistribution) and **OSM-derived**
+district boundaries (ODbL adds attribution and share-alike this project does not
+otherwise carry).
+
+`tools/build_geo.js` converts it once at build time to
+`assets/geo/boundaries.json` — **78 KB**, 4,211 world points from 10,587 and a
+737-point Bangladesh from 2,257, via rounding, ring filtering and
+Douglas–Peucker. Both source packages are `devDependencies` and **never ship**.
+
+### Implementation
+
+The rings are plain longitude/latitude and are projected by the **same
+`projectLatLng()`** that positions the alumni badges. Boundaries and markers
+therefore cannot drift apart — one projection, not two that resemble each other.
+Verified against five countries' independently known bounding boxes.
+
+**No mapping library, no tiles, no API key, no external request.** Asserted.
+
+**World view** — every country outlined and filled pale, badges on top, country
+names from 2× zoom and only where the label fits inside the country. Rings whose
+projected bounding box is entirely off-canvas are skipped, so a 16× pan builds
+45 paths rather than 166.
+
+**Bangladesh view** — a new control frames the country at 8× on its real
+geographic centre and swaps the coarse outline for the **1:10m** one: 737 points
+instead of 18, which is the difference between a recognisable country and a
+five-sided blob. Neighbours stay drawn and labelled, so the country sits in its
+region.
+
+`GET /api/stats/map` gained a **divisions** rollup behind the same privacy gate
+as the city and country layers.
+
+### Division boundaries are not drawn, deliberately
+
+No division or district polygon dataset was available under a licence this
+project can carry. A division is therefore a **labelled badge at the
+alumni-weighted mean of the real city coordinates** the database holds for it —
+a statement about where a division's alumni are, not a claim about where its
+border runs. Drawing one from memory would have been the exact defect the
+location work exists to remove.
+
+### Privacy — unchanged
+
+`MAP_VISIBLE_SQL` is still `location = 'public'`, gating all three rollups.
+Location still carries **no staff bypass**. The suite proves it: flipping one
+member to private removes them from the city layer and the division rollup, and
+the fixture is restored exactly. No exact home coordinate exists anywhere — a
+member picks a city and the map plots the city.
+
+The real data is one mapped alumnus, in Chattogram. The map says so.
+
+---
+
+## PART B — MODAL RELIABILITY
+
+### The inventory
+
+| | |
+|---|---|
+| Dialogs opened through `showModal`/`openModal` | 50 functions across 13 files |
+| `.modal-close` buttons | 45, **none with an `onclick`** — all rely on one delegated handler |
+| Separate close functions | `closeModal`, `closePhotoEditor`, `closeEventWorkspace`, `closeNotifications`, `closeMapDetail` |
+| Modal systems | **One.** `openModal` is an alias for `showModal` |
+| Overlays per portal | Exactly one |
+
+### The bug, and why every X "did not work"
+
+The delegated handler was fine. Every close button worked under a synthetic
+click, at every desktop width. The report was still correct.
+
+**Below 900px every dialog is a bottom sheet**, and its slide-up animation ran
+`from { transform: translateY(100%) }` — the sheet began a **full sheet-height
+below the viewport**, and the animation was the only thing that ever brought it
+into view.
+
+That made a decoration load-bearing. Whenever the animation did not complete —
+a dialog opened while the tab was backgrounded, any engine that throttles or
+freezes animation clocks, a compositor that never advances — the sheet stayed
+parked off the bottom of the screen. Measured on a 390×844 viewport: dialog top
+at **894px**, close button at **894px**, `elementFromPoint` at the button's
+centre returning **nothing at all**. The dialog existed, the backdrop was dim,
+and every X and Cancel was unreachable because it was not on the screen.
+
+On a phone that is every dialog in the application, which is exactly what was
+reported. Desktop was unaffected — the animation only exists below 900px —
+which is why it survived every previous phase's testing.
+
+**The fix.** The animation now travels **24px** and carries `both`, the resting
+transform is declared rather than left to the animation to supply, and the
+reduced-motion block states `transform: none !important` for `.modal-content`.
+The dialog is in its correct place with no animation at all; the motion is a
+garnish. A frozen animation now costs 24 pixels instead of the whole dialog.
+
+Measured after the fix on the same viewport: dialog top **315px**, close button
+**354px**, hit test resolves to the button, and clicking whatever is topmost at
+its centre closes it. Confirmed at 360 and 390 across the poll editor, the
+delete confirmation, the administrator dialogs and the photo chooser.
+
+### Also fixed
+
+- **Seven buttons** with no explicit `type` — two Cancels in
+  `administration.js`, four action buttons in `events.js`, one in
+  `profile.js`. None sat inside a `<form>` today, so none was submitting; all
+  are now `type="button"` so none can start.
+- **A heavy dark sheet shadow** — `rgba(0,0,0,0.8)`, a leftover from the dark
+  era on a platform that has been light since Phase 7A.
+
+### Verified, and left alone
+
+The contract Phase 7A established still holds and is now asserted: one delegated
+handler that survives every re-render and works on the icon inside the button;
+Escape closes; the backdrop closes **only** dialogs that opt in, so a
+data-entry form is never dismissed by a stray click; focus moves into the dialog
+and returns to the opener; Tab is trapped; `role="dialog"` and `aria-modal`;
+closing hides one overlay rather than removing every `.modal`; and a dialog's
+`onClose` teardown runs however it is closed — which is what stops a camera
+stream outliving its dialog.
+
+---
+
+## Tests
+
+```
+32 suites                     2,695 passed, 0 failed
+  of which phase7g_modals          72   (new)
+  the 31 pre-existing suites    2,623   still 0 failed
+```
+
+`tests/phase7g_modals.js` covers A1–A6 and B1–B7: the geometry's source,
+licence, size and dev-only packaging; five countries checked against known
+bounding boxes; the absence of every mapping library, tile URL and API key;
+city and division counts compared against their own SQL; privacy proven by
+flipping a member to private and back; and on the modal side the CSS invariant
+that a dialog's resting position does not depend on an animation, every close
+control typed and labelled, the delegated handler, Escape, the opt-in backdrop,
+close scoping, and the teardown hook.
+
+### Two assertions re-expressed, neither weakened
+
+`phase7b_location` asserted the literal ternary
+`${mapMode === 'countries' ? 'country' : 'city'}`, which this phase replaced
+with `mapUnitName()` when a third level arrived. It now checks the property —
+that an empty search and an empty map say different things — which is what it
+was always for and is stricter for having a third level.
+
+`phase7e_full_qa`'s reviewed-safe XSS allowance listed `dashboard.js:
+${first.city}`; this phase removed that interpolation entirely, so the
+staleness check fired exactly as designed and the entry was deleted.
+
+## Browser verification
+
+Alumni and staff portals at **360 · 390 · 430 · 768 · 1024 · 1280 · 1440**: no
+page overflow, map canvas and controls within the viewport at every width,
+legend and ranked list present, and **zero JavaScript errors**. The world view
+draws 166 country paths; zoomed 4× it draws 45 and labels 24. The Bangladesh
+view draws the detailed outline plus named neighbours — India, Nepal, Bhutan,
+Myanmar, Pakistan — with the Chattogram badge in the correct place.
+
+## Regressions
+
+None. Nothing pre-existing was deleted and no assertion was weakened.
+
+## Limitations
+
+- **No division or district boundaries** — no licensable geometry exists for
+  them here. Divisions are labelled points.
+- **No satellite imagery, streets, routing or live GPS**, and none was asked
+  for.
+- **Equirectangular distorts area** toward the poles.
+- **Only public locations appear on the map.** With the default of `alumni`,
+  most members are absent until they choose otherwise; the note under the map
+  says how many and why.
+- **The world outline is 1:110m** — small islands are absent by design.
+- **Country labels appear from 2× zoom** and only where they fit.
+
+## Next phase
+
+**Production provisioning and UAT**, once DIC supplies the external inputs in
+RELEASE_CANDIDATE.md §10. No further engineering phase is planned.

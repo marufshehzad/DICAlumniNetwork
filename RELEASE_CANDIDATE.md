@@ -3,7 +3,8 @@
 **Status: RELEASE CANDIDATE — engineering complete, not deployed.**
 
 Recorded 2026-09-08 at the close of Phase 7E, the final engineering quality
-gate, and updated at the close of Phase 7F (profile photos).
+gate, and updated at the close of Phase 7F (profile photos) and Phase 7G
+(geographic map and modal reliability).
 
 This document states what the platform is, what it does, what it deliberately
 does not do, and what DIC must supply before it can run in production. It does
@@ -16,7 +17,7 @@ does not do, and what DIC must supply before it can run in production. It does
 | | |
 |---|---|
 | Commit | `0a4710a` (Phase 7E) · parent `e9703e1` |
-| Phases complete | 0 through 7F |
+| Phases complete | 0 through 7G |
 | Database schema | v19 · **48 tables** |
 | Runtime | Node.js, Express 5, PostgreSQL 16.14 |
 | Dependencies | `express`, `pg`, `cors`, `body-parser`, `nodemailer`, `jimp` — six, all first-order. `jimp` is pure JavaScript, so there is no native build step on the eventual VPS |
@@ -51,6 +52,7 @@ historical entry breaks verification.
 | Directory | Search, filters, privacy-filtered fields, division/district filters |
 | Privacy | Per-field levels (public / alumni / private); email and mobile carry a documented staff bypass, **location does not** |
 | Location | 99 reference places, alumni map aggregation, event venues, chapter locations, job work modes |
+| Alumni map | **Real country boundaries** (Natural Earth, public domain, bundled — no tiles, no API key, no mapping library). World view with country labels; a Bangladesh view with the detailed national outline and division-level counts. Ranked list beside it carries the same numbers |
 | Events (v5) | Create, edit, approve, reject, cancel, tasks, committees, people, external contacts, budget, sponsors, vendors, logistics, marketing, meetings, risks, timeline, volunteers, procurement |
 | Tickets | Multiple ticket types, quotas, capacity from live counts, waitlist, signed QR codes, check-in, attendee export |
 | Jobs | Post, edit, close, reopen, deadline, apply, applicant management, application status workflow, referrals with accept/decline |
@@ -82,20 +84,24 @@ These are **not** defects. Each is a deliberate decision recorded in PHASE_LOG.m
 | Mentorship health scoring | Nothing computes it; the report shows days-to-answer, which is arithmetic on two real timestamps. |
 | Department scoping for jobs | A job is open to every graduate; `dept_admin` has no administrative authority over jobs at all. |
 | XLSX import | CSV only. |
+| Satellite imagery, streets, routing, live GPS | None. The map answers “which country, and roughly where”. `navigator.geolocation` appears nowhere in the codebase. |
+| Division or district **boundaries** | No polygon dataset was available under a licence this project can carry, and drawing administrative borders from memory would be inventing geography. Divisions are labelled points at the alumni-weighted mean of their real city coordinates. |
 
 ---
 
 ## 5. Test results
 
 ```
-31 suites                        2,623 passed   0 failed   0 skipped
+32 suites                        2,695 passed   0 failed   0 skipped
   fresh install drill               32 passed   0 failed
   full release drill               107 passed   0 failed
   audit chain verification            PASS through 18,191 entries
 ```
 
-Phase 7F added `tests/phase7f_profile_photo.js` (108 assertions) and changed no
-existing assertion.
+Phase 7F added `tests/phase7f_profile_photo.js` (108 assertions). Phase 7G added
+`tests/phase7g_modals.js` (72). Two assertions were re-expressed in Phase 7G to
+check a property rather than an exact expression a refactor had replaced;
+neither was weakened.
 
 The **release drill** is the strongest single result: an empty PostgreSQL
 database is created, migrated through v19, bootstrapped with a first
@@ -125,6 +131,7 @@ Skipped is counted as skipped. There are none.
 | Credential export | `csv.js` refuses any column whose name reads as a credential; no DSAR field is a credential |
 | Error disclosure | Six forced failure modes disclose no PostgreSQL internals, no stack traces, no paths, no secrets |
 | Audit chain | Verifies through 18,191 entries after the full QA run |
+| Modal close controls | Every `.modal-close` in both portals is `type="button"` with `aria-label`, normalised again at open time. One delegated handler closes; Escape closes; the backdrop closes only dialogs that opt in, so a data-entry form cannot be dismissed by a stray click |
 | Profile photo upload | Every uploaded image is **decoded and re-encoded** server-side, so the stored bytes are bytes the server produced from pixels rather than attacker bytes that passed a check. EXIF, colour profiles, comments and trailing data do not survive. Refused: a script, an SVG, HTML or an executable renamed as an image; a truncated or malformed image; a GIF; anything over 10 MB or 8000 px on a side |
 | Profile photo storage | Filenames are generated with 96 bits of randomness and never taken from the client. Stored files are **not** statically served — `/uploads/…` is a 404 — and are readable only through an authenticated route that serves the current version only |
 | Profile photo authorization | The subject is always the session. There is no route that accepts a subject id for writing, and a body naming another account is ignored. An administrator gains no right to edit a member’s photo |
@@ -215,6 +222,7 @@ its typed value intact.
 | Reports are read into memory | 5,000 rows on screen, 50,000 in a file. A capped result says so. |
 | `test_e2e_crud.js` | A legacy development script the Master Audit says to keep as historical tooling. It references columns Phase 7D dropped and **would fail if run**. Excluded from any production image. Tracked as INFO-1. |
 | **Camera capture is not verified on real hardware** | `getUserMedia` needs a browser, a device and a person granting permission. The flow was exercised in a browser with a **stubbed** MediaStream: the permission-denied path, the file-input fallback, and every stream-teardown path (capture, cancel, save, close, Escape, modal replacement, tab hidden, page unload). Live capture from a real phone camera has **not** been tested and should be part of College UAT. |
+| The map shows only public locations | With the platform default of `alumni`, most members are absent from the map until they choose otherwise. The note under the map states how many are hidden and why. |
 | Photos are fetched with the session, not by `<img src>` | An `<img>` cannot send a bearer token, and this platform has no cookies. Avatars are fetched with the token and shown as object URLs, so a photo appears a moment after the initials. The alternative — a public directory or a session-free signed URL to somebody’s face — was rejected. |
 | Profile photo storage is local disk | `UPLOAD_DIR` points at `./uploads/profile-photos` by default and is configurable. There is no object-store integration, because no provider account exists and inventing one was out of scope. A VPS deployment must include this directory in its backup. |
 | `install_drill.js` and `phase7e_release_drill.js` need `DOCKER_PG_CONTAINER` | They create and drop their own databases and are not part of `npm test`. |

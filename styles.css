@@ -2049,10 +2049,26 @@ textarea.form-input { resize: vertical; min-height: 100px; }
    Breakpoints: 1200px → 900px → 768px → 600px → 480px → 360px
    ============================================================ */
 
-/* ─── SLIDE-UP ANIMATION FOR MOBILE MODALS ─── */
+/* ─── SLIDE-UP ANIMATION FOR MOBILE MODALS ───
+
+   Phase 7G. This animation used to run from translateY(100%) — the dialog
+   started a full sheet-height BELOW the screen and the animation was the only
+   thing that ever brought it into view.
+
+   That made a decoration load-bearing. Whenever the animation did not complete
+   — a modal opened while the tab was backgrounded, an engine that throttles or
+   freezes animation clocks, any environment where the compositor never advances
+   — the sheet stayed parked off the bottom of the viewport with its close
+   button below the fold. The dialog was there, the backdrop was dim, and every
+   X and Cancel was unclickable because it was not on the screen. On a phone
+   that is every dialog in the application, which is exactly what was reported.
+
+   It now travels 24px. The dialog's resting position is where it belongs with
+   no animation at all, the motion is a garnish on top, and a frozen animation
+   costs 24 pixels instead of the whole dialog. */
 @keyframes slideUpMobile {
-  from { transform: translateY(100%); }
-  to { transform: translateY(0); }
+  from { transform: translateY(24px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
 }
 
 /* ─── LARGE TABLET / SMALL LAPTOP (≤1200px) ─── */
@@ -2411,8 +2427,15 @@ textarea.form-input { resize: vertical; min-height: 100px; }
     border-top-left-radius: 20px;
     border-top-right-radius: 20px;
     padding: 20px;
-    animation: slideUpMobile 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 -10px 40px rgba(0,0,0,0.8);
+    animation: slideUpMobile 0.28s cubic-bezier(0.4, 0, 0.2, 1) both;
+    /* The resting state, declared rather than left to the animation to supply.
+       With `both` the element also holds the final frame after the animation
+       ends, so nothing snaps back. */
+    transform: translateY(0);
+    /* Was rgba(0,0,0,0.8) — a near-opaque black lift from the dark era. The
+       platform is light since Phase 7A and a sheet does not need a shadow that
+       heavy to separate from the page behind it. */
+    box-shadow: 0 -8px 28px rgba(16, 32, 56, 0.18);
     position: relative;
     overflow-y: auto;
   }
@@ -5900,6 +5923,10 @@ textarea.form-input { resize: vertical; min-height: 100px; }
   /* …but keep the two that report work in progress. */
   .sis-spinner, .skeleton-line, .ev-chrome-skeleton { animation-play-state: running; }
   .map-loading-dot { animation: none; opacity: .9; }
+  /* A dialog must be in its resting place whether or not anything animated it.
+     Stated explicitly here so that turning motion off can never be the reason
+     somebody cannot reach a close button. */
+  .modal-content { animation: none !important; transform: none !important; opacity: 1 !important; }
 }
 /* Phase 7B — event venue address and its derived directions link. A venue is
    public information, so this is plain content rather than anything gated. */

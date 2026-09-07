@@ -195,7 +195,11 @@ app.use((req, res, next) => {
   if (!path.extname(p)) return next();          // SPA route, not a file request
 
   const allowed = PUBLIC_FILES.has(p) ||
-    (PUBLIC_DIRS.some(d => p.startsWith(d)) && /\.(js|css|png|jpe?g|svg|webp|gif|ico|woff2?)$/i.test(p));
+    /* Phase 7G added assets/geo/boundaries.json — static Natural Earth country
+       outlines, public-domain reference geometry and not personal data. json is
+       allowed only under the already-public /assets/ and /js/ prefixes, so this
+       does not widen what else is reachable. */
+    (PUBLIC_DIRS.some(d => p.startsWith(d)) && /\.(js|css|json|png|jpe?g|svg|webp|gif|ico|woff2?)$/i.test(p));
   if (!allowed) return res.status(404).type('text/plain').send('Not found');
   next();
 });
@@ -3124,7 +3128,7 @@ app.get('/api/stats/analytics', requireRole(...MODERATOR_ROLES), async (req, res
    are waiting rather than quietly drawing them. */
 app.get('/api/stats/map', requireAuth, async (req, res) => {
   try {
-    const [cities, countries, totals] = await Promise.all([
+    const [cities, countries, divisions, totals] = await Promise.all([
       db.query(`
         SELECT lp.id AS place_id, lp.city, lp.country, lp.country_code,
                lp.latitude::float8 AS latitude, lp.longitude::float8 AS longitude,
@@ -3154,6 +3158,25 @@ app.get('/api/stats/map', requireAuth, async (req, res) => {
          WHERE ${privacy.MAP_VISIBLE_SQL}
          GROUP BY lp.country, lp.country_code
          ORDER BY n DESC, lp.country`),
+      /* Phase 7G — the Bangladesh view. Same privacy gate as every other
+         rollup on this endpoint, so a member whose location is not public is
+         absent here exactly as they are absent from the city and country
+         layers. The position is the alumni-weighted mean of the division's
+         city coordinates: it is "where this division's alumni are", not a
+         division centroid, and it carries no claim about a boundary — this
+         project holds no division geometry and therefore implies none. */
+      db.query(`
+        SELECT lp.division,
+               COUNT(*)::int AS n,
+               COUNT(DISTINCT lp.id)::int AS cities,
+               (SUM(lp.latitude)  / COUNT(*))::float8 AS latitude,
+               (SUM(lp.longitude) / COUNT(*))::float8 AS longitude
+          FROM alumni_profiles ap
+          JOIN location_places lp ON lp.id = ap.place_id
+         WHERE lp.country = 'Bangladesh' AND lp.division IS NOT NULL
+           AND ${privacy.MAP_VISIBLE_SQL}
+         GROUP BY lp.division
+         ORDER BY n DESC, lp.division`),
       db.query(`
         SELECT COUNT(*)::int AS profiles,
                COUNT(*) FILTER (WHERE ap.place_id IS NOT NULL)::int AS confirmed,
@@ -3167,6 +3190,11 @@ app.get('/api/stats/map', requireAuth, async (req, res) => {
     res.json({
       cities: cities.rows,
       countries: countries.rows,
+      /* Phase 7G. Bangladesh divisions, for the focused view. Empty is a real
+         answer: it means no member with a public location has a Bangladeshi
+         division recorded, and the view says so rather than drawing nothing
+         and looking broken. */
+      divisions: divisions.rows,
       profiles: t.profiles,
       confirmed: t.confirmed,
       mapped: t.mapped,

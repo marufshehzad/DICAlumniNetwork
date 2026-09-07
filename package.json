@@ -20,5 +20,9 @@
     "scheduler": "node scheduler.js",
     "preflight": "node tests/run-all.js && node verify_audit.js",
     "drill-offsite": "node tests/offsite_drill.js"
+  },
+  "devDependencies": {
+    "topojson-client": "^3.1.0",
+    "world-atlas": "^2.0.2"
   }
 }

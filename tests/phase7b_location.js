@@ -323,8 +323,13 @@ const scalar = async (sql, args = []) => (await db.query(sql, args)).rows[0];
     ok('the search field is labelled', /id="map-search"[^>]*aria-label|aria-label[^>]*id="map-search"/.test(html));
     ok('the map has a loading state', /id="map-loading"/.test(html) && /map-loading/.test(d));
     ok('the map has an empty state', /id="map-empty"/.test(html));
+    /* Phase 7G routed every level label through mapUnitName(), so this no
+       longer matches a hardcoded country/city ternary. The property is the
+       same and the check is now on the property: a search that finds nothing
+       and a map with nothing on it must not say the same thing. */
     ok('"no locations yet" and "no search match" are different messages',
-       /No \$\{mapMode === 'countries' \? 'country' : 'city'\} matches/.test(d));
+       /No \$\{mapUnitName\(false\)\} matches/.test(d) &&
+       /No confirmed locations to display yet/.test(d));
     ok('the directory says why it has no location filters',
        /No location filters yet/.test(src('js/directory.js')));
     ok('a chapter with no location says so rather than guessing',

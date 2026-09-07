@@ -686,9 +686,13 @@
           <div class="map-toolbar">
             <div class="map-modes" role="group" aria-label="Map detail level">
               <button type="button" class="map-mode-btn active" data-map-mode="cities"
-                      onclick="setMapMode('cities')">Cities</button>
+                      aria-pressed="true" onclick="setMapMode('cities')">Cities</button>
               <button type="button" class="map-mode-btn" data-map-mode="countries"
-                      onclick="setMapMode('countries')">Countries</button>
+                      aria-pressed="false" onclick="setMapMode('countries')">Countries</button>
+              <!-- Phase 7G §5: two levels, world and Bangladesh. Selecting
+                   divisions frames the country and groups by division. -->
+              <button type="button" class="map-mode-btn" data-map-mode="divisions"
+                      aria-pressed="false" onclick="setMapMode('divisions')">Divisions</button>
             </div>
             <div class="map-search">
               <span class="map-search-icon"><i data-lucide="search" class="ui-icon" aria-hidden="true"></i></span>
@@ -699,15 +703,18 @@
               <button type="button" class="map-zoom-btn" onclick="mapZoomOut()" aria-label="Zoom out">−</button>
               <button type="button" class="map-zoom-btn" onclick="mapZoomIn()" aria-label="Zoom in">+</button>
               <button type="button" class="map-zoom-btn wide" onclick="mapFocusBusiest()">Focus</button>
-              <button type="button" class="map-zoom-btn wide" onclick="mapResetView()">World</button>
+              <button type="button" class="map-zoom-btn wide" id="map-bd-btn" aria-pressed="false"
+                      onclick="mapShowBangladesh()">Bangladesh</button>
+              <button type="button" class="map-zoom-btn wide" onclick="mapShowWorld()">World</button>
             </div>
           </div>
           <div class="map-layout">
             <div class="map-canvas" id="alumni-map">
-              <!-- The graticule this projection is defined against, drawn by
-                   drawMapGraticule(). There are no country outlines: this
-                   project has no boundary dataset, and drawing shapes from
-                   memory would be inventing geography. -->
+              <!-- Real country boundaries (Phase 7G) plus the graticule the
+                   projection is defined against, both drawn by
+                   drawMapGraticule(). The geometry is Natural Earth, public
+                   domain, bundled as a static file — no tiles, no API key and
+                   no mapping library. See MAP_TECHNOLOGY.md. -->
               <svg class="world-svg" viewBox="0 0 900 450" xmlns="http://www.w3.org/2000/svg" id="world-map-svg"></svg>
               <div class="map-clusters" id="map-clusters"></div>
               <div class="map-empty hidden" id="map-empty">

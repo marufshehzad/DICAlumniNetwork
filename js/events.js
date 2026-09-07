@@ -588,7 +588,7 @@ function evManageCard(e) {
         evIcon('settings-2') + ' Manage</button>' +
       (e.approval_status === 'pending_approval' && evIsAdmin()
         ? '<button class="btn btn-outline btn-sm" onclick="evApprove(' + e.id + ')">' + evIcon('check') + ' Approve</button>' +
-          '<button class="btn btn-ghost btn-sm" onclick="evReject(' + e.id + ')">' + evIcon('undo-2') + ' Send back</button>'
+          '<button type="button" class="btn btn-ghost btn-sm" onclick="evReject(' + e.id + ')">' + evIcon('undo-2') + ' Send back</button>'
         : '') +
     '</div></article>';
 }
@@ -621,7 +621,7 @@ function evPublicCard(e) {
     '<div class="ev-card-actions">' +
       (e.is_registered
         ? '<button class="btn btn-outline btn-sm" onclick="evViewTicket(' + e.id + ')">' + evIcon('ticket') + ' View ticket</button>' +
-          '<button class="btn btn-ghost btn-sm" onclick="evCancelTicket(' + e.id + ')">Cancel</button>'
+          '<button type="button" class="btn btn-ghost btn-sm" onclick="evCancelTicket(' + e.id + ')">Cancel</button>'
         : e.is_paid
           ? '<button class="btn btn-outline btn-sm" disabled title="Online payment is not connected yet">' +
               evIcon('phone') + ' Contact the alumni office</button>'
@@ -713,10 +713,10 @@ function renderEventContextHeader() {
         '<button class="btn btn-outline btn-sm" onclick="evEditEvent()">' + evIcon('pencil') + ' Edit event</button>' +
         '<button class="btn btn-outline btn-sm" onclick="evPreviewPublic()">' + evIcon('eye') + ' Preview</button>' +
         (evIsAdmin() && e.status !== 'cancelled'
-          ? '<button class="btn btn-ghost btn-sm ev-danger" onclick="evCancelEvent()">' + evIcon('calendar-x') + ' Cancel event</button>' : '') +
+          ? '<button type="button" class="btn btn-ghost btn-sm ev-danger" onclick="evCancelEvent()">' + evIcon('calendar-x') + ' Cancel event</button>' : '') +
         (evIsAdmin() && e.approval_status === 'pending_approval'
           ? '<button class="btn btn-primary btn-sm" onclick="evApprove(' + e.id + ')">' + evIcon('check') + ' Approve</button>' +
-            '<button class="btn btn-ghost btn-sm" onclick="evReject(' + e.id + ')">' + evIcon('undo-2') + ' Send back</button>' : '') +
+            '<button type="button" class="btn btn-ghost btn-sm" onclick="evReject(' + e.id + ')">' + evIcon('undo-2') + ' Send back</button>' : '') +
       '</div>' +
     '</section>';
   evRefreshIcons();

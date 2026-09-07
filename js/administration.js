@@ -361,7 +361,7 @@ async function setAdministratorStatus(id, status) {
               onclick="confirmAdministratorStatus(${id}, ${jsArg(status)})">
         ${suspending ? 'Suspend account' : 'Activate account'}
       </button>
-      <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
     </div>
   `, { dismissable: true });
 }
@@ -390,7 +390,7 @@ async function resetAdministratorPassword(id) {
     </p>
     <div style="display:flex;gap:8px">
       <button class="btn btn-primary" onclick="confirmResetAdministratorPassword(${id})">Reset password</button>
-      <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
     </div>
   `, { dismissable: true });
 }

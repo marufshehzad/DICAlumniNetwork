@@ -1141,7 +1141,7 @@ async function showDeleteAccount() {
         <div class="state-title">Deletion already scheduled</div>
         <div class="state-subtitle">Your account will be permanently purged on ${escapeHtml(formatDate(pending.purge_after))}. You can cancel until then.</div>
       </div>
-      <button class="btn btn-primary btn-full mt-16" onclick="cancelAccountDeletion()"><i data-lucide="undo-2" class="ui-icon"></i> Cancel deletion request</button>
+      <button type="button" class="btn btn-primary btn-full mt-16" onclick="cancelAccountDeletion()"><i data-lucide="undo-2" class="ui-icon"></i> Cancel deletion request</button>
     ` : `
       <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">
         Your account enters a <strong>30-day grace period</strong> before it is permanently deleted.

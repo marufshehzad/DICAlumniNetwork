@@ -29,7 +29,7 @@ const SUITES = [
   'phase2b', 'phase2c', 'phase3', 'phase4', 'phase5a',
   'phase5a_security', 'phase5b_location', 'phase5d_hardening',
   'phase5e_production', 'security_smoke', 'phase6_operations',
-  'phase65_provisioning', 'phase7a_ui', 'phase7b_location', 'phase7c1_privacy', 'phase7c2_jobs_polls', 'phase7c3_reports_import', 'phase7d_architecture_scope', 'phase7e_full_qa', 'phase7f_profile_photo', 'tamper',
+  'phase65_provisioning', 'phase7a_ui', 'phase7b_location', 'phase7c1_privacy', 'phase7c2_jobs_polls', 'phase7c3_reports_import', 'phase7d_architecture_scope', 'phase7e_full_qa', 'phase7f_profile_photo', 'phase7g_modals', 'tamper',
   'sourcetruth', 'sourcetruth15', 'crossref'
 ];
 

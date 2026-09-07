@@ -390,13 +390,55 @@ const MAP_VIEW = { width: 900, height: 450 };
 const MAP_ZOOM_STEPS = [1, 2, 4, 8, 16];
 let mapZoomIndex = 0;
 let mapCenter = { lat: 0, lng: 0 };
-let mapMode = 'cities';          // 'cities' | 'countries'
+let mapMode = 'cities';          // 'cities' | 'countries' | 'divisions'
+/* Phase 7G. Two levels, as §5 asks for, and no deeper: the world, and
+   Bangladesh. 'bangladesh' swaps the coarse outline for the detailed one,
+   frames the country, and groups alumni by division. */
+let mapView = 'world';           // 'world' | 'bangladesh'
 let mapData = null;              // last payload from GET /api/stats/map
 let mapSelected = null;          // the marker whose detail panel is open
 let mapClusters = [];            // the merged badges currently drawn
 let mapQuery = '';               // §7 search, applied to what the server sent
 
 function mapZoom() { return MAP_ZOOM_STEPS[mapZoomIndex]; }
+
+/* Bangladesh spans about 4.6° of longitude and 5.9° of latitude. At 16× the
+   whole country is wider than the canvas; 8× frames it with a margin, which is
+   what a reader wants when they press the button. The centre is the country's
+   real geographic middle, not the alumni mean — pressing "Bangladesh" should
+   show Bangladesh, not wherever three graduates happen to live. */
+const BD_CENTER = { lat: 23.7, lng: 90.35 };
+
+function mapShowBangladesh() {
+  mapView = 'bangladesh';
+  mapMode = 'divisions';
+  mapCenter = { ...BD_CENTER };
+  mapZoomIndex = MAP_ZOOM_STEPS.indexOf(8) >= 0 ? MAP_ZOOM_STEPS.indexOf(8) : MAP_ZOOM_STEPS.length - 2;
+  mapSelected = null;
+  syncMapModeButtons();
+  renderMapClusters();
+}
+
+function mapShowWorld() {
+  mapView = 'world';
+  mapMode = 'cities';
+  mapCenter = { lat: 0, lng: 0 };
+  mapZoomIndex = 0;
+  mapSelected = null;
+  syncMapModeButtons();
+  renderMapClusters();
+}
+
+/* The toolbar has to agree with the state, whichever way the state was
+   reached — a button press, the Bangladesh shortcut, or returning to the page. */
+function syncMapModeButtons() {
+  for (const btn of document.querySelectorAll('[data-map-mode]')) {
+    btn.classList.toggle('active', btn.getAttribute('data-map-mode') === mapMode);
+    btn.setAttribute('aria-pressed', String(btn.getAttribute('data-map-mode') === mapMode));
+  }
+  const bd = document.getElementById('map-bd-btn');
+  if (bd) bd.setAttribute('aria-pressed', String(mapView === 'bangladesh'));
+}
 
 function projectLatLng(lat, lng) {
   const z = mapZoom();
@@ -438,20 +480,87 @@ function mapBandFor(n, bands) {
   return cls;
 }
 
-/* The reference grid the pins are plotted on.
+/* ─── the basemap (Phase 7G) ──────────────────────────────────
 
-   `<svg id="world-map-svg">` shipped empty in both portals and nothing ever
-   populated it: the "map" was a dark gradient rectangle with circles placed at
-   percentages someone had chosen by eye. This draws the graticule the
-   equirectangular projection is actually defined against — meridians every 30°,
-   parallels every 30°, with the equator and prime meridian picked out — so a
-   reader can see that a pin's position means something.
+   Until this phase the map drew a graticule and nothing else. That was honest —
+   the project held no boundary data, and a coastline drawn from memory is
+   fabrication — but it asked a reader to locate a country from meridian numbers,
+   which almost nobody can do. So the boundaries are real now.
 
-   It is deliberately not a basemap. Adding coastlines would mean either a tile
-   provider (a new dependency, an API key and a licence) or hand-authored
-   country outlines, and geography drawn from memory is its own kind of
-   fabrication. What is drawn here is exact; what is missing is absent rather
-   than approximated. */
+   assets/geo/boundaries.json is Natural Earth's Admin 0 countries, PUBLIC
+   DOMAIN, converted once at build time by tools/build_geo.js and shipped as a
+   static file. No tile provider, no API key, no request to anyone's server, and
+   no mapping library: the rings are plain longitude/latitude and are projected
+   by the SAME projectLatLng() that positions the alumni markers. Boundaries and
+   markers therefore cannot drift apart — they are one projection, not two that
+   resemble each other.
+
+   Fetched once per page and held. A failure is not fatal: the graticule still
+   draws and the markers are still correctly placed, so the map degrades to
+   exactly what it was before this phase rather than to nothing. */
+const GEO_URL = '/assets/geo/boundaries.json';
+let geoData = null;
+let geoPromise = null;
+let geoFailed = false;
+
+async function loadMapGeometry() {
+  if (geoData || geoFailed) return geoData;
+  if (!geoPromise) {
+    geoPromise = fetch(GEO_URL)
+      .then(r => (r.ok ? r.json() : null))
+      .catch(() => null)
+      .then(j => {
+        if (j && Array.isArray(j.world)) geoData = j; else geoFailed = true;
+        return geoData;
+      });
+  }
+  return geoPromise;
+}
+
+/* One country's rings as an SVG path, clipped crudely to the drawing area.
+
+   The crude part matters: a ring is skipped when its projected bounding box is
+   entirely off-canvas, which at 16× zoom is almost every country. Without it
+   the browser builds a path string for 166 countries on every pan. */
+function countryPath(rings, W, H) {
+  const parts = [];
+  for (const ring of rings) {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    const pts = new Array(ring.length);
+    for (let i = 0; i < ring.length; i++) {
+      const pt = projectLatLng(ring[i][1], ring[i][0]);
+      pts[i] = pt;
+      if (pt.x < minX) minX = pt.x; if (pt.x > maxX) maxX = pt.x;
+      if (pt.y < minY) minY = pt.y; if (pt.y > maxY) maxY = pt.y;
+    }
+    if (maxX < -40 || minX > W + 40 || maxY < -40 || minY > H + 40) continue;
+    /* A ring that projects to less than a pixel is a dot of noise, not a
+       country — drawing it just fuzzes the coastline. */
+    if (maxX - minX < 0.8 && maxY - minY < 0.8) continue;
+
+    let d = 'M' + pts[0].x.toFixed(1) + ' ' + pts[0].y.toFixed(1);
+    for (let i = 1; i < pts.length; i++) d += 'L' + pts[i].x.toFixed(1) + ' ' + pts[i].y.toFixed(1);
+    parts.push(d + 'Z');
+  }
+  return parts.join('');
+}
+
+/* Where to put a country's label: the centre of its largest ring, which is a
+   better anchor than a bounding-box centre for a country shaped like Norway. */
+function ringAnchor(rings) {
+  let best = null, bestSpan = -1;
+  for (const ring of rings) {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const [lng, lat] of ring) {
+      if (lng < minX) minX = lng; if (lng > maxX) maxX = lng;
+      if (lat < minY) minY = lat; if (lat > maxY) maxY = lat;
+    }
+    const span = (maxX - minX) * (maxY - minY);
+    if (span > bestSpan) { bestSpan = span; best = [(minX + maxX) / 2, (minY + maxY) / 2]; }
+  }
+  return best;
+}
+
 function drawMapGraticule() {
   const svg = document.getElementById('world-map-svg');
   if (!svg) return;
@@ -481,9 +590,65 @@ function drawMapGraticule() {
       `fill="#475569" opacity="0.9">${lat}°</text>`);
   }
 
+  /* Countries UNDER the graticule: the grid is a reference, the land is the
+     thing being referenced, and a grid drawn beneath filled shapes disappears.
+     Land is a pale fill with a slightly darker stroke so a boundary reads at
+     world zoom without the map turning into a colouring book — the alumni
+     badges are the primary signal and must stay the loudest thing on it. */
+  const land = [];
+  if (geoData) {
+    /* At Bangladesh focus the detailed 1:10m outline replaces the coarse one,
+       so the country the institution is in is recognisable rather than a
+       five-sided blob. */
+    const detailed = mapView === 'bangladesh' && geoData.bangladesh && geoData.bangladesh.length;
+    for (const f of geoData.world) {
+      if (detailed && f.name === 'Bangladesh') continue;
+      const d = countryPath(f.rings, W, H);
+      if (!d) continue;
+      const here = f.name === 'Bangladesh';
+      /* Enough contrast that a continent is recognisable at a glance, and no
+         more: the alumni badges are the point of the map and must stay the
+         loudest thing on it. Bangladesh is tinted green because it is the
+         institution's own country and the one the focused view is about. */
+      land.push(`<path d="${d}" fill="${here ? '#D6EBE0' : '#E1EAF4'}" ` +
+        `stroke="${here ? '#6BAA8C' : '#A7BAD2'}" stroke-width="${here ? 1 : 0.7}" ` +
+        `stroke-linejoin="round" />`);
+    }
+    if (detailed) {
+      const d = countryPath(geoData.bangladesh[0].rings, W, H);
+      if (d) land.push(`<path d="${d}" fill="#DCEFE6" stroke="#4E9B7C" stroke-width="1.2" stroke-linejoin="round" />`);
+    }
+  }
+
+  /* Country names, only where they fit. A label narrower than the country it
+     names is a label; one wider is a smear across three neighbours, so the
+     projected width of the country decides whether it is drawn at all. */
+  const labels = [];
+  if (geoData && mapZoom() >= 2) {
+    const placed = [];
+    const named = geoData.world
+      .filter(f => f.name)
+      .map(f => ({ f, anchor: ringAnchor(f.rings) }))
+      .filter(x => x.anchor);
+    for (const { f, anchor } of named) {
+      const at = projectLatLng(anchor[1], anchor[0]);
+      if (at.x < 30 || at.x > W - 30 || at.y < 14 || at.y > H - 14) continue;
+      const approxW = f.name.length * 5.4;
+      if (placed.some(pl => Math.abs(pl.x - at.x) < (approxW + pl.w) / 2 && Math.abs(pl.y - at.y) < 13)) continue;
+      placed.push({ x: at.x, y: at.y, w: approxW });
+      labels.push(`<text x="${at.x.toFixed(1)}" y="${at.y.toFixed(1)}" font-size="10.5" ` +
+        `text-anchor="middle" fill="#42546B" opacity="0.85" ` +
+        `style="paint-order:stroke;stroke:#FFFFFF;stroke-width:2.5px">${escapeHtml(f.name)}</text>`);
+    }
+  }
+
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
   svg.setAttribute('preserveAspectRatio', 'none');
-  svg.innerHTML = parts.join('');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', geoData
+    ? 'World map with country boundaries. Alumni counts are listed in the table beside it.'
+    : 'Map grid. Alumni counts are listed in the table beside it.');
+  svg.innerHTML = land.join('') + parts.join('') + labels.join('');
 }
 
 /* Merge badges that would collide, rather than pushing them apart.
@@ -527,8 +692,36 @@ function clusterMapPoints(points, minDist) {
   return clusters;
 }
 
+/* What a row is called, what a level is called, and what sits under the name.
+   Phase 7G added a third level and every label site was a two-way ternary
+   between country and city — three of them, in three different files' worth of
+   markup. One helper each, so a fourth level would be one edit and not five. */
+function mapLabelOf(row) {
+  if (!row) return '';
+  if (mapMode === 'countries') return row.country || '';
+  if (mapMode === 'divisions') return row.division || '';
+  return row.city || '';
+}
+
+function mapUnitName(plural) {
+  if (mapMode === 'countries') return plural ? 'countries' : 'country';
+  if (mapMode === 'divisions') return plural ? 'divisions' : 'division';
+  return plural ? 'cities' : 'city';
+}
+
+function mapSubLabelOf(row) {
+  if (!row) return '';
+  if (mapMode === 'countries') return `${row.cities} ${row.cities === 1 ? 'city' : 'cities'}`;
+  if (mapMode === 'divisions') {
+    return `${row.cities} ${row.cities === 1 ? 'city' : 'cities'} · Bangladesh`;
+  }
+  return row.country || '';
+}
+
 function mapKeyOf(row) {
-  return mapMode === 'countries' ? row.country_code : String(row.place_id);
+  if (mapMode === 'countries') return row.country_code;
+  if (mapMode === 'divisions') return 'div:' + row.division;
+  return String(row.place_id);
 }
 
 async function renderMapClusters() {
@@ -539,7 +732,10 @@ async function renderMapClusters() {
   const loading = document.getElementById('map-loading');
   if (loading && !mapData) loading.classList.remove('hidden');
 
-  const res = await API.getStatsMap();
+  /* Both in flight together: the counts come from the API and the outlines from
+     a static file, and neither needs the other. Awaiting them in sequence would
+     make the map appear in two visible steps for no reason. */
+  const [res] = await Promise.all([API.getStatsMap(), loadMapGeometry()]);
   if (loading) loading.classList.add('hidden');
 
   if (apiFailed(res)) {
@@ -584,8 +780,13 @@ function paintMap() {
   if (empty) empty.classList.toggle('hidden', rows.length > 0);
   if (emptyText) {
     emptyText.textContent = searching
-      ? `No ${mapMode === 'countries' ? 'country' : 'city'} matches "${mapQuery.trim()}".`
-      : 'No confirmed locations to display yet.';
+      ? `No ${mapUnitName(false)} matches "${mapQuery.trim()}".`
+      : (mapView === 'bangladesh'
+          /* Empty here is a real answer, not a failure, and it says which
+             answer it is: nobody with a public location has a Bangladeshi
+             division recorded. */
+          ? 'No alumni with a public location are recorded in a Bangladeshi division yet.'
+          : 'No confirmed locations to display yet.');
   }
   if (!rows.length) {
     container.innerHTML = '';
@@ -619,13 +820,12 @@ function paintMap() {
     const many = c.members.length > 1;
     const first = c.members[0];
     const name = many
-      ? `${c.members.length} ${mapMode === 'countries' ? 'countries' : 'cities'}`
-      : (mapMode === 'countries' ? first.country : first.city);
+      ? `${c.members.length} ${mapUnitName(true)}`
+      : mapLabelOf(first);
     const sub = many
-      ? `${c.members.map(m => mapMode === 'countries' ? m.country : m.city).join(', ')} — ${c.total} alumni`
-      : (mapMode === 'countries'
-          ? `${first.country}: ${first.n} alumni · ${first.cities} ${first.cities === 1 ? 'city' : 'cities'}`
-          : `${first.city}, ${first.country}: ${first.n} alumni`);
+      ? `${c.members.map(mapLabelOf).join(', ')} — ${c.total} alumni`
+      : `${mapLabelOf(first)}${mapMode === 'cities' ? ', ' + (first.country || '') : ''}: ` +
+        `${first.n} alumni${mapMode === 'cities' ? '' : ' · ' + mapSubLabelOf(first)}`;
     const left = pct(c.x, MAP_VIEW.width);
     const top = pct(c.y, MAP_VIEW.height);
     const active = mapSelected === c.key ? ' is-selected' : '';
@@ -655,11 +855,17 @@ function paintMap() {
    they are the server's. */
 function mapRows() {
   if (!mapData) return [];
-  const all = mapMode === 'countries' ? (mapData.countries || []) : (mapData.cities || []);
+  /* Three levels, one source. Divisions arrive already aggregated and already
+     privacy-filtered by the server, exactly like cities and countries — the
+     browser never groups personal rows itself. */
+  const all = mapMode === 'countries' ? (mapData.countries || [])
+            : mapMode === 'divisions' ? (mapData.divisions || [])
+            : (mapData.cities || []);
   const q = mapQuery.trim().toLowerCase();
   if (!q) return all;
   return all.filter(r =>
     String(r.city || '').toLowerCase().includes(q) ||
+    String(r.division || '').toLowerCase().includes(q) ||
     String(r.country || '').toLowerCase().includes(q));
 }
 
@@ -700,7 +906,7 @@ function renderMapLegend(counts) {
   if (!el) return;
   if (!counts.length) { el.innerHTML = ''; return; }
   const bands = mapBands(counts);
-  el.innerHTML = `<span class="legend-title">Alumni per ${mapMode === 'countries' ? 'country' : 'city'}</span>` +
+  el.innerHTML = `<span class="legend-title">Alumni per ${mapUnitName(false)}</span>` +
     bands.map(b => `<span class="legend-item"><span class="legend-dot ${b.cls}"></span>${escapeHtml(b.label)}</span>`).join('');
 }
 
@@ -715,11 +921,9 @@ function renderMapRanking() {
   const max = Math.max(...rows.map(r => r.n));
 
   el.innerHTML = rows.slice(0, 12).map(r => {
-    const name = mapMode === 'countries' ? r.country : r.city;
-    const sub = mapMode === 'countries'
-      ? `${r.cities} ${r.cities === 1 ? 'city' : 'cities'}`
-      : r.country;
-    const key = mapMode === 'countries' ? r.country_code : String(r.place_id);
+    const name = mapLabelOf(r);
+    const sub = mapSubLabelOf(r);
+    const key = mapKeyOf(r);
     return `
       <button type="button" class="map-rank-row ${mapSelected === key ? 'is-selected' : ''}"
               onclick="selectMapMarker(${jsArg(key)})">
@@ -737,9 +941,11 @@ function renderMapRanking() {
 
 function mapRowFor(key) {
   if (!mapData) return null;
-  return mapMode === 'countries'
-    ? (mapData.countries || []).find(c => c.country_code === key)
-    : (mapData.cities || []).find(c => String(c.place_id) === String(key));
+  if (mapMode === 'countries') return (mapData.countries || []).find(c => c.country_code === key);
+  if (mapMode === 'divisions') {
+    return (mapData.divisions || []).find(d => 'div:' + d.division === key);
+  }
+  return (mapData.cities || []).find(c => String(c.place_id) === String(key));
 }
 
 /* A selection is either a single place (from the ranked list) or a cluster
@@ -841,11 +1047,15 @@ function viewAlumniForMapSelection() {
 }
 
 function setMapMode(mode) {
-  if (mode !== 'cities' && mode !== 'countries') return;
+  if (!['cities', 'countries', 'divisions'].includes(mode)) return;
+  /* Divisions only mean anything inside the Bangladesh view, and leaving that
+     view has to leave the level behind with it — otherwise the world map ends
+     up labelled "Alumni per division". */
+  if (mode === 'divisions' && mapView !== 'bangladesh') { mapShowBangladesh(); return; }
+  if (mode !== 'divisions' && mapView === 'bangladesh') mapView = 'world';
   mapMode = mode;
   mapSelected = null;
-  document.querySelectorAll('[data-map-mode]').forEach(b =>
-    b.classList.toggle('active', b.dataset.mapMode === mode));
+  syncMapModeButtons();
   paintMap();
 }
 
@@ -889,7 +1099,7 @@ function mapResetView() {
 }
 
 function mapFocusBusiest() {
-  const rows = mapMode === 'countries' ? (mapData?.countries || []) : (mapData?.cities || []);
+  const rows = mapRows();
   if (!rows.length) return;
   const top = rows.reduce((a, b) => (b.n > a.n ? b : a), rows[0]);
   mapCenter = { lat: Number(top.latitude), lng: Number(top.longitude) };
