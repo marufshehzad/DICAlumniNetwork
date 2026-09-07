@@ -2641,7 +2641,7 @@ interaction quality; it added no business feature and changed no permission.
 
 **Status:** **COMPLETE**
 **Date:** 2026-09-07
-**Commit:** recorded by the follow-up commit, since a commit cannot contain its own hash
+**Commit:** `d1adb59`
 **Parent:** `d5a16ea`
 
 ### The audit was stale, and re-reading it was the point
